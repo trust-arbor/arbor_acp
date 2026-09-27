@@ -1,0 +1,11 @@
+/_build/
+/cover/
+/deps/
+/doc/
+/.fetch
+erl_crash.dump
+*.ez
+ex_acp-*.tar
+/tmp/
+/priv/plts/
+/test/interop/node_modules/
