@@ -126,6 +126,21 @@ subprocess release gate. Native ACP child stdio adoption is the next scope;
 raw Port inbox pressure, Windows cleanup, global logger lifecycle and full
 runtime/scheduler convergence remain open.
 
+## Absolute deadline read addition
+
+`FramedStream.next_until(handle, deadline, opts \\ [])` is additive to the
+qualified ABI. Normal finite reads retain the original monotonic cutoff across
+protocol-filter retries and never become fresh zero polls after expiry.
+`buffered_only: true` retains the original explicit poll cutoff while granting
+each attempt a finite scheduling lease; frames queued after the original cutoff
+remain available. Existing `next/2` semantics are unchanged.
+
+The full RPC suite passes 68 tests with zero failures on both private minimum
+and current toolchains, including a filter retry past deadline, a suspended
+actor with a persistent expired reader, and a later queued frame excluded by an
+original zero poll. Both formatters, production warnings-as-errors, source
+boundaries, whitespace and the real RPC archive build pass.
+
 ## Remaining v2 gates
 
 - Accepted namespaces are `Arbor.ACP.*` and `Arbor.RPC.*`. This checkpoint keeps existing `lib/arbor_acp`, `lib/arbor_rpc`, and matching test paths; directory depth is an implementation detail. Full consumer migration documentation remains a release gate.
