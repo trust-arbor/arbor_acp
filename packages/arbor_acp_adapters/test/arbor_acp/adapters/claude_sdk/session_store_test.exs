@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.ClaudeSDK.SessionStoreTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStoreTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.ClaudeSDK.SessionStore
+  alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
 
   @session_id "123e4567-e89b-12d3-a456-426614174000"
   @other_session_id "123e4567-e89b-12d3-a456-426614174001"

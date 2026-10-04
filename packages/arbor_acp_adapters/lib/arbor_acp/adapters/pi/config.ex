@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.Config do
+defmodule Arbor.ACP.Adapters.Pi.Config do
   @moduledoc false
 
   # Pure model-catalog, thinking-level and config-option helpers for the Pi ACP
@@ -6,8 +6,8 @@ defmodule ArborACP.Adapters.Pi.Config do
   # return the ACP notifications plus the native RPC payload for the root
   # adapter to deliver.
 
-  alias ArborACP.AdapterEvents
-  alias ArborACP.Adapters.Pi.RPC
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.ACP.Adapters.Pi.RPC
 
   @thinking_levels ~w(off minimal low medium high xhigh)
   @default_thinking_level "medium"

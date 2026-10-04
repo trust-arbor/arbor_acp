@@ -1,7 +1,7 @@
-defmodule ArborACP.PendingRequestsTest do
+defmodule Arbor.ACP.PendingRequestsTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.PendingRequests
+  alias Arbor.ACP.PendingRequests
 
   test "tracks pending request values" do
     pending =

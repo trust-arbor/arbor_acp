@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -10,7 +10,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       content: [
         %{
@@ -27,7 +27,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -139,7 +139,7 @@
       tag: :reply
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -154,14 +154,14 @@
     },
     result: %{reply: %{}, tag: :reply}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :read_file,
       path: "<sandbox>/claude/projects/<sandbox-key>-project/00000001-0000-4000-8000-000000000001.jsonl"
     },
     result: %{exists: false}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :list_sessions, params: %{"cwd" => "<sandbox>/project"}},
     result: %{reply: [], tag: :ok}
   }

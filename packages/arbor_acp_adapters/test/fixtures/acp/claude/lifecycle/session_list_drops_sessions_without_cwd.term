@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -10,11 +10,11 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :note, text: "A store entry with no cwd cannot be mapped to an ACP SessionInfo"},
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       content: [%{"message" => %{"content" => "no cwd here", "role" => "user"}, "type" => "user"}],
       kind: :write_file,
@@ -22,7 +22,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :list_sessions, params: %{}},
     result: %{
       reply: [

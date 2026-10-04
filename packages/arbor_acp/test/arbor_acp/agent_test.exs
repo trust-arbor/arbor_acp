@@ -1,14 +1,14 @@
-defmodule ArborACP.AgentTest do
+defmodule Arbor.ACP.AgentTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Agent
-  alias ArborACP.Agent.Transport.Memory
-  alias ArborACP.Agent.Transport.Stdio
-  alias ArborACP.Client
-  alias ArborACP.Client.Handler, as: ClientHandler
+  alias Arbor.ACP.Agent
+  alias Arbor.ACP.Agent.Transport.Memory
+  alias Arbor.ACP.Agent.Transport.Stdio
+  alias Arbor.ACP.Client
+  alias Arbor.ACP.Client.Handler, as: ClientHandler
 
   defmodule EchoAgent do
-    @behaviour ArborACP.Agent.Handler
+    @behaviour Arbor.ACP.Agent.Handler
 
     @impl true
     def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
@@ -37,7 +37,7 @@ defmodule ArborACP.AgentTest do
   end
 
   defmodule AsyncAgent do
-    @behaviour ArborACP.Agent.Handler
+    @behaviour Arbor.ACP.Agent.Handler
 
     @impl true
     def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
@@ -59,7 +59,7 @@ defmodule ArborACP.AgentTest do
   end
 
   defmodule CancelAgent do
-    @behaviour ArborACP.Agent.Handler
+    @behaviour Arbor.ACP.Agent.Handler
 
     @impl true
     def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
@@ -81,7 +81,7 @@ defmodule ArborACP.AgentTest do
   end
 
   defmodule CloseCancelAgent do
-    @behaviour ArborACP.Agent.Handler
+    @behaviour Arbor.ACP.Agent.Handler
 
     @impl true
     def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
@@ -109,7 +109,7 @@ defmodule ArborACP.AgentTest do
   end
 
   defmodule RequestingAgent do
-    @behaviour ArborACP.Agent.Handler
+    @behaviour Arbor.ACP.Agent.Handler
 
     @impl true
     def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
@@ -156,7 +156,7 @@ defmodule ArborACP.AgentTest do
   end
 
   defmodule CapabilityAgent do
-    @behaviour ArborACP.Agent.Handler
+    @behaviour Arbor.ACP.Agent.Handler
 
     @impl true
     def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
@@ -172,7 +172,7 @@ defmodule ArborACP.AgentTest do
   end
 
   defmodule HangingAgent do
-    @behaviour ArborACP.Agent.Handler
+    @behaviour Arbor.ACP.Agent.Handler
 
     @impl true
     def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}

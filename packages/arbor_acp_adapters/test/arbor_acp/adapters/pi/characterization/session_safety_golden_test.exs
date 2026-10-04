@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Pi.SessionSafetyGoldenTest do
+defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
   @moduledoc """
   Characterization gate for the Pi ACP adapter's session-map and backing
   JSONL safety rules (area P7 of `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Pi
   adapter restructuring" / "Characterization gate").
 
-  Each test drives `ArborACP.Adapters.Pi` through `ArborACP.Test.PiGolden` and
+  Each test drives `Arbor.ACP.Adapters.Pi` through `Arbor.ACP.Test.PiGolden` and
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/session_safety/`, reading the session map and
   session files back through `{:read_file, path}` steps. The fixtures pin:
@@ -49,8 +49,8 @@ defmodule ArborACP.Adapters.Pi.SessionSafetyGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.PiGolden
-  alias ArborACP.Test.PiGolden.Flows
+  alias Arbor.ACP.Test.PiGolden
+  alias Arbor.ACP.Test.PiGolden.Flows
 
   @area "session_safety"
   @map "<sandbox>/session-map.json"

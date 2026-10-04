@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ZCode.Mapper do
+defmodule Arbor.ACP.Adapters.ZCode.Mapper do
   @moduledoc false
 
   # Pure ZCode event to ACP message mapping.
@@ -9,12 +9,12 @@ defmodule ArborACP.Adapters.ZCode.Mapper do
 
   require Logger
 
-  alias ArborACP.Adapters.ZCode.Config
-  alias ArborACP.Adapters.ZCode.Protocol
-  alias ArborACP.Adapters.ZCode.Sessions
-  alias ArborACP.AdapterEvents
-  alias ArborRPC.JSONRPC, as: Envelope
-  alias ArborACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.ZCode.Config
+  alias Arbor.ACP.Adapters.ZCode.Protocol
+  alias Arbor.ACP.Adapters.ZCode.Sessions
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.RPC.JSONRPC, as: Envelope
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
 
   @doc """
   Reduces a decoded ZCode message (response, server request, or notification)

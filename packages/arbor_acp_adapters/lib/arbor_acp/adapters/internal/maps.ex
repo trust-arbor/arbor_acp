@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Internal.Maps do
+defmodule Arbor.ACP.Adapters.Internal.Maps do
   @moduledoc false
 
   # Small pure map helpers used by ACP protocol, client, agent, and adapters.

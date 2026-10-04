@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -11,7 +11,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :post_connect},
     result: %{
       tag: :ok,
@@ -24,7 +24,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :inbound, message: %{"id" => 1, "result" => %{"capabilities" => %{}}}},
     result: %{
       skipped: true,
@@ -35,7 +35,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -73,7 +73,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -90,7 +90,7 @@
     },
     result: %{skipped: true, tag: :ok}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -110,7 +110,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -141,7 +141,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{"id" => "codex-auth-elicitation-<1>", "result" => %{"action" => "cancel"}}
@@ -160,11 +160,11 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :note, text: "the cancelled login is gone: its completion is ignored"},
     result: %{}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -174,14 +174,14 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
       text: "a client error response to the elicitation cancels the login the same way"
     },
     result: %{}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -201,7 +201,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -232,7 +232,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -254,14 +254,14 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
       text: "accept with a non-map content is a cancellation too; a non-string loginId is stringified for the elicitation but echoed as-is to the app-server"
     },
     result: %{}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -281,7 +281,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -312,7 +312,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{

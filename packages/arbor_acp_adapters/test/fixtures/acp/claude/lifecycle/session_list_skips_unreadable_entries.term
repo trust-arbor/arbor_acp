@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -10,14 +10,14 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :note,
       text: "Sidechain, blank-summary, non-UUID and empty files are all skipped"
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       content: [
         %{
@@ -32,7 +32,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       content: [%{"cwd" => "<sandbox>/project", "type" => "system"}],
       kind: :write_file,
@@ -40,7 +40,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       content: [
         %{
@@ -57,7 +57,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       content: "",
       kind: :write_file,
@@ -65,7 +65,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :list_sessions, params: %{"cwd" => "<sandbox>/project"}},
     result: %{reply: [], tag: :ok}
   }

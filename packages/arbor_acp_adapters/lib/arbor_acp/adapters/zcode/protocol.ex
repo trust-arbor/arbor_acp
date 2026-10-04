@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ZCode.Protocol do
+defmodule Arbor.ACP.Adapters.ZCode.Protocol do
   @moduledoc false
 
   # Pure helpers for ZCode's `app-server` stdio protocol.
@@ -10,7 +10,7 @@ defmodule ArborACP.Adapters.ZCode.Protocol do
   # This module owns only wire-shape construction and parsing. Translation
   # between ACP and ZCode message semantics lives in `ZCode.Mapper`.
 
-  alias ArborACP.Adapters.Internal.Maps
+  alias Arbor.ACP.Adapters.Internal.Maps
 
   # ZCode turn.completed resultType → ACP stopReason
   @error_stop_reasons %{

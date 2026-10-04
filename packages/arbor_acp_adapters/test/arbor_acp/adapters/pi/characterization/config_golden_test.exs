@@ -1,11 +1,11 @@
-defmodule ArborACP.Adapters.Pi.ConfigGoldenTest do
+defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
   @moduledoc """
   Characterization gate for the Pi ACP adapter's configuration updates
   (area P5 of `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Pi adapter restructuring"
   / "Characterization gate": model, thinking-level, and boolean
   configuration updates).
 
-  Each test drives `ArborACP.Adapters.Pi` through `ArborACP.Test.PiGolden` and
+  Each test drives `Arbor.ACP.Adapters.Pi` through `Arbor.ACP.Test.PiGolden` and
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/config/`. The fixtures pin:
 
@@ -51,8 +51,8 @@ defmodule ArborACP.Adapters.Pi.ConfigGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.PiGolden
-  alias ArborACP.Test.PiGolden.Flows
+  alias Arbor.ACP.Test.PiGolden
+  alias Arbor.ACP.Test.PiGolden.Flows
 
   @area "config"
   @levels ~w(off minimal low medium high xhigh)

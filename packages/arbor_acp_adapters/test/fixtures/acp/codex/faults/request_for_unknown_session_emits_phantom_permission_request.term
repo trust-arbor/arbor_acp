@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -11,7 +11,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :post_connect},
     result: %{
       tag: :ok,
@@ -24,7 +24,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :inbound, message: %{"id" => 1, "result" => %{"capabilities" => %{}}}},
     result: %{
       skipped: true,
@@ -35,7 +35,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -73,7 +73,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -84,11 +84,11 @@
     },
     result: %{skipped: true, tag: :ok}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :note, text: "An approval request for a never-opened thread is not fenced"},
     result: %{}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -174,7 +174,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -185,21 +185,21 @@
     },
     result: %{tag: :ok, writes: [%{"id" => 100, "result" => %{"decision" => "accept"}}]}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
       text: "Unlike a notification, the request path does not materialize the session"
     },
     result: %{}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{"method" => "session/cancel", "params" => %{"sessionId" => "phantom"}}
     },
     result: %{error: "Unknown Codex session: phantom", tag: :error}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{"id" => 30, "method" => "session/close", "params" => %{"sessionId" => "phantom"}}

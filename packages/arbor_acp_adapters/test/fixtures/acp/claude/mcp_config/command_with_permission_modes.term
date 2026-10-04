@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -10,7 +10,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", permission_mode: :default]},
     result: %{
       reply: %{
@@ -22,7 +22,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :command,
       opts: [cli_path: "<sandbox>/bin/claude", permission_mode: :accept_edits]
@@ -37,7 +37,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", permission_mode: :plan]},
     result: %{
       reply: %{
@@ -49,7 +49,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", permission_mode: :auto]},
     result: %{
       reply: %{
@@ -61,7 +61,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", permission_mode: :dont_ask]},
     result: %{
       reply: %{
@@ -73,7 +73,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", permission_mode: "custom"]},
     result: %{
       reply: %{

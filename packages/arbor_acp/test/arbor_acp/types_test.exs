@@ -1,7 +1,7 @@
-defmodule ArborACP.TypesTest do
+defmodule Arbor.ACP.TypesTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Types
+  alias Arbor.ACP.Types
 
   describe "text_block/1" do
     test "creates a text content block" do

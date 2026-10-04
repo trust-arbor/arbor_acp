@@ -1,8 +1,8 @@
-defmodule ArborACP.Adapters.Codex.SessionsTest do
+defmodule Arbor.ACP.Adapters.Codex.SessionsTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Codex
-  alias ArborACP.Adapters.Codex.Sessions
+  alias Arbor.ACP.Adapters.Codex
+  alias Arbor.ACP.Adapters.Codex.Sessions
 
   setup do
     {:ok, state} = Codex.init(model: "gpt-5", mode_id: "read-only", reasoning_effort: "high")

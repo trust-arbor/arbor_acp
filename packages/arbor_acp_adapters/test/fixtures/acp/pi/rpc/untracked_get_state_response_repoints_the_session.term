@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -14,7 +14,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -33,7 +33,7 @@
       ]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -46,7 +46,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -65,7 +65,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -83,7 +83,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -254,7 +254,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -271,7 +271,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -284,14 +284,14 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{"id" => 2, "method" => "session/prompt", "params" => %{"prompt" => "hi"}}
     },
     result: %{tag: :ok, writes: [%{"id" => "msg-1", "message" => "hi", "type" => "prompt"}]}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :inbound, message: %{"type" => "agent_settled"}},
     result: %{
       messages: [
@@ -308,7 +308,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{

@@ -1,12 +1,12 @@
-defmodule ArborACP.Adapters.ClaudeSDK.PromptContentGoldenTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.PromptContentGoldenTest do
   @moduledoc """
   Characterization gate for the Claude SDK adapter's prompt content
   conversion (`docs/POST_1_0_MAINTENANCE_PLAN.md`, "Claude adapter
   characterization gate": prompt content conversion for text, images,
   resources, and resource links).
 
-  Each test drives `ArborACP.Adapters.ClaudeSDK` through
-  `ArborACP.Test.ClaudeGolden` and compares the recorded transcript against a
+  Each test drives `Arbor.ACP.Adapters.ClaudeSDK` through
+  `Arbor.ACP.Test.ClaudeGolden` and compares the recorded transcript against a
   committed fixture under `test/fixtures/acp/claude/prompt_content/`. The
   fixtures pin the `type: "user"` SDK message a `session/prompt` writes for:
 
@@ -48,8 +48,8 @@ defmodule ArborACP.Adapters.ClaudeSDK.PromptContentGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.ClaudeGolden
-  alias ArborACP.Test.ClaudeGolden.Flows
+  alias Arbor.ACP.Test.ClaudeGolden
+  alias Arbor.ACP.Test.ClaudeGolden.Flows
 
   @area "prompt_content"
 

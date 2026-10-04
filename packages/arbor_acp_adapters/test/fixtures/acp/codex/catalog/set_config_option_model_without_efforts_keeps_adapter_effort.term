@@ -1,12 +1,12 @@
 [
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :init,
       opts: [workspace_roots: ["/tmp"], cwd: "/tmp/project", reasoning_effort: "high"]
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :post_connect},
     result: %{
       tag: :ok,
@@ -19,7 +19,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :inbound, message: %{"id" => 1, "result" => %{"capabilities" => %{}}}},
     result: %{
       skipped: true,
@@ -30,7 +30,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -72,7 +72,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -96,7 +96,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -249,14 +249,14 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
       text: "The set_config_option twin of the set_model case: o3 lists no supported efforts, so the selection carries no effort and the adapter-wide effort high keeps feeding the reply, this turn/start, and the next session/new (whose thread/start result names no model, so it also inherits o3)"
     },
     result: %{}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -363,7 +363,7 @@
       tag: :reply
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -402,7 +402,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -427,7 +427,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -580,7 +580,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{

@@ -1,4 +1,4 @@
-defmodule ArborACP.Integration.ACPEcosystemCLIInteropTest do
+defmodule Arbor.ACP.Integration.ACPEcosystemCLIInteropTest do
   @moduledoc """
   Credential-free smoke test for one reviewed native ACP command.
 
@@ -12,8 +12,8 @@ defmodule ArborACP.Integration.ACPEcosystemCLIInteropTest do
 
   use ExUnit.Case, async: false
 
-  alias ArborACP.Client
-  alias ArborACP.Compat, as: ACPCompat
+  alias Arbor.ACP.Client
+  alias Arbor.ACP.Compat, as: ACPCompat
 
   @moduletag :external
   @moduletag :interop_acp_ecosystem
@@ -68,7 +68,7 @@ defmodule ArborACP.Integration.ACPEcosystemCLIInteropTest do
       ] ++ manifest_env(agent["env"])
 
     assert {:ok, client} =
-             ArborACP.start_client(
+             Arbor.ACP.start_client(
                command: agent["command"],
                cd: root,
                env: env,

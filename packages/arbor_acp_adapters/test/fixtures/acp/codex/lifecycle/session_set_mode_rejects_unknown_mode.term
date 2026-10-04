@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -12,7 +12,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :post_connect},
     result: %{
       tag: :ok,
@@ -25,7 +25,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :inbound, message: %{"id" => 1, "result" => %{"capabilities" => %{}}}},
     result: %{
       skipped: true,
@@ -36,7 +36,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -74,7 +74,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -99,7 +99,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -244,7 +244,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -255,7 +255,7 @@
     },
     result: %{error: "Unsupported Codex mode: \"yolo\"", tag: :error}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -266,21 +266,21 @@
     },
     result: %{error: "Unknown Codex session: missing", tag: :error}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{"id" => 17, "method" => "session/set_mode", "params" => %{"modeId" => "agent"}}
     },
     result: %{error: "sessionId is required", tag: :error}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
       text: "a missing modeId is normalized to the default mode, not the session's current one"
     },
     result: %{}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -304,7 +304,7 @@
       tag: :messages_and_reply
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{

@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Codex.PromptContentGoldenTest do
+defmodule Arbor.ACP.Adapters.Codex.PromptContentGoldenTest do
   @moduledoc """
   Characterization gate for the Codex ACP adapter's prompt-content wire
   behavior (area A2 `prompt_content`; see `docs/POST_1_0_MAINTENANCE_PLAN.md`,
   "Codex adapter restructuring" / "Characterization gate").
 
-  Each test drives `ArborACP.Adapters.Codex` through `ArborACP.Test.CodexGolden`
+  Each test drives `Arbor.ACP.Adapters.Codex` through `Arbor.ACP.Test.CodexGolden`
   and compares the recorded transcript (app-server writes, ACP messages,
   replies, and errors, with generated ids normalized) against a committed
   fixture under `test/fixtures/acp/codex/prompt_content/`. The scenarios pin
@@ -33,7 +33,7 @@ defmodule ArborACP.Adapters.Codex.PromptContentGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.CodexGolden
+  alias Arbor.ACP.Test.CodexGolden
 
   @area "prompt_content"
   @session_id "thread-abc"

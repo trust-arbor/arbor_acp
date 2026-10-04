@@ -1,9 +1,9 @@
 [
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :init, opts: [workspace_roots: ["/tmp"]]},
     result: %{tag: :ok}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :post_connect},
     result: %{
       tag: :ok,
@@ -16,7 +16,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{kind: :inbound, message: %{"id" => 1, "result" => %{"capabilities" => %{}}}},
     result: %{
       skipped: true,
@@ -27,7 +27,7 @@
       ]
     }
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -65,14 +65,14 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
       text: "Entries equal to the cwd (after trimming) are dropped, so a list made only of them collapses to nothing: no sandbox_workspace_write section and, with nothing else configured, no config key at all"
     },
     result: %{}
   },
-  %ArborACP.Test.CodexGolden.Entry{
+  %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{

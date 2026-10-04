@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.CodexTest do
+defmodule Arbor.ACP.Adapters.CodexTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Codex
+  alias Arbor.ACP.Adapters.Codex
 
   setup do
     {:ok, state} =

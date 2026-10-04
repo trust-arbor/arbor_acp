@@ -1,9 +1,9 @@
-defmodule ArborACP.AdapterBridge do
+defmodule Arbor.ACP.AdapterBridge do
   @moduledoc """
   GenServer bridge between ACP clients and non-native CLI agents.
 
   Owns the Port subprocess and delegates translation to a pluggable
-  `ArborACP.Adapter` implementation. Uses an outbox + waiters queue
+  `Arbor.ACP.Adapter` implementation. Uses an outbox + waiters queue
   for synchronized message delivery.
 
   ## Modes
@@ -18,7 +18,7 @@ defmodule ArborACP.AdapterBridge do
   ## Usage
 
       {:ok, bridge} = AdapterBridge.start_link(
-        adapter: ArborACP.Adapters.ClaudeSDK,
+        adapter: Arbor.ACP.Adapters.ClaudeSDK,
         adapter_opts: [model: "sonnet"]
       )
 
@@ -28,12 +28,12 @@ defmodule ArborACP.AdapterBridge do
 
   use GenServer
 
-  alias ArborACP.AdapterSupport.Subprocess, as: PortRunner
-  alias ArborACP.Capabilities
-  alias ArborACP.Envelope
-  alias ArborACP.Meta
-  alias ArborACP.Internal.Maps
-  alias ArborACP.Internal.Options
+  alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner
+  alias Arbor.ACP.Capabilities
+  alias Arbor.ACP.Envelope
+  alias Arbor.ACP.Meta
+  alias Arbor.ACP.Internal.Maps
+  alias Arbor.ACP.Internal.Options
 
   @type t :: GenServer.server()
   @default_max_buffer_bytes 1_048_576

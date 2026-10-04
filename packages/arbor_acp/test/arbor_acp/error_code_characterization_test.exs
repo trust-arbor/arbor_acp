@@ -1,6 +1,6 @@
-defmodule ArborACP.ErrorCodeCharacterizationTest do
+defmodule Arbor.ACP.ErrorCodeCharacterizationTest do
   use ExUnit.Case, async: true
-  alias ArborACP.Types
+  alias Arbor.ACP.Types
 
   test "ACP error constants preserve their published wire values" do
     assert %{

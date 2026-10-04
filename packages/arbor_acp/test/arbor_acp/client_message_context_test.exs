@@ -1,11 +1,11 @@
-defmodule ArborACP.ClientMessageContextTest do
+defmodule Arbor.ACP.ClientMessageContextTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Agent.Transport.Memory
-  alias ArborACP.Client
+  alias Arbor.ACP.Agent.Transport.Memory
+  alias Arbor.ACP.Client
 
   defmodule ContextHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(opts), do: {:ok, %{parent: Keyword.fetch!(opts, :parent), sequence: 0}}
@@ -41,7 +41,7 @@ defmodule ArborACP.ClientMessageContextTest do
   end
 
   defmodule ContextOnlyHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(opts), do: {:ok, %{parent: Keyword.fetch!(opts, :parent)}}
@@ -60,7 +60,7 @@ defmodule ArborACP.ClientMessageContextTest do
   end
 
   defmodule NoCallbacksHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(_opts), do: {:ok, %{}}
@@ -85,7 +85,7 @@ defmodule ArborACP.ClientMessageContextTest do
     Process.flag(:trap_exit, true)
 
     assert {:error, {:handler_init_failed, {:missing_callback, :handle_session_update}}} =
-             ArborACP.Client.HandlerRunner.start_link(NoCallbacksHandler, [], self())
+             Arbor.ACP.Client.HandlerRunner.start_link(NoCallbacksHandler, [], self())
   end
 
   test "preserves complete decoded messages and callback ordering without changing event listeners" do

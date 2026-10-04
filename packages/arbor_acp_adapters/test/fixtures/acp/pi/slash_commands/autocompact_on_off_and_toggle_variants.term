@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -14,7 +14,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -33,7 +33,7 @@
       ]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -46,7 +46,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -65,7 +65,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -83,7 +83,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -254,7 +254,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -268,7 +268,7 @@
       writes: [%{"enabled" => true, "id" => "pi-<5>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -297,7 +297,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -311,7 +311,7 @@
       writes: [%{"enabled" => true, "id" => "pi-<6>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -340,7 +340,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -354,7 +354,7 @@
       writes: [%{"enabled" => true, "id" => "pi-<7>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -383,7 +383,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -397,7 +397,7 @@
       writes: [%{"enabled" => true, "id" => "pi-<8>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -426,7 +426,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -440,7 +440,7 @@
       writes: [%{"enabled" => false, "id" => "pi-<9>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -469,7 +469,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -483,7 +483,7 @@
       writes: [%{"enabled" => false, "id" => "pi-<10>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -512,7 +512,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -526,7 +526,7 @@
       writes: [%{"enabled" => false, "id" => "pi-<11>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -555,7 +555,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -569,7 +569,7 @@
       writes: [%{"enabled" => false, "id" => "pi-<12>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -598,7 +598,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -609,7 +609,7 @@
     },
     result: %{tag: :ok, writes: [%{"id" => "pi-<13>", "type" => "get_state"}]}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -626,7 +626,7 @@
       writes: [%{"enabled" => false, "id" => "pi-<14>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -655,7 +655,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -666,7 +666,7 @@
     },
     result: %{tag: :ok, writes: [%{"id" => "pi-<15>", "type" => "get_state"}]}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -683,7 +683,7 @@
       writes: [%{"enabled" => true, "id" => "pi-<16>", "type" => "set_auto_compaction"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{

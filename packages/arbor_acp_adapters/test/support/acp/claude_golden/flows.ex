@@ -1,18 +1,18 @@
-defmodule ArborACP.Test.ClaudeGolden.Flows do
+defmodule Arbor.ACP.Test.ClaudeGolden.Flows do
   @moduledoc """
   Step-list builders shared by the Claude golden scenarios.
 
-  Everything here is sugar over `ArborACP.Test.ClaudeGolden` steps: the builders
+  Everything here is sugar over `Arbor.ACP.Test.ClaudeGolden` steps: the builders
   only assemble ACP messages, Claude SDK stream-json events, and sandbox
   files. They make no assertions and reach every precondition through the
   adapter's public callbacks, so a scenario stays readable as "open a
   session, prompt, stream, settle" without repeating the handshake each time.
 
   Paths use the `"<sandbox>"` and `"<sandbox-key>"` placeholders documented
-  in `ArborACP.Test.ClaudeGolden`.
+  in `Arbor.ACP.Test.ClaudeGolden`.
   """
 
-  alias ArborACP.Test.ClaudeGolden
+  alias Arbor.ACP.Test.ClaudeGolden
 
   @cwd "<sandbox>/project"
 

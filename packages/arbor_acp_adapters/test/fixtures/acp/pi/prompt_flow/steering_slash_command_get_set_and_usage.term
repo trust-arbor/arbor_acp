@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -14,7 +14,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -33,7 +33,7 @@
       ]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -46,7 +46,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -65,7 +65,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -83,7 +83,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -254,7 +254,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -265,7 +265,7 @@
     },
     result: %{tag: :ok, writes: [%{"id" => "pi-<5>", "type" => "get_state"}]}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -294,7 +294,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -305,7 +305,7 @@
     },
     result: %{tag: :ok, writes: [%{"id" => "pi-<6>", "type" => "get_state"}]}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -334,7 +334,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -348,7 +348,7 @@
       writes: [%{"id" => "pi-<7>", "mode" => "one-at-a-time", "type" => "set_steering_mode"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -377,7 +377,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -391,7 +391,7 @@
       writes: [%{"id" => "pi-<8>", "mode" => "all", "type" => "set_steering_mode"}]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -420,7 +420,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{

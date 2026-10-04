@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.Pi.SlashCommands do
+defmodule Arbor.ACP.Adapters.Pi.SlashCommands do
   @moduledoc false
 
-  alias ArborACP.Adapters.Pi.Settings
+  alias Arbor.ACP.Adapters.Pi.Settings
 
   @builtin_commands [
     %{

@@ -1,9 +1,9 @@
-defmodule ArborACP.Adapters.Codex.Sessions do
+defmodule Arbor.ACP.Adapters.Codex.Sessions do
   @moduledoc false
 
   # Pure session and thread helpers for the Codex ACP adapter.
 
-  alias ArborACP.Adapters.Codex.Config
+  alias Arbor.ACP.Adapters.Codex.Config
 
   @type session_state :: %{
           required(:sessions) => map(),

@@ -1,13 +1,13 @@
-defmodule ArborACP.AdapterBridgeTest do
+defmodule Arbor.ACP.AdapterBridgeTest do
   # The subprocess environment regression test mutates the process-global OS env.
   use ExUnit.Case, async: false
 
-  alias ArborACP.AdapterBridge
-  alias ArborACP.AdapterSupport.Subprocess, as: PortRunner
+  alias Arbor.ACP.AdapterBridge
+  alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner
 
   # MockAdapter: uses a simple cat-like echo process for testing
   defmodule MockAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct [:session_id, messages_received: []]
 
@@ -71,7 +71,7 @@ defmodule ArborACP.AdapterBridgeTest do
 
   # OneShotMockAdapter: simulates one-shot execution
   defmodule OneShotMockAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct []
 
@@ -110,7 +110,7 @@ defmodule ArborACP.AdapterBridgeTest do
   end
 
   defmodule BlockingOneShotAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct [:test_pid]
 
@@ -148,7 +148,7 @@ defmodule ArborACP.AdapterBridgeTest do
   end
 
   defmodule ErrorMockAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct []
 
@@ -248,7 +248,7 @@ defmodule ArborACP.AdapterBridgeTest do
   end
 
   defmodule CommandErrorAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     @impl true
     def init(_opts), do: {:ok, %{}}
@@ -264,7 +264,7 @@ defmodule ArborACP.AdapterBridgeTest do
   end
 
   defmodule ManagedMockAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct [:test_pid, shutdown?: false]
 
@@ -324,7 +324,7 @@ defmodule ArborACP.AdapterBridgeTest do
   end
 
   defmodule ParamListAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct []
 
@@ -362,7 +362,7 @@ defmodule ArborACP.AdapterBridgeTest do
   end
 
   defmodule AuthForkAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct []
 
@@ -380,7 +380,7 @@ defmodule ArborACP.AdapterBridgeTest do
 
     @impl true
     def fork_session(%{"sessionId" => "missing-point"}, state) do
-      # The shape ArborACP.Adapters.ClaudeSDK returns for a fork point the
+      # The shape Arbor.ACP.Adapters.ClaudeSDK returns for a fork point the
       # transcript does not contain, which the bridge must answer as -32602.
       {:error, {:invalid_params, "Fork point message msg_nope was not found"}, state}
     end
@@ -406,7 +406,7 @@ defmodule ArborACP.AdapterBridgeTest do
   end
 
   defmodule SyntheticMessagesAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct []
 
@@ -470,9 +470,9 @@ defmodule ArborACP.AdapterBridgeTest do
   # builders the Claude mapper uses, so the bridge's JSON round trip is
   # exercised for a stamped and an unstamped chunk.
   defmodule MessageIdAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
-    alias ArborACP.AdapterEvents
+    alias Arbor.ACP.AdapterEvents
 
     defstruct []
 
@@ -1087,7 +1087,7 @@ defmodule ArborACP.AdapterBridgeTest do
       refute Map.has_key?(tool_call, "messageId")
 
       assert :ok =
-               ArborACP.RequestValidation.validate_session_update(%{
+               Arbor.ACP.RequestValidation.validate_session_update(%{
                  "sessionId" => "s1",
                  "update" => message_chunk
                })
@@ -1352,7 +1352,7 @@ defmodule ArborACP.AdapterBridgeTest do
   describe "session responses with modes and config_options" do
     # MockAdapter with modes and config_options
     defmodule EnhancedMockAdapter do
-      @behaviour ArborACP.Adapter
+      @behaviour Arbor.ACP.Adapter
 
       defstruct []
 
@@ -1424,7 +1424,7 @@ defmodule ArborACP.AdapterBridgeTest do
 
   describe "adapter direct replies" do
     defmodule DirectReplyAdapter do
-      @behaviour ArborACP.Adapter
+      @behaviour Arbor.ACP.Adapter
 
       defstruct []
 

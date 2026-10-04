@@ -1,15 +1,15 @@
-defmodule ArborACP.NullRequestIdTest do
+defmodule Arbor.ACP.NullRequestIdTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Agent
-  alias ArborACP.Client
-  alias ArborACP.Envelope
-  alias ArborACP.Protocol
-  alias ArborACP.Agent.Transport.Memory
-  alias ArborACP.Client.Handler, as: ClientHandler
+  alias Arbor.ACP.Agent
+  alias Arbor.ACP.Client
+  alias Arbor.ACP.Envelope
+  alias Arbor.ACP.Protocol
+  alias Arbor.ACP.Agent.Transport.Memory
+  alias Arbor.ACP.Client.Handler, as: ClientHandler
 
   defmodule PendingPromptAgent do
-    @behaviour ArborACP.Agent.Handler
+    @behaviour Arbor.ACP.Agent.Handler
 
     @impl true
     def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}

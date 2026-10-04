@@ -1,7 +1,7 @@
-defmodule ArborACP.RegistryTest do
+defmodule Arbor.ACP.RegistryTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Registry
+  alias Arbor.ACP.Registry
 
   @registry %{
     "version" => "1.0.0",

@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -10,7 +10,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       content: [
         %{
@@ -59,7 +59,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -239,7 +239,7 @@
       tag: :messages_and_reply
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -261,14 +261,14 @@
       ]
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :note,
       text: "The live message_start id is the persisted assistant entry's message.id"
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -281,7 +281,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -311,7 +311,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :fork_session,
       params: %{
@@ -421,7 +421,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :read_file,
       path: "<sandbox>/claude/projects/<sandbox-key>-project/<forked-1>.jsonl"

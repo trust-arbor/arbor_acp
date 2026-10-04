@@ -1,10 +1,10 @@
-defmodule ArborACP.LifecycleParams do
+defmodule Arbor.ACP.LifecycleParams do
   @moduledoc false
 
   # Pure normalization and validation for ACP session lifecycle parameters.
 
-  alias ArborACP.Capabilities
-  alias ArborACP.Maps
+  alias Arbor.ACP.Capabilities
+  alias Arbor.ACP.Maps
 
   @spec client_opts(keyword()) :: keyword()
   def client_opts(opts) when is_list(opts) do

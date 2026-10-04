@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Codex.Config do
+defmodule Arbor.ACP.Adapters.Codex.Config do
   @moduledoc false
 
   # Pure config and mode helpers for the Codex ACP adapter.

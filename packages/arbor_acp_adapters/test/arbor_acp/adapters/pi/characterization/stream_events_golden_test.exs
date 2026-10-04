@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Pi.StreamEventsGoldenTest do
+defmodule Arbor.ACP.Adapters.Pi.StreamEventsGoldenTest do
   @moduledoc """
   Characterization gate for the Pi ACP adapter's stream-event conversion
   (area P3 of `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Pi adapter restructuring"
   / "Characterization gate": assistant/thinking/tool/usage stream events).
 
-  Each test drives `ArborACP.Adapters.Pi` through `ArborACP.Test.PiGolden` and
+  Each test drives `Arbor.ACP.Adapters.Pi` through `Arbor.ACP.Test.PiGolden` and
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/stream_events/`. The fixtures pin:
 
@@ -51,8 +51,8 @@ defmodule ArborACP.Adapters.Pi.StreamEventsGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.PiGolden
-  alias ArborACP.Test.PiGolden.Flows
+  alias Arbor.ACP.Test.PiGolden
+  alias Arbor.ACP.Test.PiGolden.Flows
 
   @area "stream_events"
 

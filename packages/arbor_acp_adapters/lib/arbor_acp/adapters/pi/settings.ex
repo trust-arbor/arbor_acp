@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.Settings do
+defmodule Arbor.ACP.Adapters.Pi.Settings do
   @moduledoc false
 
   @spec load(String.t() | nil, keyword()) :: map()

@@ -1,11 +1,11 @@
-defmodule ArborACP.Adapters.Pi.SlashCommandsGoldenTest do
+defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
   @moduledoc """
   Characterization gate for the Pi ACP adapter's slash commands (area P6 of
   `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Pi adapter restructuring" /
   "Characterization gate": slash-command expansion and available-command
   notifications).
 
-  Each test drives `ArborACP.Adapters.Pi` through `ArborACP.Test.PiGolden` and
+  Each test drives `Arbor.ACP.Adapters.Pi` through `Arbor.ACP.Test.PiGolden` and
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/slash_commands/`. The fixtures pin:
 
@@ -46,8 +46,8 @@ defmodule ArborACP.Adapters.Pi.SlashCommandsGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.PiGolden
-  alias ArborACP.Test.PiGolden.Flows
+  alias Arbor.ACP.Test.PiGolden
+  alias Arbor.ACP.Test.PiGolden.Flows
 
   @area "slash_commands"
 

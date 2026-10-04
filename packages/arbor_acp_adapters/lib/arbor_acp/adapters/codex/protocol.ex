@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Codex.Protocol do
+defmodule Arbor.ACP.Adapters.Codex.Protocol do
   @moduledoc false
 
   # Pure native app-server protocol helpers for the Codex ACP adapter.
@@ -7,7 +7,7 @@ defmodule ArborACP.Adapters.Codex.Protocol do
   # and pending-request correlation shapes. The root adapter retains process
   # ownership, Port I/O, and lifecycle state.
 
-  alias ArborACP.Adapters.Internal.Maps
+  alias Arbor.ACP.Adapters.Internal.Maps
 
   @type request_id :: integer() | String.t()
   @type request_type :: atom()

@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ClaudeSDK.Protocol do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
   @moduledoc false
 
   # Pure helpers for Claude Code's SDK-flavoured stream-json protocol.
@@ -7,7 +7,7 @@ defmodule ArborACP.Adapters.ClaudeSDK.Protocol do
   # it uses a richer stdin/stdout protocol than the basic CLI stream. This module
   # keeps that wire-shape construction side-effect free.
 
-  alias ArborACP.Adapters.Internal.Maps, as: MapHelpers
+  alias Arbor.ACP.Adapters.Internal.Maps, as: MapHelpers
 
   @sdk_version "0.3.238"
 
@@ -336,7 +336,7 @@ defmodule ArborACP.Adapters.ClaudeSDK.Protocol do
       request["tool_use_id"] || request["toolUseID"] ||
         "tool_#{System.unique_integer([:positive])}"
 
-    ArborACP.Adapters.ClaudeSDK.ToolInfo.from_use(tool_name, input, tool_use_id, cwd)
+    Arbor.ACP.Adapters.ClaudeSDK.ToolInfo.from_use(tool_name, input, tool_use_id, cwd)
     |> Map.take(["title", "kind", "content", "locations", "rawInput"])
     |> Map.put("toolCallId", tool_use_id)
     |> Map.put_new("title", request["title"] || tool_name)

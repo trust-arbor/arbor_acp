@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -14,7 +14,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: %{
         "sessions" => %{
@@ -31,7 +31,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: "Local prompt",
       kind: :write_file,
@@ -39,7 +39,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -63,7 +63,7 @@
       ]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -76,7 +76,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -89,7 +89,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -108,7 +108,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -126,7 +126,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -299,7 +299,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -322,7 +322,7 @@
       ]
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -335,7 +335,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -354,7 +354,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{
@@ -372,7 +372,7 @@
     },
     result: %{skipped: true, tag: :skip}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
       message: %{

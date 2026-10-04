@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.Prompt do
+defmodule Arbor.ACP.Adapters.Pi.Prompt do
   @moduledoc false
 
   @type image :: map()

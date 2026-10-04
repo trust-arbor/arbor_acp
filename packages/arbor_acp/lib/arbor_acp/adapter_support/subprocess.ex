@@ -1,7 +1,7 @@
-defmodule ArborACP.AdapterSupport.Subprocess do
+defmodule Arbor.ACP.AdapterSupport.Subprocess do
   @moduledoc "Adapter subprocess support; shared subprocess convergence is pending."
 
-  alias ArborRPC.PortEnvironment
+  alias Arbor.RPC.PortEnvironment
 
   @runtime_vars_to_clear ~w(MIX_ENV MIX_TARGET)
 

@@ -1,8 +1,8 @@
-defmodule ArborACP.Agent do
+defmodule Arbor.ACP.Agent do
   @moduledoc """
   Runtime for building native Elixir Agent Client Protocol agents.
 
-  `ArborACP.Agent` is the ACP counterpart to an MCP server: it receives
+  `Arbor.ACP.Agent` is the ACP counterpart to an MCP server: it receives
   client requests such as `session/new` and `session/prompt`, streams
   `session/update` notifications, and may request client-side filesystem,
   terminal, or permission operations.
@@ -11,8 +11,8 @@ defmodule ArborACP.Agent do
 
       def handle_prompt(session_id, prompt, ctx, state) do
         Task.start(fn ->
-          ArborACP.Agent.agent_message(ctx.agent, session_id, "Working...")
-          ArborACP.Agent.finish_prompt(ctx.agent, ctx.prompt_id, "end_turn")
+          Arbor.ACP.Agent.agent_message(ctx.agent, session_id, "Working...")
+          Arbor.ACP.Agent.finish_prompt(ctx.agent, ctx.prompt_id, "end_turn")
         end)
 
         {:noreply, state}
@@ -29,18 +29,18 @@ defmodule ArborACP.Agent do
 
   require Logger
 
-  alias ArborACP.AdapterEvents
-  alias ArborACP.Agent.HandlerRunner
-  alias ArborACP.Agent.Transport.Memory
-  alias ArborACP.Agent.Transport.Stdio
-  alias ArborACP.Capabilities
-  alias ArborACP.Maps
-  alias ArborACP.NameValue
-  alias ArborACP.PendingRequests
-  alias ArborACP.Protocol
-  alias ArborACP.RequestValidation
-  alias ArborRPC.LogSummary
-  alias ArborACP.Internal.Options
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.ACP.Agent.HandlerRunner
+  alias Arbor.ACP.Agent.Transport.Memory
+  alias Arbor.ACP.Agent.Transport.Stdio
+  alias Arbor.ACP.Capabilities
+  alias Arbor.ACP.Maps
+  alias Arbor.ACP.NameValue
+  alias Arbor.ACP.PendingRequests
+  alias Arbor.ACP.Protocol
+  alias Arbor.ACP.RequestValidation
+  alias Arbor.RPC.LogSummary
+  alias Arbor.ACP.Internal.Options
 
   @default_protocol_version 1
   @supported_protocol_versions [1]

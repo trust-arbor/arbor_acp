@@ -1,15 +1,15 @@
-defmodule ArborACP.Adapters.ClaudeSDKTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
   use ExUnit.Case, async: true
 
   import ExUnit.CaptureLog
-  import ArborACP.TestHelpers, only: [wait_until: 1]
+  import Arbor.ACP.TestHelpers, only: [wait_until: 1]
 
-  alias ArborACP.AdapterBridge
-  alias ArborACP.Adapters.ClaudeSDK
-  alias ArborACP.Adapters.ClaudeSDK.Mapper
-  alias ArborACP.Adapters.ClaudeSDK.SessionStore
-  alias ArborACP.Capabilities
-  alias ArborACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.AdapterBridge
+  alias Arbor.ACP.Adapters.ClaudeSDK
+  alias Arbor.ACP.Adapters.ClaudeSDK.Mapper
+  alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
+  alias Arbor.ACP.Capabilities
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
 
   setup do
     {:ok, state} = ClaudeSDK.init(cwd: "/tmp/project", model: "sonnet")

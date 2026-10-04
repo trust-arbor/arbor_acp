@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.Codex.ConfigTest do
+defmodule Arbor.ACP.Adapters.Codex.ConfigTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Codex.Config
+  alias Arbor.ACP.Adapters.Codex.Config
 
   test "normalizes current mode ids" do
     assert Config.normalize_mode_id(nil) == "agent"

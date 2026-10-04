@@ -1,14 +1,14 @@
-defmodule ArborACP.Agent.Transport.Memory do
+defmodule Arbor.ACP.Agent.Transport.Memory do
   @moduledoc """
   In-memory ACP transport for tests and local integration.
 
-  The same module can be used by `ArborACP.Agent` with `role: :agent` and by
-  `ArborACP.Client` with `role: :client`.
+  The same module can be used by `Arbor.ACP.Agent` with `role: :agent` and by
+  `Arbor.ACP.Client` with `role: :client`.
   """
 
   use GenServer
 
-  @behaviour ArborACP.Transport
+  @behaviour Arbor.ACP.Transport
 
   defstruct [:peer, :role]
 

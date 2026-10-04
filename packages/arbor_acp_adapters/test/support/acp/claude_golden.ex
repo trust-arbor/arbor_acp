@@ -1,6 +1,6 @@
-defmodule ArborACP.Test.ClaudeGolden do
+defmodule Arbor.ACP.Test.ClaudeGolden do
   @moduledoc """
-  Golden-transcript harness for characterizing `ArborACP.Adapters.ClaudeSDK`.
+  Golden-transcript harness for characterizing `Arbor.ACP.Adapters.ClaudeSDK`.
 
   Every step drives one public adapter callback (`init/1`, `command/1`,
   `env/1`, `post_connect/1`, `auth_methods/1,2`, `capabilities/0`, `modes/0`,
@@ -14,7 +14,7 @@ defmodule ArborACP.Test.ClaudeGolden do
   The Claude adapter is not adapter-managed: `command/1` returns an
   executable and args for the bridge to spawn, and the adapter implements
   neither `handle_adapter_message/2` nor `shutdown/1`. Subprocess exit and
-  transport teardown are owned by `ArborACP.AdapterBridge` and are therefore
+  transport teardown are owned by `Arbor.ACP.AdapterBridge` and are therefore
   not reachable from this harness (see the faults area moduledoc).
 
   ## Sandbox
@@ -100,7 +100,7 @@ defmodule ArborACP.Test.ClaudeGolden do
 
   ACP requests the adapter sends to the client (`session/request_permission`,
   `elicitation/create`, `fs/read_text_file`) carry an id minted by
-  `ArborRPC.JSONRPC.generate_id/0`, a bare monotonic integer that
+  `Arbor.RPC.JSONRPC.generate_id/0`, a bare monotonic integer that
   starts at 1 in a fresh VM. To keep scenario ids and adapter ids apart, an
   `"id"` supplied by a step must be a string unless it is an integer the
   adapter already minted (which is how a reply step answers a request);
@@ -108,7 +108,7 @@ defmodule ArborACP.Test.ClaudeGolden do
 
   ## Transcript entries
 
-  Each entry is an `ArborACP.Test.ClaudeGolden.Entry` struct (a map with `:step`
+  Each entry is an `Arbor.ACP.Test.ClaudeGolden.Entry` struct (a map with `:step`
   and `:result`), so fixtures render the cause (`step`) before its effect
   (`result`). `:result` holds only the keys that apply: `tag` (the adapter's
   return tag), `writes` (SDK lines written to Claude Code), `messages`,
@@ -118,13 +118,13 @@ defmodule ArborACP.Test.ClaudeGolden do
   ## Wire framing
 
   SDK writes are recorded as JSON-decoded maps for readability, but the
-  NDJSON framing produced by `ArborACP.Adapters.ClaudeSDK.Protocol.line/1`
+  NDJSON framing produced by `Arbor.ACP.Adapters.ClaudeSDK.Protocol.line/1`
   is enforced on every write before decoding: the iodata must be empty or
   consist of JSON objects each terminated by exactly one `"\\n"`. A write
   whose final object lacks its terminator, or that contains an empty line,
   raises rather than silently producing the same transcript.
 
-  The `ArborACP.Adapter` behaviour also allows `{:ok, :pending, state}`,
+  The `Arbor.ACP.Adapter` behaviour also allows `{:ok, :pending, state}`,
   `{:one_shot, fun, state}` and `{:partial, state}`. The Claude adapter never
   returns them and `normalize_result/1` deliberately has no clauses for them;
   a step that produced one raises a `FunctionClauseError` here, which is the
@@ -179,7 +179,7 @@ defmodule ArborACP.Test.ClaudeGolden do
 
   import ExUnit.Assertions, only: [assert: 1, flunk: 1]
 
-  alias ArborACP.Adapters.ClaudeSDK
+  alias Arbor.ACP.Adapters.ClaudeSDK
 
   defmodule Entry do
     @moduledoc "One transcript entry: the step as executed and the adapter's normalized result."
@@ -198,7 +198,7 @@ defmodule ArborACP.Test.ClaudeGolden do
 
   @fake_cli_script """
   #!/bin/sh
-  # Fake `claude` for ArborACP.Test.ClaudeGolden: the adapter only ever runs
+  # Fake `claude` for Arbor.ACP.Test.ClaudeGolden: the adapter only ever runs
   # `claude auth logout`, so this succeeds with a fixed line of output.
   echo "Logged out."
   exit 0
@@ -558,7 +558,7 @@ defmodule ArborACP.Test.ClaudeGolden do
         "Step #{inspect(message)} carries the integer ACP id #{id}, which the adapter " <>
           "never minted. Adapter ids are bare monotonic integers starting at 1, so a " <>
           "scenario must use a string id (answer a real request with a step function and " <>
-          "ArborACP.Test.ClaudeGolden.request_ids/1)."
+          "Arbor.ACP.Test.ClaudeGolden.request_ids/1)."
       )
     end
   end

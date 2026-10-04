@@ -1,4 +1,4 @@
-defmodule ArborAcp.MixProject do
+defmodule Arbor.ACP.MixProject do
   use Mix.Project
   @version "2.0.0-dev"
   def project do
@@ -15,7 +15,7 @@ defmodule ArborAcp.MixProject do
         files: ~w(lib mix.exs .formatter.exs README.md LICENSE CHANGELOG.md)
       ],
       source_url: "https://github.com/trust-arbor/arbor_acp",
-      docs: [name: "ArborACP", main: "readme", extras: ["README.md", "CHANGELOG.md"]]
+      docs: [name: "Arbor.ACP", main: "readme", extras: ["README.md", "CHANGELOG.md"]]
     ]
   end
 

@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ClaudeSDK.MCPConfig do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.MCPConfig do
   @moduledoc false
 
   # Launch-time MCP configuration for Claude Code.
@@ -10,10 +10,10 @@ defmodule ArborACP.Adapters.ClaudeSDK.MCPConfig do
   # `/proc/<pid>/cmdline`, so `:mcp_servers` is never inlined. It is written to
   # a file only the current user can read (0600, in a fresh 0700 directory) and
   # only the path is passed. The directory is removed when the process that
-  # built the command exits; under `ArborACP.AdapterBridge` that is the bridge,
+  # built the command exits; under `Arbor.ACP.AdapterBridge` that is the bridge,
   # which lives exactly as long as the Claude process it launched.
 
-  alias ArborACP.Adapters.Internal.Maps
+  alias Arbor.ACP.Adapters.Internal.Maps
 
   @file_name "mcp-config.json"
   @dir_prefix "ex_mcp_claude_sdk_mcp_"

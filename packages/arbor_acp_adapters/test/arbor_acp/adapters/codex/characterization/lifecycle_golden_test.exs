@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Codex.LifecycleGoldenTest do
+defmodule Arbor.ACP.Adapters.Codex.LifecycleGoldenTest do
   @moduledoc """
   Characterization gate for the Codex ACP adapter's initialize and session
   lifecycle wire behavior (see `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Codex
   adapter restructuring" / "Characterization gate").
 
-  Each test drives `ArborACP.Adapters.Codex` through `ArborACP.Test.CodexGolden`
+  Each test drives `Arbor.ACP.Adapters.Codex` through `Arbor.ACP.Test.CodexGolden`
   and compares the recorded transcript (app-server writes, ACP messages,
   replies, and errors, with generated ids normalized) against a committed
   fixture under `test/fixtures/acp/codex/lifecycle/`. The fixtures pin the
@@ -40,7 +40,7 @@ defmodule ArborACP.Adapters.Codex.LifecycleGoldenTest do
 
   import ExUnit.CaptureLog, only: [with_log: 1]
 
-  alias ArborACP.Test.CodexGolden
+  alias Arbor.ACP.Test.CodexGolden
 
   @area "lifecycle"
 
@@ -864,7 +864,7 @@ defmodule ArborACP.Adapters.Codex.LifecycleGoldenTest do
 
   test "session_new_authorize_workspace_callback_arity_2" do
     callback = fn
-      "/srv/data", %{kind: :cwd, adapter: ArborACP.Adapters.Codex} -> :ok
+      "/srv/data", %{kind: :cwd, adapter: Arbor.ACP.Adapters.Codex} -> :ok
       "/srv/data/vendor", %{kind: {:additional_directory, "/srv/data"}} -> {:ok, :granted}
       "/srv/data", %{kind: :session_list} -> true
       "/boom", _context -> raise "callback crashed"

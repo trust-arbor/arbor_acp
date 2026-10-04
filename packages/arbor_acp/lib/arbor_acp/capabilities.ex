@@ -1,4 +1,4 @@
-defmodule ArborACP.Capabilities do
+defmodule Arbor.ACP.Capabilities do
   @moduledoc """
   Pure helpers for ACP capability maps.
 
@@ -14,7 +14,7 @@ defmodule ArborACP.Capabilities do
   callback.
   """
 
-  alias ArborACP.Maps
+  alias Arbor.ACP.Maps
 
   @session_keys %{
     session_list: "list",

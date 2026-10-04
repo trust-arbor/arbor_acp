@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Codex.PermissionsGoldenTest do
+defmodule Arbor.ACP.Adapters.Codex.PermissionsGoldenTest do
   @moduledoc """
   Characterization gate for the Codex ACP adapter's permission and
   elicitation wire behavior (area A3 of `docs/POST_1_0_MAINTENANCE_PLAN.md`,
   "Codex adapter restructuring" / "Characterization gate").
 
-  Each test drives `ArborACP.Adapters.Codex` through `ArborACP.Test.CodexGolden`
+  Each test drives `Arbor.ACP.Adapters.Codex` through `Arbor.ACP.Test.CodexGolden`
   and compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/codex/permissions/`. The fixtures pin:
 
@@ -33,7 +33,7 @@ defmodule ArborACP.Adapters.Codex.PermissionsGoldenTest do
       or not a string (the blank case is pinned by the whole request: a
       mutation that makes `trimmed_permission_text/1` return `""` instead of
       `nil` is wire-equivalent because `maybe_put/3` delegates to
-      `ArborACP.Adapters.Internal.Maps.put_non_empty/3`, which drops `""` as well as
+      `Arbor.ACP.Adapters.Internal.Maps.put_non_empty/3`, which drops `""` as well as
       `nil`; only a variant that emits the untrimmed whitespace is
       observable, and that one is caught), the legacy tool call id
       precedence `itemId` > `callId` > `approvalId`, approval / user-input
@@ -73,7 +73,7 @@ defmodule ArborACP.Adapters.Codex.PermissionsGoldenTest do
 
   Adapter-generated ACP request ids are normalized to placeholders such as
   `"codex-permission-<1>"`; step functions answer them with the real id via
-  `ArborACP.Test.CodexGolden.generated_ids/1`.
+  `Arbor.ACP.Test.CodexGolden.generated_ids/1`.
 
   To regenerate a fixture after an intentional behavior change, run the test
   with `CODEX_GOLDEN=update mix test <this file>[:line]`; that run rewrites the
@@ -83,7 +83,7 @@ defmodule ArborACP.Adapters.Codex.PermissionsGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.CodexGolden
+  alias Arbor.ACP.Test.CodexGolden
 
   @area "permissions"
   @thread "thread-1"

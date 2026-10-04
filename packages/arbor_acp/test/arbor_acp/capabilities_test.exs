@@ -1,7 +1,7 @@
-defmodule ArborACP.CapabilitiesTest do
+defmodule Arbor.ACP.CapabilitiesTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Capabilities
+  alias Arbor.ACP.Capabilities
 
   defmodule HandlerWithOptionalCallbacks do
     def handle_load_session(_params, _ctx, state), do: {:reply, %{}, state}

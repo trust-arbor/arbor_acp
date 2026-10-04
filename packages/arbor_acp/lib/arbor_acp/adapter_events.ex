@@ -1,6 +1,6 @@
-defmodule ArborACP.AdapterEvents do
+defmodule Arbor.ACP.AdapterEvents do
   @moduledoc """
-  Builders for the ACP messages an adapter emits from `c:ArborACP.Adapter.translate_inbound/2`.
+  Builders for the ACP messages an adapter emits from `c:Arbor.ACP.Adapter.translate_inbound/2`.
 
   Each function returns a complete JSON-RPC map (a `session/update`
   notification, or a `session/prompt` response) ready to go in a
@@ -27,9 +27,9 @@ defmodule ArborACP.AdapterEvents do
     * `:meta` - a map placed in the update's `_meta`
   """
 
-  alias ArborACP.Envelope
-  alias ArborACP.Maps
-  alias ArborACP.Meta
+  alias Arbor.ACP.Envelope
+  alias Arbor.ACP.Maps
+  alias Arbor.ACP.Meta
 
   @doc "Wraps an already-built `update` map in a `session/update` notification."
   @spec session_update(String.t() | nil, map()) :: map()

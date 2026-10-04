@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.Sessions do
+defmodule Arbor.ACP.Adapters.Pi.Sessions do
   @moduledoc false
 
   # Pure ACP session-lifecycle translation for the Pi ACP adapter: the state
@@ -7,9 +7,9 @@ defmodule ArborACP.Adapters.Pi.Sessions do
   # adapter keeps the Port, the `Pi.SessionStore` reads and writes, and the
   # startup banner, all of which touch the filesystem.
 
-  alias ArborACP.Adapters.Pi.Config
-  alias ArborACP.Adapters.Pi.RPC
-  alias ArborRPC.JSONRPC, as: Envelope
+  alias Arbor.ACP.Adapters.Pi.Config
+  alias Arbor.ACP.Adapters.Pi.RPC
+  alias Arbor.RPC.JSONRPC, as: Envelope
 
   @page_size 50
 

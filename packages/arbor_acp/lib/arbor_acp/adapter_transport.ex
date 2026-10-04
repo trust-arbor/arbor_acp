@@ -1,6 +1,6 @@
-defmodule ArborACP.AdapterTransport do
+defmodule Arbor.ACP.AdapterTransport do
   @moduledoc """
-  `ArborACP.Transport` implementation that delegates to an `AdapterBridge`.
+  `Arbor.ACP.Transport` implementation that delegates to an `AdapterBridge`.
 
   This lets `ACP.Client` use adapted (non-native) agents identically to
   native ACP agents:
@@ -31,9 +31,9 @@ defmodule ArborACP.AdapterTransport do
   `result._meta`.
   """
 
-  @behaviour ArborACP.Transport
+  @behaviour Arbor.ACP.Transport
 
-  alias ArborACP.AdapterBridge
+  alias Arbor.ACP.AdapterBridge
 
   defstruct [:bridge, receive_timeout: :infinity]
 

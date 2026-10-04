@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -14,11 +14,11 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :outbound, message: %{"method" => "session/cancel", "params" => %{}}},
     result: %{messages: [], tag: :messages_and_write, writes: [%{"type" => "abort"}]}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -29,7 +29,7 @@
     },
     result: %{tag: :ok, writes: [%{"id" => "msg-1", "message" => "x", "type" => "prompt"}]}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{
@@ -66,7 +66,7 @@
       tag: :messages
     }
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :outbound, message: %{"method" => "session/cancel", "params" => %{}}},
     result: %{
       messages: [

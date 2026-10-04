@@ -1,4 +1,4 @@
-defmodule ArborACP.AdapterSupport.NameValue do
+defmodule Arbor.ACP.AdapterSupport.NameValue do
   @moduledoc "Documented adapter support for NameValue."
 
   @type builder :: (String.t(), String.t() -> map())

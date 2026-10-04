@@ -1,12 +1,12 @@
-defmodule ArborACP.Adapters.ClaudeSDK.FaultsGoldenTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.FaultsGoldenTest do
   @moduledoc """
   Characterization gate for the Claude SDK adapter's fault handling
   (`docs/POST_1_0_MAINTENANCE_PLAN.md`, "Claude adapter characterization
   gate": cancellation, `interrupt`, error replies, late and unknown
   responses, and subprocess exit).
 
-  Each test drives `ArborACP.Adapters.ClaudeSDK` through
-  `ArborACP.Test.ClaudeGolden` and compares the recorded transcript against a
+  Each test drives `Arbor.ACP.Adapters.ClaudeSDK` through
+  `Arbor.ACP.Test.ClaudeGolden` and compares the recorded transcript against a
   committed fixture under `test/fixtures/acp/claude/faults/`. The fixtures
   pin:
 
@@ -25,7 +25,7 @@ defmodule ArborACP.Adapters.ClaudeSDK.FaultsGoldenTest do
     * a recorded defect, pinned as it behaves today rather than fixed: a
       `read_file` request's `max_bytes` never reaches the client, because
       the adapter passes it as `:max_bytes` while
-      `ArborACP.Protocol.encode_file_read_request/3` only reads `:line`
+      `Arbor.ACP.Protocol.encode_file_read_request/3` only reads `:line`
       and `:limit` (`read_file_drops_the_max_bytes_limit`);
     * the fail-closed answers for control requests the adapter does not
       implement and for a malformed control request;
@@ -38,11 +38,11 @@ defmodule ArborACP.Adapters.ClaudeSDK.FaultsGoldenTest do
       nor an id; and the inbound lines that are skipped: a blank line,
       whitespace, non-JSON, a JSON array, and an unknown event type.
 
-  Subprocess exit is deliberately absent. `ArborACP.Adapters.ClaudeSDK`
+  Subprocess exit is deliberately absent. `Arbor.ACP.Adapters.ClaudeSDK`
   is not adapter-managed: `command/1` returns an executable for the bridge
   to spawn and the adapter implements neither `handle_adapter_message/2`
   nor `shutdown/1`, so port exit, port close and partial-line buffering are
-  owned by `ArborACP.AdapterBridge` and covered by its own tests. There is
+  owned by `Arbor.ACP.AdapterBridge` and covered by its own tests. There is
   no adapter callback this gate could drive to observe them.
 
   Mutation check (2026-09-21): in `claude_sdk.ex`, making
@@ -58,8 +58,8 @@ defmodule ArborACP.Adapters.ClaudeSDK.FaultsGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.ClaudeGolden
-  alias ArborACP.Test.ClaudeGolden.Flows
+  alias Arbor.ACP.Test.ClaudeGolden
+  alias Arbor.ACP.Test.ClaudeGolden.Flows
 
   @area "faults"
 

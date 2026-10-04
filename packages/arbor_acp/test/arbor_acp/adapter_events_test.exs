@@ -1,7 +1,7 @@
-defmodule ArborACP.AdapterEventsTest do
+defmodule Arbor.ACP.AdapterEventsTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.AdapterEvents
+  alias Arbor.ACP.AdapterEvents
 
   test "builds text content session updates" do
     assert AdapterEvents.agent_message_chunk("session-1", "hello") == %{

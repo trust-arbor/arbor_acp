@@ -1,4 +1,4 @@
-defmodule ArborACP.RequestValidation do
+defmodule Arbor.ACP.RequestValidation do
   @moduledoc false
 
   @uint32_max 4_294_967_295

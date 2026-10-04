@@ -1,4 +1,4 @@
-defmodule ArborACP.Test.I18nCorpus do
+defmodule Arbor.ACP.Test.I18nCorpus do
   @moduledoc """
   Non-ASCII payloads every transport must carry byte-exact.
 

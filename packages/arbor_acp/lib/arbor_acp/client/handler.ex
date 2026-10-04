@@ -1,4 +1,4 @@
-defmodule ArborACP.Client.Handler do
+defmodule Arbor.ACP.Client.Handler do
   @moduledoc """
   Behaviour for handling ACP session events and agent requests.
 
@@ -6,7 +6,7 @@ defmodule ArborACP.Client.Handler do
   streaming session updates, permission requests, and file access requests
   from ACP agents.
 
-  See `ArborACP.Client.DefaultHandler` for a reference implementation.
+  See `Arbor.ACP.Client.DefaultHandler` for a reference implementation.
 
   Session updates and permission requests each have a legacy callback and a
   context-aware variant that also receives the decoded JSON-RPC message
@@ -45,7 +45,7 @@ defmodule ArborACP.Client.Handler do
   original JSON bytes.
 
   This is an ACP-boundary value. A native ACP agent supplies the message. When
-  the client uses `ArborACP.AdapterTransport`, `ArborACP.AdapterBridge` and
+  the client uses `Arbor.ACP.AdapterTransport`, `Arbor.ACP.AdapterBridge` and
   the selected adapter construct the ACP message from the agent's native
   protocol. Native fields that the adapter does not map are not present.
 

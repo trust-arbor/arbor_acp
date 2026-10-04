@@ -1,7 +1,7 @@
-defmodule ArborACP.MapsTest do
+defmodule Arbor.ACP.MapsTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Maps
+  alias Arbor.ACP.Maps
 
   describe "get/2" do
     test "prefers present string keys even when the value is false" do

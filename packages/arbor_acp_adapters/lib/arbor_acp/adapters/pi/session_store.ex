@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.SessionStore do
+defmodule Arbor.ACP.Adapters.Pi.SessionStore do
   @moduledoc false
 
   @version 1

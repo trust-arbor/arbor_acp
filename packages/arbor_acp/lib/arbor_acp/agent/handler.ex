@@ -1,10 +1,10 @@
-defmodule ArborACP.Agent.Handler do
+defmodule Arbor.ACP.Agent.Handler do
   @moduledoc """
   Behaviour for native Elixir ACP agents.
 
-  Implement this behaviour and run it with `ArborACP.Agent`. Prompt callbacks
+  Implement this behaviour and run it with `Arbor.ACP.Agent`. Prompt callbacks
   may either reply immediately or return `{:noreply, state}` and finish the
-  prompt later with `ArborACP.Agent.finish_prompt/3` after streaming updates.
+  prompt later with `Arbor.ACP.Agent.finish_prompt/3` after streaming updates.
   """
 
   @type state :: any()
@@ -40,7 +40,7 @@ defmodule ArborACP.Agent.Handler do
   Called for `session/prompt`.
 
   The `prompt_id` in the context is the ID to pass to
-  `ArborACP.Agent.finish_prompt/3` when returning `{:noreply, state}`.
+  `Arbor.ACP.Agent.finish_prompt/3` when returning `{:noreply, state}`.
   """
   @callback handle_prompt(
               session_id :: String.t(),

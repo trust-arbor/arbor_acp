@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Codex.Permissions do
+defmodule Arbor.ACP.Adapters.Codex.Permissions do
   @moduledoc false
   # Pure permission mapping for the Codex ACP adapter: approval option
   # construction, structured-decision encoding/decoding, user-input form
@@ -6,8 +6,8 @@ defmodule ArborACP.Adapters.Codex.Permissions do
   # interaction is cancelled, arrives late, or cannot be interpreted. The root
   # adapter owns the pending-request state and the wire I/O.
 
-  alias ArborACP.Adapters.Codex.Events
-  alias ArborACP.Adapters.Internal.Maps
+  alias Arbor.ACP.Adapters.Codex.Events
+  alias Arbor.ACP.Adapters.Internal.Maps
 
   @type method :: String.t()
   @type params :: map()

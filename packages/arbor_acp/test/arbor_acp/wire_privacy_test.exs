@@ -1,7 +1,7 @@
-defmodule ArborACP.WirePrivacyTest do
+defmodule Arbor.ACP.WirePrivacyTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
-  alias ArborACP.{Agent, Client}
+  alias Arbor.ACP.{Agent, Client}
 
   setup do
     previous_level = Logger.level()

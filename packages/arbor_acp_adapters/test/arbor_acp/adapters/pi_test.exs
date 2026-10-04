@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.PiTest do
+defmodule Arbor.ACP.Adapters.PiTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Pi
-  alias ArborACP.Adapters.Pi.Settings
-  alias ArborACP.Adapters.Pi.SlashCommands
-  alias ArborACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.Pi
+  alias Arbor.ACP.Adapters.Pi.Settings
+  alias Arbor.ACP.Adapters.Pi.SlashCommands
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
 
   setup do
     tmp_dir = Path.join(System.tmp_dir!(), "pi_test_#{System.unique_integer([:positive])}")

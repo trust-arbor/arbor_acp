@@ -10,3 +10,4 @@ _verification/
 /packages/*/tmp/
 
 /packages/*/doc/
+**/tmp/

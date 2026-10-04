@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Codex.Content do
+defmodule Arbor.ACP.Adapters.Codex.Content do
   @moduledoc false
   # Pure content mapping for the Codex ACP adapter: ACP prompt blocks to
   # app-server input items, native item started/completed events to ACP
@@ -6,10 +6,10 @@ defmodule ArborACP.Adapters.Codex.Content do
   # function returns plain data; the root adapter owns session state and
   # decides how the resulting messages are emitted.
 
-  alias ArborACP.AdapterEvents
-  alias ArborACP.Adapters.Codex.Events
-  alias ArborACP.Adapters.Codex.FileChanges
-  alias ArborACP.Adapters.Internal.Maps
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.ACP.Adapters.Codex.Events
+  alias Arbor.ACP.Adapters.Codex.FileChanges
+  alias Arbor.ACP.Adapters.Internal.Maps
 
   @type session_id :: String.t() | nil
   @type item :: map()

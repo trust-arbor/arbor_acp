@@ -1,4 +1,4 @@
-defmodule ArborACP.TestHelpers do
+defmodule Arbor.ACP.TestHelpers do
   @moduledoc false
   def wait_until(condition, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 1_000)

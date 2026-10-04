@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.Internal.PromptQueueTest do
+defmodule Arbor.ACP.Adapters.Internal.PromptQueueTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
 
   test "enqueues and pops in FIFO order" do
     queue =

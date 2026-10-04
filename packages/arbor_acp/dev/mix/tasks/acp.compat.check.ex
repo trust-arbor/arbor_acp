@@ -22,10 +22,10 @@ defmodule Mix.Tasks.Acp.Compat.Check do
 
     if invalid != [], do: Mix.raise("Invalid options: #{inspect(invalid)}")
 
-    manifest_path = Path.expand(opts[:manifest] || ArborACP.Compat.default_manifest())
+    manifest_path = Path.expand(opts[:manifest] || Arbor.ACP.Compat.default_manifest())
 
     manifest =
-      case ArborACP.Compat.load_manifest(manifest_path) do
+      case Arbor.ACP.Compat.load_manifest(manifest_path) do
         {:ok, manifest} -> manifest
         {:error, reason} -> Mix.raise("Invalid ACP compatibility manifest: #{inspect(reason)}")
       end
@@ -34,7 +34,7 @@ defmodule Mix.Tasks.Acp.Compat.Check do
       print_offline(manifest, manifest_path, opts)
     else
       report =
-        ArborACP.Compat.check_remote(manifest,
+        Arbor.ACP.Compat.check_remote(manifest,
           manifest_path: manifest_path,
           github_token: System.get_env("GITHUB_TOKEN")
         )
@@ -73,7 +73,7 @@ defmodule Mix.Tasks.Acp.Compat.Check do
     if opts[:json] do
       Mix.shell().info(Jason.encode!(report, pretty: true))
     else
-      Mix.shell().info(ArborACP.Compat.format_report(report))
+      Mix.shell().info(Arbor.ACP.Compat.format_report(report))
     end
   end
 end

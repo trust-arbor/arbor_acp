@@ -1,12 +1,12 @@
-defmodule ArborACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
   @moduledoc """
   Characterization gate for the Claude SDK adapter's session lifecycle
   (`docs/POST_1_0_MAINTENANCE_PLAN.md`, "Claude adapter characterization
   gate": `post_connect`, session new/load/resume/list/close/delete, and
   `fork_session/2`).
 
-  Each test drives `ArborACP.Adapters.ClaudeSDK` through
-  `ArborACP.Test.ClaudeGolden` and compares the recorded transcript against a
+  Each test drives `Arbor.ACP.Adapters.ClaudeSDK` through
+  `Arbor.ACP.Test.ClaudeGolden` and compares the recorded transcript against a
   committed fixture under `test/fixtures/acp/claude/lifecycle/`. The
   fixtures pin:
 
@@ -74,8 +74,8 @@ defmodule ArborACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.ClaudeGolden
-  alias ArborACP.Test.ClaudeGolden.Flows
+  alias Arbor.ACP.Test.ClaudeGolden
+  alias Arbor.ACP.Test.ClaudeGolden.Flows
 
   @area "lifecycle"
 

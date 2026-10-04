@@ -1,4 +1,4 @@
-defmodule ArborACP.AdapterIntegrationTest do
+defmodule Arbor.ACP.AdapterIntegrationTest do
   @moduledoc """
   Integration tests for the full adapter pipeline:
   AdapterTransport → AdapterBridge → Adapter → Port subprocess → back
@@ -8,13 +8,13 @@ defmodule ArborACP.AdapterIntegrationTest do
   """
   use ExUnit.Case, async: true
 
-  alias ArborACP.AdapterBridge
-  alias ArborACP.AdapterTransport
+  alias Arbor.ACP.AdapterBridge
+  alias Arbor.ACP.AdapterTransport
 
   # Full-featured mock adapter using `cat` for round-trip testing.
   # Tracks request IDs so inbound echoes produce proper JSON-RPC responses.
   defmodule IntegrationAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct [
       :pending_new_id,
@@ -110,7 +110,7 @@ defmodule ArborACP.AdapterIntegrationTest do
   # Adapter that uses post_connect to perform a handshake with the subprocess.
   # Verifies the skip_and_write return path.
   defmodule HandshakeAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct phase: :initializing, handshake_done: false
 
@@ -163,7 +163,7 @@ defmodule ArborACP.AdapterIntegrationTest do
 
   # Adapter that uses messages_and_write return to send data back while producing messages.
   defmodule WriteBackAdapter do
-    @behaviour ArborACP.Adapter
+    @behaviour Arbor.ACP.Adapter
 
     defstruct ack_count: 0
 

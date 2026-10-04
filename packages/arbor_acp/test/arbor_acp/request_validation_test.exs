@@ -1,7 +1,7 @@
-defmodule ArborACP.RequestValidationTest do
+defmodule Arbor.ACP.RequestValidationTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.RequestValidation
+  alias Arbor.ACP.RequestValidation
 
   @session_id "session-1"
 

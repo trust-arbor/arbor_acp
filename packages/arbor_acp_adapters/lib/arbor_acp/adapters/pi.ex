@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi do
+defmodule Arbor.ACP.Adapters.Pi do
   @moduledoc """
   ACP adapter for the Pi coding agent.
 
@@ -7,31 +7,31 @@ defmodule ArborACP.Adapters.Pi do
   attached to each loaded or resumed ACP session.
   """
 
-  @behaviour ArborACP.Adapter
+  @behaviour Arbor.ACP.Adapter
 
   @impl true
   def name, do: "pi"
 
   require Logger
 
-  alias ArborACP.AdapterSupport.Subprocess, as: PortRunner
+  alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner
 
-  alias ArborACP.Adapters.Pi.Config
-  alias ArborACP.Adapters.Pi.Events
-  alias ArborACP.Adapters.Pi.Prompt
-  alias ArborACP.Adapters.Pi.PromptFlow
-  alias ArborACP.Adapters.Pi.RPC
-  alias ArborACP.Adapters.Pi.Sessions
-  alias ArborACP.Adapters.Pi.SessionStore
-  alias ArborACP.Adapters.Pi.Settings
-  alias ArborACP.Adapters.Pi.SlashCommands
-  alias ArborACP.Adapters.Pi.Startup
-  alias ArborACP.Adapters.Pi.Tools
+  alias Arbor.ACP.Adapters.Pi.Config
+  alias Arbor.ACP.Adapters.Pi.Events
+  alias Arbor.ACP.Adapters.Pi.Prompt
+  alias Arbor.ACP.Adapters.Pi.PromptFlow
+  alias Arbor.ACP.Adapters.Pi.RPC
+  alias Arbor.ACP.Adapters.Pi.Sessions
+  alias Arbor.ACP.Adapters.Pi.SessionStore
+  alias Arbor.ACP.Adapters.Pi.Settings
+  alias Arbor.ACP.Adapters.Pi.SlashCommands
+  alias Arbor.ACP.Adapters.Pi.Startup
+  alias Arbor.ACP.Adapters.Pi.Tools
 
-  alias ArborACP.AdapterEvents
-  alias ArborRPC.JSONRPC, as: Envelope
-  alias ArborACP.Adapters.Internal.PromptQueue
-  alias ArborACP.Types
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.RPC.JSONRPC, as: Envelope
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Types
 
   @auth_method_id "pi_terminal_login"
 
@@ -70,7 +70,7 @@ defmodule ArborACP.Adapters.Pi do
   ]
 
   @impl true
-  def environment_defaults(opts), do: ArborACP.Adapters.Internal.Environment.pi(opts)
+  def environment_defaults(opts), do: Arbor.ACP.Adapters.Internal.Environment.pi(opts)
 
   @impl true
   def init(opts) do

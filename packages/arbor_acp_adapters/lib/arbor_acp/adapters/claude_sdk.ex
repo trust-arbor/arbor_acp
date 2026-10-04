@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ClaudeSDK do
+defmodule Arbor.ACP.Adapters.ClaudeSDK do
   @moduledoc """
   Adapter for Claude Code using the Claude Agent SDK process protocol.
 
@@ -37,19 +37,19 @@ defmodule ArborACP.Adapters.ClaudeSDK do
   adapter, so a launch that has one is not checked.)
   """
 
-  @behaviour ArborACP.Adapter
+  @behaviour Arbor.ACP.Adapter
 
   @impl true
   def name, do: "claude_sdk"
 
   require Logger
 
-  alias ArborACP.Adapters.ClaudeSDK.Mapper
-  alias ArborACP.Adapters.ClaudeSDK.MCPConfig
-  alias ArborACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
-  alias ArborACP.Adapters.ClaudeSDK.SessionStore
-  alias ArborRPC.JSONRPC, as: Envelope
-  alias ArborACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.ClaudeSDK.Mapper
+  alias Arbor.ACP.Adapters.ClaudeSDK.MCPConfig
+  alias Arbor.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
+  alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
+  alias Arbor.RPC.JSONRPC, as: Envelope
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
 
   # `session/fork` fork point, as claude-agent-acp reads it: an explicitly
   # versioned object under `_meta.jetbrains.air.fork`.
@@ -110,7 +110,7 @@ defmodule ArborACP.Adapters.ClaudeSDK do
   ]
 
   @impl true
-  def environment_defaults(_opts), do: ArborACP.Adapters.Internal.Environment.defaults()
+  def environment_defaults(_opts), do: Arbor.ACP.Adapters.Internal.Environment.defaults()
 
   @impl true
   def init(opts) do

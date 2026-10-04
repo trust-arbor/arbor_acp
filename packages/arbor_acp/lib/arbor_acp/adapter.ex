@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapter do
+defmodule Arbor.ACP.Adapter do
   @moduledoc """
   Behaviour for adapting non-native CLI agents to ACP.
 
@@ -45,7 +45,7 @@ defmodule ArborACP.Adapter do
   `:adapter_managed` and implement `handle_adapter_message/2`.
 
   Return `{:error, reason}` when the options cannot be turned into a launch
-  command; `ArborACP.AdapterBridge` then stops with `reason`, so its
+  command; `Arbor.ACP.AdapterBridge` then stops with `reason`, so its
   `start_link/1` returns `{:error, reason}`.
   """
   @callback command(opts :: keyword()) ::

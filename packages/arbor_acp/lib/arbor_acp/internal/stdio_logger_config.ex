@@ -1,4 +1,4 @@
-defmodule ArborACP.Internal.StdioLoggerConfig do
+defmodule Arbor.ACP.Internal.StdioLoggerConfig do
   @moduledoc """
   Configures logging for the MCP stdio transport so stdout stays JSON-RPC only.
 

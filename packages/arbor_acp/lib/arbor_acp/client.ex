@@ -1,4 +1,4 @@
-defmodule ArborACP.Client do
+defmodule Arbor.ACP.Client do
   @moduledoc """
   GenServer client for the Agent Client Protocol (ACP).
 
@@ -8,18 +8,18 @@ defmodule ArborACP.Client do
 
   ## Usage
 
-      {:ok, client} = ArborACP.Client.start_link(
+      {:ok, client} = Arbor.ACP.Client.start_link(
         command: ["gemini", "--acp"],
         handler: MyApp.ACPHandler
       )
 
-      {:ok, %{"sessionId" => sid}} = ArborACP.Client.new_session(client, "/path/to/project")
-      {:ok, %{"stopReason" => _}} = ArborACP.Client.prompt(client, sid, "Fix the bug in auth.ex")
+      {:ok, %{"sessionId" => sid}} = Arbor.ACP.Client.new_session(client, "/path/to/project")
+      {:ok, %{"stopReason" => _}} = Arbor.ACP.Client.prompt(client, sid, "Fix the bug in auth.ex")
 
   ## Options
 
   - `:command` — command list for the agent subprocess (required)
-  - `:handler` — module implementing `ArborACP.Client.Handler` (default: `DefaultHandler`)
+  - `:handler` — module implementing `Arbor.ACP.Client.Handler` (default: `DefaultHandler`)
   - `:handler_opts` — options passed to `handler.init/1` (default: `[]`)
   - `:event_listener` — PID to receive `{:acp_session_update, session_id, update}` messages
   - `:client_info` — `%{"name" => ..., "version" => ...}` (default: `%{"name" => "ex_mcp", "version" => "0.1.0"}`)
@@ -48,18 +48,18 @@ defmodule ArborACP.Client do
 
   require Logger
 
-  alias ArborACP.Capabilities
-  alias ArborACP.LifecycleParams
-  alias ArborACP.Maps
-  alias ArborACP.PendingRequests
-  alias ArborACP.RequestValidation
-  alias ArborACP.Client.DefaultHandler
-  alias ArborACP.Client.HandlerRunner
-  alias ArborACP.Protocol
-  alias ArborRPC.LogSummary
-  alias ArborACP.Internal.Options
-  alias ArborACP.AdapterSupport.WorkspacePath
-  alias ArborACP.Transport.Stdio
+  alias Arbor.ACP.Capabilities
+  alias Arbor.ACP.LifecycleParams
+  alias Arbor.ACP.Maps
+  alias Arbor.ACP.PendingRequests
+  alias Arbor.ACP.RequestValidation
+  alias Arbor.ACP.Client.DefaultHandler
+  alias Arbor.ACP.Client.HandlerRunner
+  alias Arbor.ACP.Protocol
+  alias Arbor.RPC.LogSummary
+  alias Arbor.ACP.Internal.Options
+  alias Arbor.ACP.AdapterSupport.WorkspacePath
+  alias Arbor.ACP.Transport.Stdio
 
   @default_initialize_timeout 30_000
   @maximum_initialize_timeout 4_294_967_295

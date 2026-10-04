@@ -1,9 +1,9 @@
-defmodule ArborACP.Adapters.ZCode.MapperTest do
+defmodule Arbor.ACP.Adapters.ZCode.MapperTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.ZCode
-  alias ArborACP.Adapters.ZCode.Mapper
-  alias ArborACP.Adapters.ZCode.Protocol
+  alias Arbor.ACP.Adapters.ZCode
+  alias Arbor.ACP.Adapters.ZCode.Mapper
+  alias Arbor.ACP.Adapters.ZCode.Protocol
 
   describe "runtime preferences" do
     test "uses a context-budget strategy accepted by current ZCode releases" do

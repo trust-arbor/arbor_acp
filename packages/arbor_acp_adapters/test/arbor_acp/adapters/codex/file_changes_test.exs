@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.Codex.FileChangesTest do
+defmodule Arbor.ACP.Adapters.Codex.FileChangesTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Codex.FileChanges
+  alias Arbor.ACP.Adapters.Codex.FileChanges
 
   test "started maps the existing file change tool call shape" do
     params = %{"itemId" => "edit-1"}

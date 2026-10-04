@@ -1,6 +1,6 @@
-defmodule ArborACP.Test.PiGolden do
+defmodule Arbor.ACP.Test.PiGolden do
   @moduledoc """
-  Golden-transcript harness for characterizing `ArborACP.Adapters.Pi`.
+  Golden-transcript harness for characterizing `Arbor.ACP.Adapters.Pi`.
 
   Every step drives one public adapter callback (`init/1`,
   `translate_outbound/2`, `translate_inbound/2`, `handle_adapter_message/2`,
@@ -66,7 +66,7 @@ defmodule ArborACP.Test.PiGolden do
 
   ## Transcript entries
 
-  Each entry is an `ArborACP.Test.PiGolden.Entry` struct (a map with `:step`
+  Each entry is an `Arbor.ACP.Test.PiGolden.Entry` struct (a map with `:step`
   and `:result`), so fixtures render the cause (`step`) before its effect
   (`result`). `:result` holds only the keys that apply: `tag` (the adapter's
   return tag), `writes` (RPC lines returned to the bridge), `port_writes`
@@ -77,13 +77,13 @@ defmodule ArborACP.Test.PiGolden do
   ## Wire framing
 
   RPC writes are recorded as JSON-decoded maps for readability, but the
-  NDJSON framing produced by `ArborACP.Adapters.Pi.RPC.line/1` is enforced
+  NDJSON framing produced by `Arbor.ACP.Adapters.Pi.RPC.line/1` is enforced
   on every write before decoding: the iodata must be empty or consist of
   JSON objects each terminated by exactly one `"\\n"`. A write whose final
   object lacks its terminator, or that contains an empty line, raises rather
   than silently producing the same transcript.
 
-  The `ArborACP.Adapter` behaviour also allows `{:one_shot, fun, state}`,
+  The `Arbor.ACP.Adapter` behaviour also allows `{:one_shot, fun, state}`,
   `{:partial, state}` and `{:reply_and_write, result, data, state}`. The Pi
   adapter never returns them and `normalize_result/1` deliberately has no
   clauses for them; a step that produced one raises a `FunctionClauseError`
@@ -142,7 +142,7 @@ defmodule ArborACP.Test.PiGolden do
 
   import ExUnit.Assertions, only: [flunk: 1, assert: 1]
 
-  alias ArborACP.Adapters.Pi
+  alias Arbor.ACP.Adapters.Pi
 
   defmodule Entry do
     @moduledoc "One transcript entry: the step as executed and the adapter's normalized result."
@@ -157,7 +157,7 @@ defmodule ArborACP.Test.PiGolden do
 
   @fake_pi_script """
   #!/bin/sh
-  # Fake `pi` for ArborACP.Test.PiGolden: echoes every stdin line back on stdout
+  # Fake `pi` for Arbor.ACP.Test.PiGolden: echoes every stdin line back on stdout
   # so the harness can observe what the adapter wrote; "__exit__ N" exits N.
   while IFS= read -r line; do
     case "$line" in

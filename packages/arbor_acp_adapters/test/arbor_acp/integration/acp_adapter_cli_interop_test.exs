@@ -1,4 +1,4 @@
-defmodule ArborACP.Integration.ACPAdapterCLIInteropTest do
+defmodule Arbor.ACP.Integration.ACPAdapterCLIInteropTest do
   @moduledoc """
   Credential-free smoke tests against the actual CLIs behind all built-in ACP adapters.
 
@@ -20,11 +20,11 @@ defmodule ArborACP.Integration.ACPAdapterCLIInteropTest do
 
   use ExUnit.Case, async: false
 
-  alias ArborACP.Client
-  alias ArborACP.Adapters.ClaudeSDK
-  alias ArborACP.Adapters.Codex
-  alias ArborACP.Adapters.Pi
-  alias ArborACP.Adapters.ZCode
+  alias Arbor.ACP.Client
+  alias Arbor.ACP.Adapters.ClaudeSDK
+  alias Arbor.ACP.Adapters.Codex
+  alias Arbor.ACP.Adapters.Pi
+  alias Arbor.ACP.Adapters.ZCode
 
   @moduletag :external
   @moduletag :interop_acp_cli
@@ -164,8 +164,8 @@ defmodule ArborACP.Integration.ACPAdapterCLIInteropTest do
 
   defp exercise_adapter(adapter, adapter_opts, root) do
     assert {:ok, client} =
-             ArborACP.start_client(
-               transport_mod: ArborACP.AdapterTransport,
+             Arbor.ACP.start_client(
+               transport_mod: Arbor.ACP.AdapterTransport,
                adapter: adapter,
                adapter_opts: adapter_opts,
                initialize_timeout: 30_000,

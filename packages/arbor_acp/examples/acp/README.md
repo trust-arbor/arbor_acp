@@ -15,5 +15,5 @@ mix run examples/acp/controller.exs
 
 The naming follows the official ACP SDK roles:
 
-- `ArborACP.Client` is the controller/client side of the protocol.
-- `ArborACP.Agent` is the agent/server side of the protocol.
+- `Arbor.ACP.Client` is the controller/client side of the protocol.
+- `Arbor.ACP.Agent` is the agent/server side of the protocol.

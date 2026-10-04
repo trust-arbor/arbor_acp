@@ -6,6 +6,8 @@ Each project is independently publishable as version `2.0.0-dev`. `arbor_acp` ha
 
 ## Completed checks
 
+The accepted `Arbor.ACP.*` / `Arbor.RPC.*` migration was verified from empty package build caches with the same suite counts below. All three distinct Mix projects use the corresponding nested namespaces. Legacy metadata and storage markers were compared against the extraction commit and remained unchanged.
+
 Toolchain: Elixir 1.19.5 / OTP 28.4.1, using a task-private Hex 2.5.1 archive compiled for that toolchain. External dependencies used the reviewed source cache through `ARBOR_V2_DEPS`; workspace dependencies used `ARBOR_V2_LOCAL=1`. The final verification tools are private to this task; a temporary mise-directed archive installation was removed.
 
 - RPC: 34 tests, zero failures.
@@ -22,7 +24,7 @@ The new CI workflow qualifies the advertised minimum (Elixir 1.17.3 / OTP 27) an
 
 ## Remaining v2 gates
 
-- Final namespace choice and corresponding migration documentation remain pending user decision; current module names are mechanical placeholders.
+- Accepted namespaces are `Arbor.ACP.*` and `Arbor.RPC.*`. This checkpoint keeps existing `lib/arbor_acp`, `lib/arbor_rpc`, and matching test paths; directory depth is an implementation detail. Full consumer migration documentation remains a release gate.
 - Shared subprocess ownership, process-tree cleanup, bounded delivery queues, and global stdio logger lifecycle are not yet converged. The core subprocess helper and ACP stdio wrapper temporarily retain the current main implementation.
 - Full runtime/scheduler redesign and the accepted full v2 protocol/API scope remain release gates.
 - Minimum toolchain qualification, documentation generation, clean Hex dependency consumer installation, live credential-free ecosystem smoke, and broader cross-runtime interop remain release checks. The local workspace path checks do not establish those outcomes.

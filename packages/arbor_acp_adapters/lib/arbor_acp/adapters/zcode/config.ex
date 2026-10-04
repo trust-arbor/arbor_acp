@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ZCode.Config do
+defmodule Arbor.ACP.Adapters.ZCode.Config do
   @moduledoc false
 
   # Pure config and mode helpers for the ZCode ACP adapter.

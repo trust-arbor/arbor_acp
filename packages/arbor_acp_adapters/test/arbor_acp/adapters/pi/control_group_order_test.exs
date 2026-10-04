@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.ControlGroupOrderTest do
+defmodule Arbor.ACP.Adapters.Pi.ControlGroupOrderTest do
   @moduledoc """
   Regression test for the order in which subprocess exit fails pending
   control groups.
@@ -18,8 +18,8 @@ defmodule ArborACP.Adapters.Pi.ControlGroupOrderTest do
 
   use ExUnit.Case, async: false
 
-  alias ArborACP.Test.PiGolden
-  alias ArborACP.Test.PiGolden.Flows
+  alias Arbor.ACP.Test.PiGolden
+  alias Arbor.ACP.Test.PiGolden.Flows
 
   test "exit fails control groups in creation order across a digit boundary" do
     # open_session mints one group (10^k - 2, settled before the exit); the

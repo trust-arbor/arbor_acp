@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.Pi.Startup do
+defmodule Arbor.ACP.Adapters.Pi.Startup do
   @moduledoc false
 
-  alias ArborACP.Adapters.Pi.Settings
+  alias Arbor.ACP.Adapters.Pi.Settings
 
   @package "@earendil-works/pi-coding-agent"
   @notice_timeout 800

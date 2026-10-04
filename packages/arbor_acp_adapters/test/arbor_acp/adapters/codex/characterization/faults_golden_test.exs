@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Codex.FaultsGoldenTest do
+defmodule Arbor.ACP.Adapters.Codex.FaultsGoldenTest do
   @moduledoc """
   Characterization gate for the Codex ACP adapter's cancellation and fault
   handling wire behavior (area A6 of `docs/POST_1_0_MAINTENANCE_PLAN.md`,
   "Codex adapter restructuring" / "Characterization gate").
 
-  Each test drives `ArborACP.Adapters.Codex` through `ArborACP.Test.CodexGolden`
+  Each test drives `Arbor.ACP.Adapters.Codex` through `Arbor.ACP.Test.CodexGolden`
   and compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/codex/faults/`. The fixtures pin:
 
@@ -57,13 +57,13 @@ defmodule ArborACP.Adapters.Codex.FaultsGoldenTest do
   here.
 
   Client-side request timeouts, subprocess exit, and port closure are owned by
-  `ArborACP.Client` and `ArborACP.AdapterBridge`, not by the adapter (it
+  `Arbor.ACP.Client` and `Arbor.ACP.AdapterBridge`, not by the adapter (it
   never expires a pending request and only fences by state), so they are
   deliberately not characterized here.
 
   Adapter-generated ACP request ids are normalized to placeholders such as
   `"codex-permission-<1>"`; step functions answer them with the real id via
-  `ArborACP.Test.CodexGolden.generated_ids/1`.
+  `Arbor.ACP.Test.CodexGolden.generated_ids/1`.
 
   To regenerate a fixture after an intentional behavior change, run the test
   with `CODEX_GOLDEN=update mix test <this file>[:line]`; that run rewrites the
@@ -73,7 +73,7 @@ defmodule ArborACP.Adapters.Codex.FaultsGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.CodexGolden
+  alias Arbor.ACP.Test.CodexGolden
 
   @area "faults"
   @thread "thread-1"

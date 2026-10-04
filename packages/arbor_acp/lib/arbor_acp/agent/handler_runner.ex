@@ -1,4 +1,4 @@
-defmodule ArborACP.Agent.HandlerRunner do
+defmodule Arbor.ACP.Agent.HandlerRunner do
   @moduledoc false
 
   use GenServer

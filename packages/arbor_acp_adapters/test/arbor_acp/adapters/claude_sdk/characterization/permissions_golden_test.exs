@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
   @moduledoc """
   Characterization gate for the Claude SDK adapter's permission bridge
   (`docs/POST_1_0_MAINTENANCE_PLAN.md`, "Claude adapter characterization
@@ -6,8 +6,8 @@ defmodule ArborACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
   control, the `allowDangerouslySkipPermissions` session opt-out, and
   AskUserQuestion answer folding).
 
-  Each test drives `ArborACP.Adapters.ClaudeSDK` through
-  `ArborACP.Test.ClaudeGolden` and compares the recorded transcript against a
+  Each test drives `Arbor.ACP.Adapters.ClaudeSDK` through
+  `Arbor.ACP.Test.ClaudeGolden` and compares the recorded transcript against a
   committed fixture under `test/fixtures/acp/claude/permissions/`. The
   fixtures pin:
 
@@ -78,8 +78,8 @@ defmodule ArborACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.ClaudeGolden
-  alias ArborACP.Test.ClaudeGolden.Flows
+  alias Arbor.ACP.Test.ClaudeGolden
+  alias Arbor.ACP.Test.ClaudeGolden.Flows
 
   @area "permissions"
   @form_caps %{"elicitation" => %{"form" => %{}}}

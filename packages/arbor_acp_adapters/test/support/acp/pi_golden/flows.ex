@@ -1,14 +1,14 @@
-defmodule ArborACP.Test.PiGolden.Flows do
+defmodule Arbor.ACP.Test.PiGolden.Flows do
   @moduledoc """
   Step-list builders shared by the Pi golden scenarios.
 
-  Everything here is sugar over `ArborACP.Test.PiGolden` steps: the builders
+  Everything here is sugar over `Arbor.ACP.Test.PiGolden` steps: the builders
   only assemble ACP messages, Pi RPC events, and sandbox files. They make
   no assertions and reach every precondition through the adapter's public
   callbacks, so a scenario stays readable as "open a session, prompt,
   stream, settle" without repeating the five-message handshake each time.
 
-  Paths use the `"<sandbox>"` placeholder documented in `ArborACP.Test.PiGolden`.
+  Paths use the `"<sandbox>"` placeholder documented in `Arbor.ACP.Test.PiGolden`.
   """
 
   @default_session_id "pi-session"
@@ -32,7 +32,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   def models, do: @default_models
 
   @doc "The `session/new` request."
-  @spec session_new(term(), map()) :: ArborACP.Test.PiGolden.step()
+  @spec session_new(term(), map()) :: Arbor.ACP.Test.PiGolden.step()
   def session_new(acp_id, params \\ %{}) do
     {:outbound,
      %{
@@ -43,7 +43,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "The `session/load` request."
-  @spec session_load(term(), String.t(), map()) :: ArborACP.Test.PiGolden.step()
+  @spec session_load(term(), String.t(), map()) :: Arbor.ACP.Test.PiGolden.step()
   def session_load(acp_id, session_id, params \\ %{}) do
     {:outbound,
      %{
@@ -54,7 +54,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "The `session/resume` request."
-  @spec session_resume(term(), String.t(), map()) :: ArborACP.Test.PiGolden.step()
+  @spec session_resume(term(), String.t(), map()) :: Arbor.ACP.Test.PiGolden.step()
   def session_resume(acp_id, session_id, params \\ %{}) do
     {:outbound,
      %{
@@ -86,7 +86,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   Options: `:state` (get_state overrides), `:models` (catalog list),
   `:commands` (Pi command list), `:params` (session/new params).
   """
-  @spec open_session(term(), keyword()) :: [ArborACP.Test.PiGolden.step()]
+  @spec open_session(term(), keyword()) :: [Arbor.ACP.Test.PiGolden.step()]
   def open_session(acp_id \\ 1, opts \\ []) do
     [
       session_new(acp_id, Keyword.get(opts, :params, %{})),
@@ -99,7 +99,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "A session map file with one entry per `{session_id, cwd, session_file}` triple."
-  @spec session_map([{String.t(), String.t(), String.t()}]) :: ArborACP.Test.PiGolden.step()
+  @spec session_map([{String.t(), String.t(), String.t()}]) :: Arbor.ACP.Test.PiGolden.step()
   def session_map(entries) do
     sessions =
       Map.new(entries, fn {id, cwd, file} ->
@@ -116,7 +116,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   (`session_info` rename), `:extra` (additional lines appended verbatim),
   `:path` (defaults to `session_file(id)`).
   """
-  @spec session_jsonl(String.t(), keyword()) :: ArborACP.Test.PiGolden.step()
+  @spec session_jsonl(String.t(), keyword()) :: Arbor.ACP.Test.PiGolden.step()
   def session_jsonl(id, opts \\ []) do
     lines =
       [
@@ -152,7 +152,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "A `session/prompt` request; `prompt` is a string or a content-block list."
-  @spec prompt(term(), String.t() | [map()], map()) :: ArborACP.Test.PiGolden.step()
+  @spec prompt(term(), String.t() | [map()], map()) :: Arbor.ACP.Test.PiGolden.step()
   def prompt(acp_id, prompt, params \\ %{}) do
     {:outbound,
      %{
@@ -163,12 +163,12 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "A `session/cancel` notification."
-  @spec cancel(map()) :: ArborACP.Test.PiGolden.step()
+  @spec cancel(map()) :: Arbor.ACP.Test.PiGolden.step()
   def cancel(params \\ %{"sessionId" => @default_session_id}),
     do: {:outbound, %{"method" => "session/cancel", "params" => params}}
 
   @doc "A `session/set_config_option` request."
-  @spec set_config(term(), String.t(), term(), map()) :: ArborACP.Test.PiGolden.step()
+  @spec set_config(term(), String.t(), term(), map()) :: Arbor.ACP.Test.PiGolden.step()
   def set_config(acp_id, config_id, value, params \\ %{}) do
     {:outbound,
      %{
@@ -183,7 +183,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "A `session/set_mode` request."
-  @spec set_mode(term(), String.t(), map()) :: ArborACP.Test.PiGolden.step()
+  @spec set_mode(term(), String.t(), map()) :: Arbor.ACP.Test.PiGolden.step()
   def set_mode(acp_id, mode, params \\ %{}) do
     {:outbound,
      %{
@@ -194,7 +194,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "A `session/set_model` request."
-  @spec set_model(term(), term(), map()) :: ArborACP.Test.PiGolden.step()
+  @spec set_model(term(), term(), map()) :: Arbor.ACP.Test.PiGolden.step()
   def set_model(acp_id, model_id, params \\ %{}) do
     {:outbound,
      %{
@@ -205,20 +205,20 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "A Pi `message_update` stream event wrapping an assistant message event."
-  @spec message_update(map()) :: ArborACP.Test.PiGolden.step()
+  @spec message_update(map()) :: Arbor.ACP.Test.PiGolden.step()
   def message_update(assistant_event),
     do: {:inbound, %{"type" => "message_update", "assistantMessageEvent" => assistant_event}}
 
   @doc "An assistant `text_delta` stream event."
-  @spec text_delta(String.t()) :: ArborACP.Test.PiGolden.step()
+  @spec text_delta(String.t()) :: Arbor.ACP.Test.PiGolden.step()
   def text_delta(text), do: message_update(%{"type" => "text_delta", "delta" => text})
 
   @doc "An assistant `thinking_delta` stream event."
-  @spec thinking_delta(String.t()) :: ArborACP.Test.PiGolden.step()
+  @spec thinking_delta(String.t()) :: Arbor.ACP.Test.PiGolden.step()
   def thinking_delta(text), do: message_update(%{"type" => "thinking_delta", "delta" => text})
 
   @doc "A Pi `agent_end` event carrying the final assistant usage."
-  @spec agent_end(map() | nil) :: ArborACP.Test.PiGolden.step()
+  @spec agent_end(map() | nil) :: Arbor.ACP.Test.PiGolden.step()
   def agent_end(usage \\ %{"input" => 10, "output" => 4}) do
     messages =
       case usage do
@@ -230,11 +230,11 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "A Pi `agent_settled` event."
-  @spec agent_settled() :: ArborACP.Test.PiGolden.step()
+  @spec agent_settled() :: Arbor.ACP.Test.PiGolden.step()
   def agent_settled, do: {:inbound, %{"type" => "agent_settled"}}
 
   @doc "A Pi `tool_execution_start` event."
-  @spec tool_start(String.t(), String.t(), map()) :: ArborACP.Test.PiGolden.step()
+  @spec tool_start(String.t(), String.t(), map()) :: Arbor.ACP.Test.PiGolden.step()
   def tool_start(tool_call_id, tool_name, args) do
     {:inbound,
      %{
@@ -246,7 +246,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "A Pi `tool_execution_update` event."
-  @spec tool_update(String.t(), term()) :: ArborACP.Test.PiGolden.step()
+  @spec tool_update(String.t(), term()) :: Arbor.ACP.Test.PiGolden.step()
   def tool_update(tool_call_id, partial) do
     {:inbound,
      %{
@@ -257,7 +257,7 @@ defmodule ArborACP.Test.PiGolden.Flows do
   end
 
   @doc "A Pi `tool_execution_end` event."
-  @spec tool_end(String.t(), term(), boolean()) :: ArborACP.Test.PiGolden.step()
+  @spec tool_end(String.t(), term(), boolean()) :: Arbor.ACP.Test.PiGolden.step()
   def tool_end(tool_call_id, result, is_error \\ false) do
     {:inbound,
      %{

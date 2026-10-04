@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.PromptFlow do
+defmodule Arbor.ACP.Adapters.Pi.PromptFlow do
   @moduledoc false
 
   # Pure prompt scheduling for the Pi ACP adapter: what happens to the active
@@ -6,11 +6,11 @@ defmodule ArborACP.Adapters.Pi.PromptFlow do
   # planners hand the root adapter an NDJSON payload and the updated state,
   # and the root decides how to deliver it.
 
-  alias ArborACP.Adapters.Pi.RPC
-  alias ArborACP.AdapterEvents
-  alias ArborRPC.JSONRPC, as: Envelope
-  alias ArborACP.Adapters.Internal.PromptQueue
-  alias ArborACP.Adapters.Internal.Maps
+  alias Arbor.ACP.Adapters.Pi.RPC
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.RPC.JSONRPC, as: Envelope
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.Internal.Maps
 
   @typedoc """
   The subset of the adapter struct the prompt-flow helpers read and update.

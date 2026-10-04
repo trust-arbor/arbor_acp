@@ -1,6 +1,6 @@
-defmodule ArborACP.Adapters.Internal.Environment do
+defmodule Arbor.ACP.Adapters.Internal.Environment do
   @moduledoc false
-  alias ArborRPC.PortEnvironment
+  alias Arbor.RPC.PortEnvironment
   @session_vars_to_clear ~w(
     CLAUDE_CODE_ENTRYPOINT CLAUDE_SESSION_ID CLAUDE_CONFIG_DIR CLAUDECODE
     CODEX_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY PI_API_KEY

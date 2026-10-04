@@ -1,8 +1,8 @@
-defmodule ArborACP.Agent.Transport.StdioI18nTest do
+defmodule Arbor.ACP.Agent.Transport.StdioI18nTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Agent.Transport.Stdio
-  alias ArborACP.Test.I18nCorpus
+  alias Arbor.ACP.Agent.Transport.Stdio
+  alias Arbor.ACP.Test.I18nCorpus
 
   # Embedders pass their own devices. A developer shell gives the transport a
   # unicode-mode stdio; a locale-less service gives it latin1. Both must move

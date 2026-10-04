@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
   @moduledoc """
   Characterization gate for the Claude SDK adapter's session update
   ordering (`docs/POST_1_0_MAINTENANCE_PLAN.md`, "Claude adapter
@@ -7,8 +7,8 @@ defmodule ArborACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
   `session_info_update`, `current_mode_update`, `config_option_update`,
   `available_commands_update`, and usage).
 
-  Each test drives `ArborACP.Adapters.ClaudeSDK` through
-  `ArborACP.Test.ClaudeGolden` and compares the recorded transcript against a
+  Each test drives `Arbor.ACP.Adapters.ClaudeSDK` through
+  `Arbor.ACP.Test.ClaudeGolden` and compares the recorded transcript against a
   committed fixture under `test/fixtures/acp/claude/session_updates/`. The
   fixtures pin:
 
@@ -78,8 +78,8 @@ defmodule ArborACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.ClaudeGolden
-  alias ArborACP.Test.ClaudeGolden.Flows
+  alias Arbor.ACP.Test.ClaudeGolden
+  alias Arbor.ACP.Test.ClaudeGolden.Flows
 
   @area "session_updates"
 

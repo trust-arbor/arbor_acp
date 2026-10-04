@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -10,7 +10,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       content: %{"mcpServers" => %{"docs" => %{"command" => "d"}}},
       kind: :write_file,
@@ -18,7 +18,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :command,
       opts: [cli_path: "<sandbox>/bin/claude", mcp_config_path: "<sandbox>/mcp.json"]
@@ -33,14 +33,14 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :note,
       text: "A relative path is resolved against the directory Claude Code runs in"
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       content: %{"mcpServers" => %{}},
       kind: :write_file,
@@ -48,7 +48,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :command,
       opts: [

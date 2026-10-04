@@ -1,18 +1,18 @@
-defmodule ArborACP.Adapters.ClaudeSDK.MCPConfigGoldenTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.MCPConfigGoldenTest do
   @moduledoc """
   Characterization gate for the Claude SDK adapter's process configuration
   and authorization (`docs/POST_1_0_MAINTENANCE_PLAN.md`, "Claude adapter
   characterization gate": MCP server normalization, native config output,
   and authorization failures).
 
-  Each test drives `ArborACP.Adapters.ClaudeSDK` through
-  `ArborACP.Test.ClaudeGolden` and compares the recorded transcript against a
+  Each test drives `Arbor.ACP.Adapters.ClaudeSDK` through
+  `Arbor.ACP.Test.ClaudeGolden` and compares the recorded transcript against a
   committed fixture under `test/fixtures/acp/claude/mcp_config/`. The
   fixtures pin:
 
     * the `--mcp-config` file `command/1` writes for `:mcp_servers` - one
       entry per stdio, HTTP and SSE server, atom keys stringified through
-      `ArborACP.Adapters.Internal.Maps.stringify_keys/1`, mode 0600 in a 0700 directory, and
+      `Arbor.ACP.Adapters.Internal.Maps.stringify_keys/1`, mode 0600 in a 0700 directory, and
       only its path on the command line - and the absence of the flag for an
       empty or missing server map, plus `--strict-mcp-config`;
     * `:mcp_config_path` files passed as paths (a relative one resolved
@@ -59,8 +59,8 @@ defmodule ArborACP.Adapters.ClaudeSDK.MCPConfigGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.ClaudeGolden
-  alias ArborACP.Test.ClaudeGolden.Flows
+  alias Arbor.ACP.Test.ClaudeGolden
+  alias Arbor.ACP.Test.ClaudeGolden.Flows
 
   @area "mcp_config"
 

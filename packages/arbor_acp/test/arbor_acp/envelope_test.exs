@@ -1,7 +1,7 @@
-defmodule ArborACP.EnvelopeTest do
+defmodule Arbor.ACP.EnvelopeTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Envelope
+  alias Arbor.ACP.Envelope
 
   test "builds pipe-friendly requests" do
     request =

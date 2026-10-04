@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Codex.CatalogGoldenTest do
+defmodule Arbor.ACP.Adapters.Codex.CatalogGoldenTest do
   @moduledoc """
   Characterization gate for the Codex ACP adapter's model and mode catalog
   behavior (area A7 of `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Codex adapter
   restructuring" / "Characterization gate").
 
-  It pins how `ArborACP.Adapters.Codex` normalizes `model/list` replies (v2
+  It pins how `Arbor.ACP.Adapters.Codex` normalizes `model/list` replies (v2
   and legacy shapes, hidden models, malformed entries, empty and error
   replies), how the catalog surfaces in `session/new` results (`models`,
   `configOptions`, `modes` with `_meta.kind` and `currentModeId`), how
@@ -22,7 +22,7 @@ defmodule ArborACP.Adapters.Codex.CatalogGoldenTest do
   session. A selection that carries no effort (a catalog model without
   supported efforts) leaves the adapter-wide effort in force.
 
-  Each test drives the adapter through `ArborACP.Test.CodexGolden` and compares
+  Each test drives the adapter through `Arbor.ACP.Test.CodexGolden` and compares
   the recorded transcript with a fixture under
   `test/fixtures/acp/codex/catalog/`. To regenerate after an intentional
   behavior change run
@@ -35,7 +35,7 @@ defmodule ArborACP.Adapters.Codex.CatalogGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.CodexGolden
+  alias Arbor.ACP.Test.CodexGolden
 
   @area "catalog"
   @session_id "thread-abc"

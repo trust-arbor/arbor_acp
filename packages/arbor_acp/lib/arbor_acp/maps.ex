@@ -1,4 +1,4 @@
-defmodule ArborACP.Maps do
+defmodule Arbor.ACP.Maps do
   @moduledoc false
 
   # Small pure map helpers used by ACP protocol, client, agent, and adapters.
@@ -30,15 +30,15 @@ defmodule ArborACP.Maps do
 
   @doc "Puts `value` into `map` when the value is not `nil`."
   @spec put_present(map(), any(), any()) :: map()
-  defdelegate put_present(map, key, value), to: ArborACP.Internal.Maps
+  defdelegate put_present(map, key, value), to: Arbor.ACP.Internal.Maps
 
   @doc "Puts `value` into `map` when the value is present and not empty."
   @spec put_non_empty(map(), any(), any()) :: map()
-  defdelegate put_non_empty(map, key, value), to: ArborACP.Internal.Maps
+  defdelegate put_non_empty(map, key, value), to: Arbor.ACP.Internal.Maps
 
   @doc "Puts `value` into `map` unless it equals `skip_value`."
   @spec put_unless(map(), any(), any(), any()) :: map()
-  defdelegate put_unless(map, key, value, skip_value), to: ArborACP.Internal.Maps
+  defdelegate put_unless(map, key, value, skip_value), to: Arbor.ACP.Internal.Maps
 
   @spec stringify_keys(map()) :: map()
   def stringify_keys(map) when is_map(map) do

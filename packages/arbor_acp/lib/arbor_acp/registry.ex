@@ -1,4 +1,4 @@
-defmodule ArborACP.Registry do
+defmodule Arbor.ACP.Registry do
   @moduledoc """
   Helpers for the public ACP agent registry.
 
@@ -9,7 +9,7 @@ defmodule ArborACP.Registry do
 
   @default_url "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
 
-  alias ArborACP.AdapterSupport.NameValue
+  alias Arbor.ACP.AdapterSupport.NameValue
 
   @type agent :: map()
   @type registry :: map()

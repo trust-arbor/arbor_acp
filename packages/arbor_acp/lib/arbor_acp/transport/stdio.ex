@@ -1,4 +1,4 @@
-defmodule ArborACP.Transport.Stdio do
+defmodule Arbor.ACP.Transport.Stdio do
   @moduledoc """
   ACP stdio transport for child processes.
 
@@ -9,14 +9,14 @@ defmodule ArborACP.Transport.Stdio do
   logging convergence remain v2 release gates.
   """
 
-  @behaviour ArborACP.Transport
+  @behaviour Arbor.ACP.Transport
 
   require Logger
 
-  alias ArborRPC.Internal.LineBuffer
-  alias ArborRPC.LogSummary
-  alias ArborACP.Internal.Options
-  alias ArborRPC.PortEnvironment
+  alias Arbor.RPC.Internal.LineBuffer
+  alias Arbor.RPC.LogSummary
+  alias Arbor.ACP.Internal.Options
+  alias Arbor.RPC.PortEnvironment
 
   @termination_poll_ms 10
   @termination_grace_attempts 10

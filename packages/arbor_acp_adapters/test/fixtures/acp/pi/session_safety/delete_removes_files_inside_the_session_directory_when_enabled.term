@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -15,7 +15,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [
         %{
@@ -35,7 +35,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [
         %{
@@ -55,7 +55,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: %{
         "sessions" => %{
@@ -82,36 +82,36 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{"id" => 1, "method" => "session/delete", "params" => %{"sessionId" => "inside"}}
     },
     result: %{reply: %{}, tag: :reply}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{"id" => 2, "method" => "session/delete", "params" => %{"sessionId" => "nested"}}
     },
     result: %{reply: %{}, tag: :reply}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{"id" => 3, "method" => "session/delete", "params" => %{"sessionId" => "gone"}}
     },
     result: %{reply: %{}, tag: :reply}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :read_file, path: "<sandbox>/sessions/inside.jsonl"},
     result: %{exists: false}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :read_file, path: "<sandbox>/sessions/2026/nested.jsonl"},
     result: %{exists: false}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :read_file, path: "<sandbox>/session-map.json"},
     result: %{content: %{"sessions" => %{}, "version" => 1}, exists: true}
   }

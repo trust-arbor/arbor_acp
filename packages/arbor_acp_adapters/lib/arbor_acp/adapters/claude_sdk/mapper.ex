@@ -1,16 +1,16 @@
-defmodule ArborACP.Adapters.ClaudeSDK.Mapper do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.Mapper do
   @moduledoc false
 
   # Pure Claude SDK message to ACP message mapping.
 
-  alias ArborACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
-  alias ArborACP.Adapters.ClaudeSDK.SessionStore
-  alias ArborACP.Adapters.ClaudeSDK.ToolInfo
-  alias ArborACP.Protocol, as: ACPProtocol
-  alias ArborACP.AdapterEvents
-  alias ArborACP.Capabilities
-  alias ArborRPC.JSONRPC, as: Envelope
-  alias ArborACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
+  alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
+  alias Arbor.ACP.Adapters.ClaudeSDK.ToolInfo
+  alias Arbor.ACP.Protocol, as: ACPProtocol
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.ACP.Capabilities
+  alias Arbor.RPC.JSONRPC, as: Envelope
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
 
   @stop_reasons %{
     "end_turn" => "end_turn",
@@ -1970,7 +1970,7 @@ defmodule ArborACP.Adapters.ClaudeSDK.Mapper do
   # (`claude_sdk_<n>` unless the caller supplied one). Claude Code mints its own
   # UUID for the process and stamps every stream-json event with it; adopting
   # that UUID here re-labelled every `session/update` with an id the ACP client
-  # never registered, so `ArborACP.Client` dropped all of them ("ignored an
+  # never registered, so `Arbor.ACP.Client` dropped all of them ("ignored an
   # update for an unknown session") and the turn came back empty (seen with
   # Claude Code 2.1.215, 2026-08-25). Keep the ACP id stable once set; remember
   # the CLI's id separately for provider metadata and correlation.

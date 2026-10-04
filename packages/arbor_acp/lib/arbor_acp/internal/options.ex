@@ -1,4 +1,4 @@
-defmodule ArborACP.Internal.Options do
+defmodule Arbor.ACP.Internal.Options do
   @moduledoc false
 
   @spec positive_integer(keyword(), atom(), pos_integer()) :: pos_integer()

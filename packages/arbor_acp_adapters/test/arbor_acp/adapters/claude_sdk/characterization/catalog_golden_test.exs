@@ -1,11 +1,11 @@
-defmodule ArborACP.Adapters.ClaudeSDK.CatalogGoldenTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.CatalogGoldenTest do
   @moduledoc """
   Characterization gate for the Claude SDK adapter's catalogs
   (`docs/POST_1_0_MAINTENANCE_PLAN.md`, "Claude adapter characterization
   gate": model, mode, and config-option catalog normalization).
 
-  Each test drives `ArborACP.Adapters.ClaudeSDK` through
-  `ArborACP.Test.ClaudeGolden` and compares the recorded transcript against a
+  Each test drives `Arbor.ACP.Adapters.ClaudeSDK` through
+  `Arbor.ACP.Test.ClaudeGolden` and compares the recorded transcript against a
   committed fixture under `test/fixtures/acp/claude/catalog/`. The fixtures
   pin:
 
@@ -62,8 +62,8 @@ defmodule ArborACP.Adapters.ClaudeSDK.CatalogGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.ClaudeGolden
-  alias ArborACP.Test.ClaudeGolden.Flows
+  alias Arbor.ACP.Test.ClaudeGolden
+  alias Arbor.ACP.Test.ClaudeGolden.Flows
 
   @area "catalog"
   @boolean_caps %{"session" => %{"configOptions" => %{"boolean" => true}}}

@@ -1,4 +1,4 @@
-defmodule ArborACP.Meta do
+defmodule Arbor.ACP.Meta do
   @moduledoc false
 
   # Pure helpers for ACP `_meta` extension placement.

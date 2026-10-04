@@ -1,10 +1,10 @@
-defmodule ArborACP.Client.HandlerRunnerCompatTest do
+defmodule Arbor.ACP.Client.HandlerRunnerCompatTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Client.HandlerRunner
+  alias Arbor.ACP.Client.HandlerRunner
 
   defmodule CaptureHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(opts), do: {:ok, %{pid: Keyword.fetch!(opts, :pid)}}

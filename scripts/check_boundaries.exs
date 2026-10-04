@@ -23,14 +23,14 @@ violations =
               true
 
             package == "arbor_rpc" ->
-              String.starts_with?(module, ["ArborACP", "ArborMCP"])
+              String.starts_with?(module, ["Arbor.ACP", "Arbor.MCP"])
 
             package == "arbor_acp" ->
-              String.starts_with?(module, "ArborACP.Adapters")
+              String.starts_with?(module, "Arbor.ACP.Adapters")
 
             package == "arbor_acp_adapters" ->
-              String.starts_with?(module, "ArborACP.Internal") or
-                module in ["ArborACP.Maps", "ArborACP.Envelope", "ArborACP.PendingRequests"]
+              String.starts_with?(module, "Arbor.ACP.Internal") or
+                module in ["Arbor.ACP.Maps", "Arbor.ACP.Envelope", "Arbor.ACP.PendingRequests"]
 
             true ->
               false

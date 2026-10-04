@@ -1,4 +1,4 @@
-defmodule ArborACP.Client.DefaultHandler do
+defmodule Arbor.ACP.Client.DefaultHandler do
   @moduledoc """
   Default ACP handler that collects events and denies permissions.
 
@@ -6,7 +6,7 @@ defmodule ArborACP.Client.DefaultHandler do
   are denied by default. File access is denied.
 
   Useful for testing and simple use cases. For production, implement
-  `ArborACP.Client.Handler` with custom logic.
+  `Arbor.ACP.Client.Handler` with custom logic.
 
   Set `auto_approve_permissions: true` in handler opts only for trusted local
   tests or demos that intentionally approve the first allow option.
@@ -15,7 +15,7 @@ defmodule ArborACP.Client.DefaultHandler do
   `:max_event_bytes` (1 MiB).
   """
 
-  @behaviour ArborACP.Client.Handler
+  @behaviour Arbor.ACP.Client.Handler
   @default_max_events 1_000
   @default_max_event_bytes 1_048_576
 

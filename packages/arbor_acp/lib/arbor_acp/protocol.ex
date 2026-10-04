@@ -1,4 +1,4 @@
-defmodule ArborACP.Protocol do
+defmodule Arbor.ACP.Protocol do
   @moduledoc """
   ACP-specific message encoding.
 
@@ -8,12 +8,12 @@ defmodule ArborACP.Protocol do
   ACP uses integer protocol versions (default: 1) rather than MCP's date-based strings.
   """
 
-  alias ArborACP.AdapterEvents
-  alias ArborACP.Envelope
-  alias ArborACP.LifecycleParams
-  alias ArborACP.Maps
-  alias ArborACP.Meta
-  alias ArborRPC.JSONRPC
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.ACP.Envelope
+  alias Arbor.ACP.LifecycleParams
+  alias Arbor.ACP.Maps
+  alias Arbor.ACP.Meta
+  alias Arbor.RPC.JSONRPC
 
   @default_protocol_version 1
   @request_cancelled_error_code -32_800

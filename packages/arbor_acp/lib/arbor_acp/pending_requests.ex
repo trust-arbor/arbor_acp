@@ -1,4 +1,4 @@
-defmodule ArborACP.PendingRequests do
+defmodule Arbor.ACP.PendingRequests do
   @moduledoc false
 
   @type id :: String.t() | integer() | reference() | nil

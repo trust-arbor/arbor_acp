@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ClaudeSDK.ToolInfo do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.ToolInfo do
   @moduledoc false
 
   # Pure Claude tool-use to ACP tool-call metadata conversion.

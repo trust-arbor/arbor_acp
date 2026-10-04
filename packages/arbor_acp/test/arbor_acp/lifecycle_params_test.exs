@@ -1,7 +1,7 @@
-defmodule ArborACP.LifecycleParamsTest do
+defmodule Arbor.ACP.LifecycleParamsTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.LifecycleParams
+  alias Arbor.ACP.LifecycleParams
 
   describe "pipeline" do
     test "normalizes lifecycle params with mcp servers and additional directories" do

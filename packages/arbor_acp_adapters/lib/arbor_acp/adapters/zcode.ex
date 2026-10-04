@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ZCode do
+defmodule Arbor.ACP.Adapters.ZCode do
   @moduledoc """
   ACP adapter for ZCode using `zcode app-server` persistent mode.
 
@@ -15,21 +15,21 @@ defmodule ArborACP.Adapters.ZCode do
   caller-controlled connection details.
   """
 
-  @behaviour ArborACP.Adapter
+  @behaviour Arbor.ACP.Adapter
 
   @impl true
   def name, do: "zcode"
 
   require Logger
 
-  alias ArborACP.Adapters.ZCode.Config
-  alias ArborACP.Adapters.ZCode.Mapper
-  alias ArborACP.Adapters.ZCode.Protocol
-  alias ArborACP.Adapters.ZCode.Sessions
-  alias ArborACP.AdapterEvents
-  alias ArborRPC.JSONRPC, as: Envelope
-  alias ArborACP.Adapters.Internal.PromptQueue
-  alias ArborACP.Adapters.Internal.Maps
+  alias Arbor.ACP.Adapters.ZCode.Config
+  alias Arbor.ACP.Adapters.ZCode.Mapper
+  alias Arbor.ACP.Adapters.ZCode.Protocol
+  alias Arbor.ACP.Adapters.ZCode.Sessions
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.RPC.JSONRPC, as: Envelope
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.Internal.Maps
 
   defstruct [
     :model,
@@ -47,7 +47,7 @@ defmodule ArborACP.Adapters.ZCode do
   ]
 
   @impl true
-  def environment_defaults(_opts), do: ArborACP.Adapters.Internal.Environment.defaults()
+  def environment_defaults(_opts), do: Arbor.ACP.Adapters.Internal.Environment.defaults()
 
   @impl true
   def init(opts) do

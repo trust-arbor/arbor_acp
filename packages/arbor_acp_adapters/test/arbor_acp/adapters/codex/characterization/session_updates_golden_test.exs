@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Codex.SessionUpdatesGoldenTest do
+defmodule Arbor.ACP.Adapters.Codex.SessionUpdatesGoldenTest do
   @moduledoc """
   Characterization gate for the Codex ACP adapter's session update stream
   (area A4 `session_updates`; see `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Codex
   adapter restructuring" / "Characterization gate").
 
-  Each test drives `ArborACP.Adapters.Codex` through `ArborACP.Test.CodexGolden`
+  Each test drives `Arbor.ACP.Adapters.Codex` through `Arbor.ACP.Test.CodexGolden`
   across a whole prompt turn and compares the recorded transcript against a
   committed fixture under `test/fixtures/acp/codex/session_updates/`. The
   fixtures pin the ORDER and SHAPE of every ACP `session/update` the adapter
@@ -79,7 +79,7 @@ defmodule ArborACP.Adapters.Codex.SessionUpdatesGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.CodexGolden
+  alias Arbor.ACP.Test.CodexGolden
 
   @area "session_updates"
   @session "thread-abc"

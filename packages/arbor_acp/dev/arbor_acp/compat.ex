@@ -1,4 +1,4 @@
-defmodule ArborACP.Compat do
+defmodule Arbor.ACP.Compat do
   @moduledoc """
   Repository-only tooling for tracking ACP ecosystem compatibility.
 

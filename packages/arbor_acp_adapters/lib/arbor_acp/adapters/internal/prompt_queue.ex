@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Internal.PromptQueue do
+defmodule Arbor.ACP.Adapters.Internal.PromptQueue do
   @moduledoc false
 
   # Small functional queue core for ACP adapter prompt backlogs.

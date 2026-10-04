@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ZCode.Sessions do
+defmodule Arbor.ACP.Adapters.ZCode.Sessions do
   @moduledoc false
 
   # Pure session helpers for the ZCode ACP adapter.
@@ -7,8 +7,8 @@ defmodule ArborACP.Adapters.ZCode.Sessions do
   # `session/create` or `session/resume`. Each session tracks the active turn
   # (for cancellation), accumulated text/usage, and the current mode and model.
 
-  alias ArborACP.Adapters.ZCode.Config
-  alias ArborACP.Adapters.Internal.Maps
+  alias Arbor.ACP.Adapters.ZCode.Config
+  alias Arbor.ACP.Adapters.Internal.Maps
 
   @type adapter_state :: %{
           required(:sessions) => %{String.t() => session()},

@@ -1,7 +1,7 @@
-defmodule ArborACP.CompatTest do
+defmodule Arbor.ACP.CompatTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Compat, as: ACPCompat
+  alias Arbor.ACP.Compat, as: ACPCompat
 
   @sha_a String.duplicate("a", 40)
   @sha_b String.duplicate("b", 40)
@@ -22,7 +22,7 @@ defmodule ArborACP.CompatTest do
     "adapterUpstreams" => [
       %{
         "id" => "reference-adapter",
-        "adapter" => "ArborACP.Adapters.Reference",
+        "adapter" => "Arbor.ACP.Adapters.Reference",
         "repository" => "https://github.com/example/reference-adapter",
         "branch" => "main",
         "commit" => @sha_a

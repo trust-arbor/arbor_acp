@@ -1,4 +1,4 @@
-defmodule ArborACP.Transport do
+defmodule Arbor.ACP.Transport do
   @moduledoc """
   Transport callbacks for ACP clients and adapter bridges.
 
@@ -108,7 +108,7 @@ defmodule ArborACP.Transport do
   that called `connect/1` or `subscribe/2` (for example a reader it
   `spawn_link`ed, or a port it opened).
 
-  `ArborACP.Client` traps exits. An abnormal exit signal from one of these is
+  `Arbor.ACP.Client` traps exits. An abnormal exit signal from one of these is
   treated as the transport failing (pending requests fail and the reconnect
   path takes over); an abnormal exit signal from any other linked process
   stops the client, exactly as it would stop a process that does not trap
@@ -150,6 +150,6 @@ defmodule ArborACP.Transport do
 
   @doc "Resolve `:stdio` or a custom transport module."
   @spec get_transport(:stdio | module()) :: module()
-  def get_transport(:stdio), do: ArborACP.Transport.Stdio
+  def get_transport(:stdio), do: Arbor.ACP.Transport.Stdio
   def get_transport(module) when is_atom(module), do: module
 end

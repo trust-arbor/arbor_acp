@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.ZCode.ConfigTest do
+defmodule Arbor.ACP.Adapters.ZCode.ConfigTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.ZCode.Config
+  alias Arbor.ACP.Adapters.ZCode.Config
 
   describe "modes" do
     test "returns all five ZCode modes" do

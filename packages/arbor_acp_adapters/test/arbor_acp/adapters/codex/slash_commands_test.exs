@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.Codex.SlashCommandsTest do
+defmodule Arbor.ACP.Adapters.Codex.SlashCommandsTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Codex.SlashCommands
+  alias Arbor.ACP.Adapters.Codex.SlashCommands
 
   test "parses supported slash commands" do
     assert SlashCommands.parse([%{"type" => "text", "text" => "/compact"}]) ==

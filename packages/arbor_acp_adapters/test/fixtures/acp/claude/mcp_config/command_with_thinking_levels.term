@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -10,7 +10,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", thinking: :disabled]},
     result: %{
       reply: %{
@@ -22,7 +22,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", thinking: :adaptive]},
     result: %{
       reply: %{
@@ -34,7 +34,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", thinking: "disabled"]},
     result: %{
       reply: %{
@@ -46,7 +46,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", thinking: "adaptive"]},
     result: %{
       reply: %{
@@ -58,7 +58,7 @@
       tag: :ok
     }
   },
-  %ArborACP.Test.ClaudeGolden.Entry{
+  %Arbor.ACP.Test.ClaudeGolden.Entry{
     step: %{kind: :command, opts: [cli_path: "<sandbox>/bin/claude", thinking: 12000]},
     result: %{
       reply: %{

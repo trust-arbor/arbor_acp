@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.Codex.EventsTest do
+defmodule Arbor.ACP.Adapters.Codex.EventsTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Codex.Events
+  alias Arbor.ACP.Adapters.Codex.Events
 
   test "normalizes tool kinds and statuses" do
     assert Events.tool_kind("Read File") == "read"

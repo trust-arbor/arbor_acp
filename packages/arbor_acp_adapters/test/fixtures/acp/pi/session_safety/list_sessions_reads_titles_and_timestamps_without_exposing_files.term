@@ -1,5 +1,5 @@
 [
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :init,
       opts: [
@@ -14,7 +14,7 @@
     },
     result: %{tag: :ok}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [
         %{
@@ -39,7 +39,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [
         %{
@@ -62,7 +62,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [
         %{
@@ -85,7 +85,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [
         %{
@@ -106,7 +106,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [
         %{
@@ -126,7 +126,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [
         %{
@@ -141,7 +141,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [%{"cwd" => "<sandbox>/project", "id" => "no-timestamps", "type" => "session"}],
       kind: :write_file,
@@ -149,7 +149,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [
         %{
@@ -174,11 +174,11 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{content: "{not json\n", kind: :write_file, path: "<sandbox>/sessions/broken.jsonl"},
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [%{"id" => "no-cwd", "type" => "session"}],
       kind: :write_file,
@@ -186,7 +186,7 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       content: [%{"cwd" => "<sandbox>/project", "id" => "x", "type" => "message"}],
       kind: :write_file,
@@ -194,15 +194,15 @@
     },
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{content: "", kind: :write_file, path: "<sandbox>/sessions/empty.jsonl"},
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{content: "ignored", kind: :write_file, path: "<sandbox>/sessions/notes.txt"},
     result: %{}
   },
-  %ArborACP.Test.PiGolden.Entry{
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :list_sessions, params: %{"cwd" => "<sandbox>/project"}},
     result: %{
       reply: %{

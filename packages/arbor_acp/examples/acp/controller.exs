@@ -8,7 +8,7 @@ defmodule ACPExampleController do
     cwd = File.cwd!()
 
     {:ok, client} =
-      ArborACP.start_client(
+      Arbor.ACP.start_client(
         command: [mix_path, "run", "--no-compile", "--no-start", agent_script],
         cd: repo_root,
         env: local_workspace_env(),
@@ -17,10 +17,10 @@ defmodule ACPExampleController do
       )
 
     try do
-      {:ok, %{"sessionId" => session_id}} = ArborACP.Client.new_session(client, cwd)
+      {:ok, %{"sessionId" => session_id}} = Arbor.ACP.Client.new_session(client, cwd)
 
-      prompt = "Hello from ArborACP's controller"
-      prompt_task = Task.async(fn -> ArborACP.Client.prompt(client, session_id, prompt) end)
+      prompt = "Hello from Arbor.ACP's controller"
+      prompt_task = Task.async(fn -> Arbor.ACP.Client.prompt(client, session_id, prompt) end)
 
       result =
         Stream.repeatedly(fn -> receive_next_update(prompt_task, session_id) end)
@@ -39,7 +39,7 @@ defmodule ACPExampleController do
 
       IO.puts("\n\nPrompt result: #{inspect(result)}")
     after
-      ArborACP.Client.disconnect(client)
+      Arbor.ACP.Client.disconnect(client)
     end
   end
 

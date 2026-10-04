@@ -1,4 +1,4 @@
-defmodule ArborACP.Types do
+defmodule Arbor.ACP.Types do
   @moduledoc """
   Type specifications and builder functions for the Agent Client Protocol (ACP).
 
@@ -18,9 +18,9 @@ defmodule ArborACP.Types do
   send prompts with `prompt_params/2`.
   """
 
-  alias ArborACP.Envelope
-  alias ArborACP.Maps
-  alias ArborACP.NameValue
+  alias Arbor.ACP.Envelope
+  alias Arbor.ACP.Maps
+  alias Arbor.ACP.NameValue
 
   # Content blocks
 

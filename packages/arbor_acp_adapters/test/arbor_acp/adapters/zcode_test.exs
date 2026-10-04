@@ -1,8 +1,8 @@
-defmodule ArborACP.Adapters.ZCodeTest do
+defmodule Arbor.ACP.Adapters.ZCodeTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.ZCode
-  alias ArborACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.ZCode
+  alias Arbor.ACP.Adapters.Internal.PromptQueue
 
   setup do
     {:ok, state} = ZCode.init(cwd: "/tmp")

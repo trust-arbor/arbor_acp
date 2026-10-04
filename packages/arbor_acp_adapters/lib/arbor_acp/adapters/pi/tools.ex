@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.Tools do
+defmodule Arbor.ACP.Adapters.Pi.Tools do
   @moduledoc false
 
   @spec kind(String.t()) :: String.t()

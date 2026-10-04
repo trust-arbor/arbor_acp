@@ -1,8 +1,8 @@
-defmodule ArborACP.Adapters.Codex.ProtocolTest do
+defmodule Arbor.ACP.Adapters.Codex.ProtocolTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Codex
-  alias ArborACP.Adapters.Codex.Protocol
+  alias Arbor.ACP.Adapters.Codex
+  alias Arbor.ACP.Adapters.Codex.Protocol
 
   setup do
     {:ok, state} =
@@ -340,7 +340,7 @@ defmodule ArborACP.Adapters.Codex.ProtocolTest do
     end
   end
 
-  describe "ArborACP.Adapters.Codex.Protocol shapes" do
+  describe "Arbor.ACP.Adapters.Codex.Protocol shapes" do
     test "method names for initialize and session lifecycle" do
       assert Protocol.method(:initialize) == "initialize"
       assert Protocol.method(:initialized) == "initialized"

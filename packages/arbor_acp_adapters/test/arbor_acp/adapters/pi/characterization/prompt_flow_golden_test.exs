@@ -1,11 +1,11 @@
-defmodule ArborACP.Adapters.Pi.PromptFlowGoldenTest do
+defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
   @moduledoc """
   Characterization gate for the Pi ACP adapter's prompt scheduling (area P4
   of `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Pi adapter restructuring" /
   "Characterization gate": prompt queue, steering, follow-up, cancellation,
   and subprocess-exit behavior).
 
-  Each test drives `ArborACP.Adapters.Pi` through `ArborACP.Test.PiGolden` and
+  Each test drives `Arbor.ACP.Adapters.Pi` through `Arbor.ACP.Test.PiGolden` and
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/prompt_flow/`. The fixtures pin:
 
@@ -54,8 +54,8 @@ defmodule ArborACP.Adapters.Pi.PromptFlowGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.PiGolden
-  alias ArborACP.Test.PiGolden.Flows
+  alias Arbor.ACP.Test.PiGolden
+  alias Arbor.ACP.Test.PiGolden.Flows
 
   @area "prompt_flow"
 

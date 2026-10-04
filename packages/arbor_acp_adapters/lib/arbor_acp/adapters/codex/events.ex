@@ -1,9 +1,9 @@
-defmodule ArborACP.Adapters.Codex.Events do
+defmodule Arbor.ACP.Adapters.Codex.Events do
   @moduledoc false
 
   # Pure event-mapping helpers for the Codex ACP adapter.
 
-  alias ArborACP.AdapterEvents
+  alias Arbor.ACP.AdapterEvents
 
   @tool_status_aliases %{
     "pending" => "pending",

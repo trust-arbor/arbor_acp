@@ -18,7 +18,7 @@ defmodule Mix.Tasks.Acp.InteropAgent do
 
     Code.eval_string(~S"""
     defmodule AcpInteropAgentHandler do
-      @behaviour ArborACP.Agent.Handler
+      @behaviour Arbor.ACP.Agent.Handler
 
       @impl true
       def init(_opts), do: {:ok, %{sessions: MapSet.new()}}
@@ -36,8 +36,8 @@ defmodule Mix.Tasks.Acp.InteropAgent do
           |> Enum.filter(&(&1["type"] == "text"))
           |> Enum.map_join("", &Map.get(&1, "text", ""))
 
-        :ok = ArborACP.Agent.agent_message(ctx.agent, session_id, "Hello from ")
-        :ok = ArborACP.Agent.agent_message(ctx.agent, session_id, "ExMCP ACP agent: #{text}")
+        :ok = Arbor.ACP.Agent.agent_message(ctx.agent, session_id, "Hello from ")
+        :ok = Arbor.ACP.Agent.agent_message(ctx.agent, session_id, "ExMCP ACP agent: #{text}")
 
         {:reply, %{"stopReason" => "end_turn"}, state}
       end
@@ -65,7 +65,7 @@ defmodule Mix.Tasks.Acp.InteropAgent do
     """)
 
     {:ok, agent} =
-      ArborACP.Agent.start_link(
+      Arbor.ACP.Agent.start_link(
         handler: AcpInteropAgentHandler,
         agent_info: %{"name" => "elixir-acp-interop-agent", "version" => "1.0.0"},
         capabilities: %{

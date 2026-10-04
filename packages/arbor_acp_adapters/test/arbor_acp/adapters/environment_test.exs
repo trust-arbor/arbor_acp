@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.EnvironmentTest do
+defmodule Arbor.ACP.Adapters.EnvironmentTest do
   use ExUnit.Case, async: true
-  alias ArborACP.AdapterSupport.Subprocess
-  alias ArborACP.Adapters.{ClaudeSDK, Codex, Pi, ZCode}
+  alias Arbor.ACP.AdapterSupport.Subprocess
+  alias Arbor.ACP.Adapters.{ClaudeSDK, Codex, Pi, ZCode}
 
   test "each bundled adapter clears ambient vendor credentials with inheritance enabled" do
     for adapter <- [ClaudeSDK, Codex, Pi, ZCode] do

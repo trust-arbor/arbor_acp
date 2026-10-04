@@ -17,7 +17,7 @@ defmodule Mix.Tasks.Acp.EverythingAgent do
     Mix.Task.run("app.start")
 
     {:ok, agent} =
-      ArborACP.Agent.start_link(
+      Arbor.ACP.Agent.start_link(
         handler: Mix.Tasks.Acp.EverythingAgent.Handler,
         agent_info: %{"name" => "elixir-acp-everything-agent", "version" => "1.0.0"},
         auth_methods: [
@@ -28,7 +28,7 @@ defmodule Mix.Tasks.Acp.EverythingAgent do
           }
         ],
         capabilities:
-          ArborACP.Types.agent_capabilities(
+          Arbor.ACP.Types.agent_capabilities(
             load_session: true,
             image: true,
             audio: true,
@@ -57,10 +57,10 @@ end
 defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
   @moduledoc false
 
-  @behaviour ArborACP.Agent.Handler
+  @behaviour Arbor.ACP.Agent.Handler
 
-  alias ArborACP.Agent
-  alias ArborACP.Capabilities
+  alias Arbor.ACP.Agent
+  alias Arbor.ACP.Capabilities
 
   @updated_at "2026-05-29T00:00:00Z"
 

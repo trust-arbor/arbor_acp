@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.ZCode.SessionsTest do
+defmodule Arbor.ACP.Adapters.ZCode.SessionsTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.ZCode.Sessions
+  alias Arbor.ACP.Adapters.ZCode.Sessions
 
   describe "fetch_id/1" do
     test "returns ok for valid session id" do

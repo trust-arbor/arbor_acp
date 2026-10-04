@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Codex.FileChanges do
+defmodule Arbor.ACP.Adapters.Codex.FileChanges do
   @moduledoc false
 
   # Pure mappings for Codex file change lifecycle notifications.
 
-  alias ArborACP.AdapterEvents
-  alias ArborACP.Adapters.Codex.Events
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.ACP.Adapters.Codex.Events
 
   @spec started(String.t(), map(), map()) :: map()
   def started(session_id, params, item) do

@@ -1,8 +1,8 @@
-defmodule ArborACP.Agent.Transport do
+defmodule Arbor.ACP.Agent.Transport do
   @moduledoc """
   Transport behaviour for ACP agent runtimes.
 
-  This mirrors the pull-based `ArborACP.Transport` shape, but is named from the
+  This mirrors the pull-based `Arbor.ACP.Transport` shape, but is named from the
   agent side because stdio agents read from this process' stdin/stdout instead
   of spawning a child process.
   """

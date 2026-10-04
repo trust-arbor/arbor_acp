@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.ClaudeSDK.SessionStore do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
   @moduledoc """
   Pure helpers for Claude Code's SDK session store.
 
@@ -11,7 +11,7 @@ defmodule ArborACP.Adapters.ClaudeSDK.SessionStore do
 
   import Bitwise
 
-  alias ArborACP.Types
+  alias Arbor.ACP.Types
 
   @read_window 65_536
   @max_project_key 200

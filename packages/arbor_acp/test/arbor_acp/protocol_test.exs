@@ -1,7 +1,7 @@
-defmodule ArborACP.ProtocolTest do
+defmodule Arbor.ACP.ProtocolTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Protocol
+  alias Arbor.ACP.Protocol
 
   describe "encode_initialize/3" do
     test "produces valid JSON-RPC with correct method" do

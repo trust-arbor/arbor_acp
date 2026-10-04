@@ -1,11 +1,11 @@
-defmodule ArborACP.Adapters.Pi.RpcGoldenTest do
+defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
   @moduledoc """
   Characterization gate for the Pi ACP adapter's native RPC envelopes (area
   P1 of `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Pi adapter restructuring" /
   "Characterization gate": RPC messages for new, load, resume, fork, close,
   delete, and prompt flows).
 
-  Each test drives `ArborACP.Adapters.Pi` through `ArborACP.Test.PiGolden` and
+  Each test drives `Arbor.ACP.Adapters.Pi` through `Arbor.ACP.Test.PiGolden` and
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/rpc/`. The fixtures pin:
 
@@ -48,8 +48,8 @@ defmodule ArborACP.Adapters.Pi.RpcGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.PiGolden
-  alias ArborACP.Test.PiGolden.Flows
+  alias Arbor.ACP.Test.PiGolden
+  alias Arbor.ACP.Test.PiGolden.Flows
 
   @area "rpc"
 

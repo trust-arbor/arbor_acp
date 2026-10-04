@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.RPC do
+defmodule Arbor.ACP.Adapters.Pi.RPC do
   @moduledoc false
 
   # Pure native RPC protocol helpers for the Pi ACP adapter.

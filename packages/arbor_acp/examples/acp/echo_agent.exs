@@ -4,7 +4,7 @@ Application.put_env(:arbor_acp, :stdio_mode, true)
 Logger.configure(level: :emergency)
 :logger.set_primary_config(:level, :emergency)
 
-unless Code.ensure_loaded?(ArborACP) do
+unless Code.ensure_loaded?(Arbor.ACP) do
   Mix.install(
     [
       {:arbor_acp, path: Path.expand("../..", __DIR__)}
@@ -14,7 +14,7 @@ unless Code.ensure_loaded?(ArborACP) do
 end
 
 defmodule EchoAgent do
-  @behaviour ArborACP.Agent.Handler
+  @behaviour Arbor.ACP.Agent.Handler
 
   @impl true
   def init(_opts), do: {:ok, %{sessions: %{}}}
@@ -36,8 +36,8 @@ defmodule EchoAgent do
       |> Enum.filter(&(&1["type"] == "text"))
       |> Enum.map_join("", &Map.get(&1, "text", ""))
 
-    :ok = ArborACP.Agent.agent_message(ctx.agent, session_id, "Echo agent received: ")
-    :ok = ArborACP.Agent.agent_message(ctx.agent, session_id, text)
+    :ok = Arbor.ACP.Agent.agent_message(ctx.agent, session_id, "Echo agent received: ")
+    :ok = Arbor.ACP.Agent.agent_message(ctx.agent, session_id, text)
 
     {:reply, %{"stopReason" => "end_turn"}, state}
   end
@@ -49,7 +49,7 @@ defmodule EchoAgent do
 end
 
 if System.get_env("MCP_ENV") != "test" do
-  ArborACP.run_agent(
+  Arbor.ACP.run_agent(
     handler: EchoAgent,
     agent_info: %{"name" => "ex-mcp-echo-agent", "version" => "1.0.0"},
     capabilities: %{"sessionCapabilities" => %{"close" => true}}

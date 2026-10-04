@@ -1,4 +1,4 @@
-defmodule ArborACP.Internal.Maps do
+defmodule Arbor.ACP.Internal.Maps do
   @moduledoc false
 
   @spec put_present(map(), any(), any()) :: map()

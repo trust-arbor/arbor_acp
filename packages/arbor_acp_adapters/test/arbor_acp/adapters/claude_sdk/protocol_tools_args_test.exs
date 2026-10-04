@@ -1,7 +1,7 @@
-defmodule ArborACP.Adapters.ClaudeSDK.ProtocolToolsArgsTest do
+defmodule Arbor.ACP.Adapters.ClaudeSDK.ProtocolToolsArgsTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.ClaudeSDK.Protocol
+  alias Arbor.ACP.Adapters.ClaudeSDK.Protocol
 
   defp args(opts), do: elem(Protocol.command(Keyword.merge([cli_path: "claude"], opts)), 1)
 

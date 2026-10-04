@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Codex.SlashCommands do
+defmodule Arbor.ACP.Adapters.Codex.SlashCommands do
   @moduledoc false
 
   # Pure slash-command parsing helpers for the Codex ACP adapter.

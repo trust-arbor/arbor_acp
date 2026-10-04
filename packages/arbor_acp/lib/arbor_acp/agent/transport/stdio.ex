@@ -1,4 +1,4 @@
-defmodule ArborACP.Agent.Transport.Stdio do
+defmodule Arbor.ACP.Agent.Transport.Stdio do
   @moduledoc """
   Server-side stdio transport for ACP agents.
 
@@ -12,11 +12,11 @@ defmodule ArborACP.Agent.Transport.Stdio do
   Embedders may pass their own `:input` and `:output` devices.
   """
 
-  @behaviour ArborACP.Agent.Transport
+  @behaviour Arbor.ACP.Agent.Transport
 
-  alias ArborACP.Internal.Options
-  alias ArborRPC.StdioFraming
-  alias ArborACP.Internal.StdioLoggerConfig
+  alias Arbor.ACP.Internal.Options
+  alias Arbor.RPC.StdioFraming
+  alias Arbor.ACP.Internal.StdioLoggerConfig
 
   @default_max_frame_bytes 1_048_576
   @collector_chunk_bytes 4_096

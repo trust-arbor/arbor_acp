@@ -1,8 +1,8 @@
-defmodule ArborACP.Adapters.Pi.RPCTest do
+defmodule Arbor.ACP.Adapters.Pi.RPCTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Adapters.Pi
-  alias ArborACP.Adapters.Pi.RPC
+  alias Arbor.ACP.Adapters.Pi
+  alias Arbor.ACP.Adapters.Pi.RPC
 
   setup do
     tmp_dir = Path.join(System.tmp_dir!(), "pi_rpc_test_#{System.unique_integer([:positive])}")
@@ -385,7 +385,7 @@ defmodule ArborACP.Adapters.Pi.RPCTest do
     end
   end
 
-  describe "ArborACP.Adapters.Pi.RPC shapes" do
+  describe "Arbor.ACP.Adapters.Pi.RPC shapes" do
     test "method names for session lifecycle and prompt control" do
       assert RPC.method(:new_session) == "new_session"
       assert RPC.method(:switch_session) == "switch_session"

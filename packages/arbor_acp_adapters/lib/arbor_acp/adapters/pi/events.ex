@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Pi.Events do
+defmodule Arbor.ACP.Adapters.Pi.Events do
   @moduledoc false
 
   # Pure folding of Pi's inbound stream events into ACP notifications for the
@@ -6,9 +6,9 @@ defmodule ArborACP.Adapters.Pi.Events do
   # adapter still dispatches `process_event/2`, takes the edit snapshots that
   # `tool_execution_end/5` needs, and writes to the subprocess.
 
-  alias ArborACP.AdapterEvents
-  alias ArborACP.Adapters.Pi.RPC
-  alias ArborACP.Adapters.Pi.Tools
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.ACP.Adapters.Pi.RPC
+  alias Arbor.ACP.Adapters.Pi.Tools
 
   @typedoc """
   The subset of the adapter struct the stream-event helpers read and update.

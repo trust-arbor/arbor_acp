@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Codex do
+defmodule Arbor.ACP.Adapters.Codex do
   @moduledoc """
   Adapter for Codex CLI using `codex app-server` persistent mode.
 
@@ -15,29 +15,29 @@ defmodule ArborACP.Adapters.Codex do
   caller-controlled connection details.
   """
 
-  @behaviour ArborACP.Adapter
+  @behaviour Arbor.ACP.Adapter
 
   @impl true
   def name, do: "codex"
 
   require Logger
 
-  alias ArborACP.Adapters.Codex.Config
-  alias ArborACP.Adapters.Codex.Content
-  alias ArborACP.Adapters.Codex.Events
-  alias ArborACP.Adapters.Codex.FileChanges
-  alias ArborACP.Adapters.Codex.MCP
-  alias ArborACP.Adapters.Codex.Permissions
-  alias ArborACP.Adapters.Codex.Protocol
-  alias ArborACP.Adapters.Codex.Sessions
-  alias ArborACP.Adapters.Codex.SlashCommands
+  alias Arbor.ACP.Adapters.Codex.Config
+  alias Arbor.ACP.Adapters.Codex.Content
+  alias Arbor.ACP.Adapters.Codex.Events
+  alias Arbor.ACP.Adapters.Codex.FileChanges
+  alias Arbor.ACP.Adapters.Codex.MCP
+  alias Arbor.ACP.Adapters.Codex.Permissions
+  alias Arbor.ACP.Adapters.Codex.Protocol
+  alias Arbor.ACP.Adapters.Codex.Sessions
+  alias Arbor.ACP.Adapters.Codex.SlashCommands
 
-  alias ArborACP.AdapterEvents
-  alias ArborRPC.JSONRPC, as: Envelope
-  alias ArborRPC.LogSummary
-  alias ArborACP.Adapters.Internal.Maps
-  alias ArborACP.AdapterSupport.NameValue
-  alias ArborACP.AdapterSupport.WorkspacePath
+  alias Arbor.ACP.AdapterEvents
+  alias Arbor.RPC.JSONRPC, as: Envelope
+  alias Arbor.RPC.LogSummary
+  alias Arbor.ACP.Adapters.Internal.Maps
+  alias Arbor.ACP.AdapterSupport.NameValue
+  alias Arbor.ACP.AdapterSupport.WorkspacePath
 
   defstruct [
     :model,
@@ -58,7 +58,7 @@ defmodule ArborACP.Adapters.Codex do
   ]
 
   @impl true
-  def environment_defaults(_opts), do: ArborACP.Adapters.Internal.Environment.defaults()
+  def environment_defaults(_opts), do: Arbor.ACP.Adapters.Internal.Environment.defaults()
 
   @impl true
   def init(opts) do

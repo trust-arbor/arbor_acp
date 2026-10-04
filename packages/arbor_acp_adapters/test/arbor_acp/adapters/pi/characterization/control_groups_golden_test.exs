@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.Pi.ControlGroupsGoldenTest do
+defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
   @moduledoc """
   Characterization gate for the Pi ACP adapter's control-group completion
   and failure ordering (area P2 of `docs/POST_1_0_MAINTENANCE_PLAN.md`,
   "Pi adapter restructuring" / "Characterization gate").
 
-  Each test drives `ArborACP.Adapters.Pi` through `ArborACP.Test.PiGolden` and
+  Each test drives `Arbor.ACP.Adapters.Pi` through `Arbor.ACP.Test.PiGolden` and
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/control_groups/`. The fixtures pin:
 
@@ -50,8 +50,8 @@ defmodule ArborACP.Adapters.Pi.ControlGroupsGoldenTest do
 
   use ExUnit.Case, async: true
 
-  alias ArborACP.Test.PiGolden
-  alias ArborACP.Test.PiGolden.Flows
+  alias Arbor.ACP.Test.PiGolden
+  alias Arbor.ACP.Test.PiGolden.Flows
 
   @area "control_groups"
 

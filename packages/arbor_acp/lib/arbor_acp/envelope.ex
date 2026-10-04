@@ -1,4 +1,4 @@
-defmodule ArborACP.Envelope do
+defmodule Arbor.ACP.Envelope do
   @moduledoc false
 
   # Pure JSON-RPC 2.0 envelope builders for ACP messages.
@@ -10,7 +10,7 @@ defmodule ArborACP.Envelope do
   #     |> Envelope.with_params(params)
   #     |> Envelope.with_id(id)
 
-  alias ArborRPC.JSONRPC
+  alias Arbor.RPC.JSONRPC
 
   @doc "Builds a JSON-RPC request envelope without params."
   @spec request(String.t()) :: map()

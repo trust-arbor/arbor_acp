@@ -1,4 +1,4 @@
-defmodule ArborACP.AdapterSupport.WorkspacePath do
+defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
   @moduledoc "Documented adapter support for WorkspacePath."
 
   @max_symlink_depth 40

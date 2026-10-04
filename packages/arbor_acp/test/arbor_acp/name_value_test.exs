@@ -1,7 +1,7 @@
-defmodule ArborACP.NameValueTest do
+defmodule Arbor.ACP.NameValueTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.NameValue
+  alias Arbor.ACP.NameValue
 
   test "normalizes maps and lists into ACP name/value lists" do
     assert NameValue.list(%{PATH: "/bin"}) == [%{"name" => "PATH", "value" => "/bin"}]

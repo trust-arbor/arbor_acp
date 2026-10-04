@@ -1,6 +1,6 @@
-defmodule ArborACP.Test.CodexGolden do
+defmodule Arbor.ACP.Test.CodexGolden do
   @moduledoc """
-  Golden-transcript harness for characterizing `ArborACP.Adapters.Codex`.
+  Golden-transcript harness for characterizing `Arbor.ACP.Adapters.Codex`.
 
   The Codex adapter is a pure translation layer: every step below drives one
   public adapter function (`init/1`, `post_connect/1`, `translate_outbound/2`,
@@ -25,7 +25,7 @@ defmodule ArborACP.Test.CodexGolden do
 
   ## Transcript entries
 
-  Each entry is an `ArborACP.Test.CodexGolden.Entry` struct (a map with `:step`
+  Each entry is an `Arbor.ACP.Test.CodexGolden.Entry` struct (a map with `:step`
   and `:result`), so fixtures render the cause (`step`) before its effect
   (`result`). `:result` holds only the keys that apply: `tag` (the adapter's
   return tag), `writes`, `messages`, `reply`, `error`, `skipped`.
@@ -33,17 +33,17 @@ defmodule ArborACP.Test.CodexGolden do
   ## Wire framing
 
   App-server writes are recorded as JSON-decoded maps for readability, but
-  the NDJSON framing produced by `ArborACP.Adapters.Codex.Protocol.line/1`
+  the NDJSON framing produced by `Arbor.ACP.Adapters.Codex.Protocol.line/1`
   is enforced on every write before decoding: the iodata must be empty or
   consist of JSON objects each terminated by exactly one `"\\n"`. A write
   whose final object lacks its terminator, or that contains an empty line,
   raises rather than silently producing the same transcript, because the
   app-server would not see such a message until the next line arrived.
 
-  The `ArborACP.Adapter` behaviour also allows `{:ok, :pending, state}`,
+  The `Arbor.ACP.Adapter` behaviour also allows `{:ok, :pending, state}`,
   `{:one_shot, fun, state}`, and `{:partial, state}` results. The Codex
   adapter never returns any of them: it is not adapter-managed, and
-  `ArborACP.AdapterBridge` buffers and splits the subprocess output so
+  `Arbor.ACP.AdapterBridge` buffers and splits the subprocess output so
   `translate_inbound/2` always receives one complete line. `normalize_result/1`
   deliberately has no clauses for them (Dialyzer rejects unreachable ones); a
   step that produced one would raise a `FunctionClauseError` here, which is
@@ -82,7 +82,7 @@ defmodule ArborACP.Test.CodexGolden do
 
   import ExUnit.Assertions, only: [assert: 1, flunk: 1]
 
-  alias ArborACP.Adapters.Codex
+  alias Arbor.ACP.Adapters.Codex
 
   defmodule Entry do
     @moduledoc "One transcript entry: the step as executed and the adapter's normalized result."

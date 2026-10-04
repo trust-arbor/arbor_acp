@@ -1,4 +1,4 @@
-defmodule ArborACP.Integration.ACPInteropTest do
+defmodule Arbor.ACP.Integration.ACPInteropTest do
   @moduledoc """
   Cross-language ACP interop tests between ExMCP and the official TypeScript ACP SDK.
 
@@ -12,8 +12,8 @@ defmodule ArborACP.Integration.ACPInteropTest do
 
   use ExUnit.Case, async: false
 
-  alias ArborACP.Capabilities
-  alias ArborACP.Client
+  alias Arbor.ACP.Capabilities
+  alias Arbor.ACP.Client
 
   @moduletag :interop
   @moduletag :interop_acp
@@ -32,7 +32,7 @@ defmodule ArborACP.Integration.ACPInteropTest do
   @ts_dual_version_agent_script Path.join(@node_modules, @dual_version_agent_path)
 
   defmodule EverythingClientHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
@@ -109,7 +109,7 @@ defmodule ArborACP.Integration.ACPInteropTest do
       skip_without_node(context)
 
       {:ok, client} =
-        ArborACP.start_client(
+        Arbor.ACP.start_client(
           command: [context.node_path, @ts_agent_script],
           cd: @interop_dir,
           event_listener: self(),
@@ -191,7 +191,7 @@ defmodule ArborACP.Integration.ACPInteropTest do
       skip_without_node(context)
 
       {:ok, client} =
-        ArborACP.start_client(
+        Arbor.ACP.start_client(
           command: [context.node_path, @ts_everything_agent_script],
           cd: @interop_dir,
           event_listener: self(),
@@ -400,7 +400,7 @@ defmodule ArborACP.Integration.ACPInteropTest do
       skip_without_node(context)
 
       {:ok, client} =
-        ArborACP.start_client(
+        Arbor.ACP.start_client(
           command: [context.node_path, @ts_dual_version_agent_script],
           cd: @interop_dir,
           event_listener: self(),

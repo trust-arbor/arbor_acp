@@ -1,9 +1,9 @@
-defmodule ArborACP.ClientTest do
+defmodule Arbor.ACP.ClientTest do
   use ExUnit.Case, async: true
 
-  alias ArborACP.Client
-  alias ArborACP.Client.DefaultHandler
-  alias ArborACP.Protocol
+  alias Arbor.ACP.Client
+  alias Arbor.ACP.Client.DefaultHandler
+  alias Arbor.ACP.Protocol
 
   # MessageRelay: a simple process-based mailbox shared between mock agent and transport.
   # Agent pushes messages in, transport's receive_message pops them out.
@@ -71,7 +71,7 @@ defmodule ArborACP.ClientTest do
 
   # MockACPTransport: uses MessageRelay for agent→client messages.
   defmodule MockACPTransport do
-    @behaviour ArborACP.Transport
+    @behaviour Arbor.ACP.Transport
 
     @initialize_noise ~s({"jsonrpc":"2.0","method":"session/update","params":{}})
 
@@ -434,7 +434,7 @@ defmodule ArborACP.ClientTest do
   end
 
   defmodule BlockingUpdateHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(opts), do: {:ok, %{parent: Keyword.fetch!(opts, :parent)}}
@@ -458,7 +458,7 @@ defmodule ArborACP.ClientTest do
   end
 
   defmodule BlockingPermissionHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(opts), do: {:ok, %{parent: Keyword.fetch!(opts, :parent)}}
@@ -484,7 +484,7 @@ defmodule ArborACP.ClientTest do
   # Handler that implements file_read but NOT file_write or terminal.
   # Used to assert capability auto-advertisement reflects per-callback support.
   defmodule FileReadOnlyHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(_opts), do: {:ok, %{}}
@@ -505,7 +505,7 @@ defmodule ArborACP.ClientTest do
 
   # Handler that implements file_read, file_write, AND terminal.
   defmodule FullCapabilityHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(_opts), do: {:ok, %{}}
@@ -535,7 +535,7 @@ defmodule ArborACP.ClientTest do
   end
 
   defmodule FormElicitationHandler do
-    @behaviour ArborACP.Client.Handler
+    @behaviour Arbor.ACP.Client.Handler
 
     @impl true
     def init(_opts), do: {:ok, %{}}

@@ -1,4 +1,4 @@
-defmodule ArborACP.Adapters.Codex.MCP do
+defmodule Arbor.ACP.Adapters.Codex.MCP do
   @moduledoc false
   # Pure MCP server normalization and native Codex configuration output for
   # the Codex ACP adapter. Session-provided MCP servers are validated and
@@ -8,7 +8,7 @@ defmodule ArborACP.Adapters.Codex.MCP do
   # workspaces may be trusted, is decided by the root adapter and passed in
   # explicitly; this module never consults callbacks or adapter options.
 
-  alias ArborACP.Adapters.Internal.Maps
+  alias Arbor.ACP.Adapters.Internal.Maps
 
   @type server :: map()
   @type native_entry :: {String.t(), map()}

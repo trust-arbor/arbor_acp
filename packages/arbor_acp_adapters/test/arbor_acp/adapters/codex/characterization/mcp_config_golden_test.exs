@@ -1,11 +1,11 @@
-defmodule ArborACP.Adapters.Codex.McpConfigGoldenTest do
+defmodule Arbor.ACP.Adapters.Codex.McpConfigGoldenTest do
   @moduledoc """
   Characterization gate for the Codex ACP adapter's session configuration
   wire behavior: the `config` (and `modelProvider`) carried by `thread/start`
   and `thread/resume` (see `docs/POST_1_0_MAINTENANCE_PLAN.md`, "Codex adapter
   restructuring" / "Characterization gate"), area `mcp_config`.
 
-  The scenarios pin how `ArborACP.Adapters.Codex` turns ACP `mcpServers`
+  The scenarios pin how `Arbor.ACP.Adapters.Codex` turns ACP `mcpServers`
   into `config.mcp_servers` (stdio, http, sse, acp, untyped, malformed and
   duplicate entries), how a server is authorized (`authorize_mcp_server`
   callback, `trusted_mcp_servers` list or `:all`, secure default), how the
@@ -15,7 +15,7 @@ defmodule ArborACP.Adapters.Codex.McpConfigGoldenTest do
   `codex_config` / `model_provider` init options and a gateway login are
   layered into the same config.
 
-  Each test drives the adapter through `ArborACP.Test.CodexGolden` and compares
+  Each test drives the adapter through `Arbor.ACP.Test.CodexGolden` and compares
   the recorded transcript against a fixture under
   `test/fixtures/acp/codex/mcp_config/`. To regenerate a fixture after an
   intentional behavior change, run the test with `CODEX_GOLDEN=update`; that
@@ -24,7 +24,7 @@ defmodule ArborACP.Adapters.Codex.McpConfigGoldenTest do
 
       CODEX_GOLDEN=update mix test test/ex_mcp/acp/adapters/codex/characterization/mcp_config_golden_test.exs
 
-  Deliberately unpinned: `ArborACP.AdapterSupport.WorkspacePath.within?/2` resolves
+  Deliberately unpinned: `Arbor.ACP.AdapterSupport.WorkspacePath.within?/2` resolves
   symlinks with `:file.read_link/1`, so a cwd that is a symlink escaping the
   roots is only observable through a real symlink on disk. Creating one under
   `/tmp` in a `setup` block would write shared filesystem state outside the
@@ -36,8 +36,8 @@ defmodule ArborACP.Adapters.Codex.McpConfigGoldenTest do
 
   import ExUnit.CaptureLog, only: [with_log: 1]
 
-  alias ArborACP.Adapters.Codex
-  alias ArborACP.Test.CodexGolden
+  alias Arbor.ACP.Adapters.Codex
+  alias Arbor.ACP.Test.CodexGolden
 
   @area "mcp_config"
 

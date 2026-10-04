@@ -1,10 +1,10 @@
-defmodule ArborACP.Adapters.CodexTranslationIntegrationTest do
+defmodule Arbor.ACP.Adapters.CodexTranslationIntegrationTest do
   use ExUnit.Case, async: true
 
   describe "Codex adapter translate chain" do
     @moduletag :codex_translate
 
-    alias ArborACP.Adapters.Codex
+    alias Arbor.ACP.Adapters.Codex
 
     test "full outbound→inbound flow for thread lifecycle" do
       cwd = File.cwd!()
