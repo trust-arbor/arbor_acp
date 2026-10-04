@@ -68,14 +68,15 @@ defmodule Arbor.ACP.AdapterSupport.Subprocess do
   end
 
   defp adapter_environment_defaults(opts, adapter_mod) do
-    if function_exported?(adapter_mod, :environment_defaults, 1),
-      do: adapter_mod.environment_defaults(opts) |> PortEnvironment.normalize(),
-      else: %{}
+    if Code.ensure_loaded?(adapter_mod) and
+         function_exported?(adapter_mod, :environment_defaults, 1),
+       do: adapter_mod.environment_defaults(opts) |> PortEnvironment.normalize(),
+       else: %{}
   end
 
   defp adapter_env(opts, adapter_mod) do
     adapter_default_env =
-      if function_exported?(adapter_mod, :env, 1) do
+      if Code.ensure_loaded?(adapter_mod) and function_exported?(adapter_mod, :env, 1) do
         adapter_mod.env(opts)
       else
         []

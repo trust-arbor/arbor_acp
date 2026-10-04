@@ -12,4 +12,4 @@ To verify an unpublished workspace package, set `ARBOR_V2_LOCAL=1` for internal 
 
 `elixir scripts/check_boundaries.exs` checks production source ownership. `VERIFICATION.md` records actual results and remaining gates. Examples and pinned SDK tooling live in the core package; vendor golden fixtures and external CLI smoke tests live in the adapter package.
 
-Shared subprocess lifecycle, global stdio logger management, the accepted runtime/scheduler redesign, and the full v2 protocol/API work remain release gates. These packages have not been published and CI has not run on GitHub yet.
+Shared subprocess integration, global stdio logger management, the accepted runtime/scheduler redesign, and the full v2 protocol/API work remain release gates. These packages have not been published. The initial package checkpoint passed GitHub CI; `VERIFICATION.md` records the exact revision and run. Later implementation requires its own qualification.

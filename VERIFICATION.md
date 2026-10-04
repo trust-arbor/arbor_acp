@@ -22,6 +22,57 @@ Toolchain: Elixir 1.19.5 / OTP 28.4.1, using a task-private Hex 2.5.1 archive co
 
 The new CI workflow qualifies the advertised minimum (Elixir 1.17.3 / OTP 27) and current baseline (Elixir 1.19.5 / OTP 28) per package, verifies source boundaries, builds real manifests, and runs pinned SDK interoperability. The copied scheduled workflow preserves ACP draft-schema, catalog, and ecosystem probes with corrected workspace paths. The first GitHub package matrix and SDK lane passed on `06d153f0bcb515f132b3ab7b439f9b21b503868c`: https://github.com/trust-arbor/arbor_acp/actions/runs/37174597068. This confirms the prepared minimum/current package lanes; it does not complete the broader release gates below.
 
+## Shared subprocess API checkpoint (local)
+
+The `codex/shared-subprocess` working tree adds the neutral
+`Arbor.RPC.Subprocess` actor and `Arbor.RPC.FramedStream`; existing ACP/MCP/Pi
+wrappers have not been rewired. The API uses a stable Port owner, an opaque
+generation reference, a configurable live local lifetime owner, caller-side
+absolute read deadlines, monitored waiters/subscribers, and acknowledged push
+credit. Queued and unacknowledged frames share count/byte caps. Streaming frame
+reduction preserves accepted prefixes while reporting explicit frame/queue
+overflow. Invalid or oversized writes are rejected before entering the actor
+mailbox, and busy Port output returns backpressure without suspending the caller.
+
+Explicit close stops the actor. Natural exit and pressure failure drain accepted
+frames before terminal delivery and actor shutdown; abandoned drains have a
+finite lease and an explicit drain-timeout event. Cleanup verifies Unix child
+group leadership, isolates its utility environment, preserves permission/utility
+errors as unknown liveness, reserves KILL time beyond TERM grace, and reports
+cleanup failure rather than claiming an exhausted probe confirmed exit. An
+independent guardian cleans the child after abrupt actor death. RPC now declares
+its existing crypto runtime dependency explicitly.
+
+Independent review regressions cover expired persistent readers, including a
+zero-time poll with an already-buffered frame; temporary openers with a delegated
+owner; owner, reader and subscriber death; actor hard death; TERM-ignoring
+children; verified group descendants; terminal delivery and actor termination;
+partial UTF-8; per-frame versus aggregate limits; in-flight accounting and stale
+acknowledgements; write admission; Port backpressure; and raw input pressure.
+The core's optional environment callbacks also load the adapter before probing
+exports, with an unloaded first-use fixture verifying credential defaults do not
+depend on test execution order.
+
+Under the same private Elixir 1.19.5 / OTP 28.4.1 toolchain:
+
+- RPC: 64 tests, zero failures, including 30 new subprocess/cleanup regressions.
+- ACP core: 323 tests, zero failures, seven excluded ecosystem/SDK cases.
+- Adapter bundle: 1,438 tests, zero failures, four excluded external CLI cases.
+- Pinned official ACP SDK interoperability: six tests, zero failures.
+- All three production builds pass with warnings as errors; format, source
+  boundary and Git whitespace checks pass.
+- Real RPC Hex build without local dependency overrides contains 16 intended
+  files, ordinary Jason dependency metadata, and no host paths, tests or caches.
+
+This checkpoint does not establish a hard aggregate Port mailbox or application
+memory cap. A suspended-actor test proves that asynchronous raw driver messages
+can exceed the high-water before the actor runs; processing then closes
+explicitly for pressure. Concurrent writers must also be bounded by their
+application. Natural group cleanup begins when the Port reports exit; descendants
+holding its output pipe can delay that report. Windows cleanup, the Linux/macOS
+runtime matrix and pressure qualification remain open. No protocol integration,
+package publication or shared-subprocess release gate is claimed complete.
+
 ## Remaining v2 gates
 
 - Accepted namespaces are `Arbor.ACP.*` and `Arbor.RPC.*`. This checkpoint keeps existing `lib/arbor_acp`, `lib/arbor_rpc`, and matching test paths; directory depth is an implementation detail. Full consumer migration documentation remains a release gate.
