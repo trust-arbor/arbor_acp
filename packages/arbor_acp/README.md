@@ -47,3 +47,18 @@ VM-global Logger, `:logger` application and OTP primary levels to `:emergency`.
 It suppresses unrelated application logs and does not redirect them to stderr.
 No transport calls it automatically in 2.0. The old `:stdio_mode` flag itself has
 no automatic logger effect.
+
+## Standalone documentation
+
+From the workspace root, run:
+
+```sh
+cd packages/arbor_acp
+ARBOR_V2_LOCAL=1 MIX_ENV=dev mix deps.get
+ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
+```
+
+ExDoc is a dev-only dependency and does not run in consumer applications. Source
+links use `arbor_acp-v<version>` and the `packages/arbor_acp/` source prefix.
+Version tags are created only for a reviewed release; this unpublished development
+snapshot does not imply that those prospective tags already exist.

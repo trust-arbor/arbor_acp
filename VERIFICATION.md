@@ -277,3 +277,38 @@ The `b46cbfe8ced0d29519462f8a83b64e5750caaa92`-based native implementation is in
 The exact draft passes the complete minimum/current/newest RPC103, core355 and adapter1,454 suites with production warnings-as-errors, formatting and source boundaries. The four core intentional invalid-input fixtures retain exact exception assertions using dynamic invocation. Official ACP SDK six cases and unchanged vendor goldens pass. Ten real native protocol tests plus four post-reap syscall-invariant cases pass on macOS; no actual PID-reuse exhaustion was attempted. Current/minimum source archives and fresh package-only consumers qualify reviewed C source build, installed priv lookup and release evaluation with runtime compiler lookup disabled. Local external dependency sources replace unavailable unpublished registry dependencies in these consumer checks.
 
 The exact source/path/verification manifests were checked during draft integration; Linux CI, broader pressure measurement, Windows Job/handle support, hard-helper-loss/uninterruptible exit, packaging selection and full v2 remain gates. No publication or stable release default change occurred.
+
+## Package metadata and standalone documentation checkpoint (2026-10-04)
+
+Independent metadata QA starts from ACP `cc8b2078855148f390e899c7122fa56c8275da17`
+and MCP `9f47f38bc4443844c170563d8609afb38910e4a8`. The production protocol,
+adapter, native C and framing source is unchanged by this slice. ExDoc is a
+dev-only dependency in all three ACP projects; actual standalone WAE docs passed
+on Elixir 1.17.3/OTP 27.0.1 and Elixir 1.19.5/OTP 28.4.1. Generated source links
+contain package-qualified version tags and `packages/<app>/` source paths.
+
+All four actual source archives were built with normal declared dependencies for
+`2.0.0-dev`, prepared literal `2.0.0-rc.1`, and prepared literal `2.0.0`, on both
+toolchains (24 source archives). Six four-package consumers compiled with
+warnings-as-errors and ran both installed application and compiler-free release
+probes. Their metadata/literal/.app versions, prerelease/stable ranges, package
+boundaries, native capture bytes/status, retained cleanup receipts and independent
+MCP/ACP lifetimes passed. Installed/release version and module inventories agree, as do native helper
+bytes. Raw .app and BEAM checksums are recorded separately: release assembly
+rewrites application metadata and strips BEAM debug data. The native C source ships; generated host `priv/native`
+files do not. Local consumers use explicitly recorded independent external
+source caches because these coordinated packages are unpublished. This does not
+establish final published-Hex resolution or qualify Linux/Windows by inference.
+
+Version matching rejects the wrong major, earlier dev snapshots beneath an RC
+floor, and prereleases under the stable floor; stable accepts compatible later
+2.x. Negative probes reject source/expected version mismatch, checksum corruption,
+a shipped native binary, invalid/overlapping release preparation, and output
+clobbering. Preparation copies use literal versions; no source version depends
+on release environment variables. Source archives, code/native checksums and
+raw logs are retained in the immutable metadata qualification artifact.
+
+This is packaging evidence for the recorded source checkpoints. Final compiled
+API/semantic comparison, normal Hex resolution, all supported platform/transport
+gates and rebuilt archives matching the final release commits/tags remain
+required. These checks perform no publication or Git tagging.

@@ -22,3 +22,18 @@ This isolated draft uses the shared source-built native backend. Its retained
 cleanup receipts, targeted-group boundary, kernel/Port allocation and platform
 qualification limits are documented in the Arbor.RPC README. Native packaging
 and platform support remain release gates; canonical defaults are unchanged.
+
+## Standalone documentation
+
+From the workspace root, run:
+
+```sh
+cd packages/arbor_acp_adapters
+ARBOR_V2_LOCAL=1 MIX_ENV=dev mix deps.get
+ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
+```
+
+ExDoc is a dev-only dependency and does not run in consumer applications. Source
+links use `arbor_acp_adapters-v<version>` and the `packages/arbor_acp_adapters/` source prefix.
+Version tags are created only for a reviewed release; this unpublished development
+snapshot does not imply that those prospective tags already exist.

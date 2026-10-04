@@ -15,3 +15,15 @@ To verify an unpublished workspace package, set `ARBOR_V2_LOCAL=1` for internal 
 ACP child stdio, persistent adapter bridges and Pi managed sessions use shared owned subprocess mechanics. Shared raw-input pressure/platform qualification, global stdio logger management, the accepted runtime/scheduler redesign, and the full v2 protocol/API work remain release gates. These packages have not been published. The initial package checkpoint passed GitHub CI; `VERIFICATION.md` records exact revision-specific local and remote evidence. Later implementation requires its own qualification.
 
 This isolated native-backend draft is based on `b46cbfe8ced0d29519462f8a83b64e5750caaa92`. The Arbor.RPC README describes source-build installation, retained cleanup receipts and remaining platform gates. Canonical defaults and package publication are unchanged.
+
+## Package versions and documentation
+
+Each project can generate its own documentation; see its README for the exact
+`MIX_ENV=dev mix docs --warnings-as-errors` commands. ExDoc is dev-only.
+Development/RC dependencies use explicit prerelease floors. Stable 2.0.0 uses
+`~> 2.0` for internal dependencies. The three package-qualified release tags
+(`arbor_rpc-v<version>`, `arbor_acp-v<version>`, `arbor_acp_adapters-v<version>`)
+refer to the same coordinated monorepo commit. MCP uses `v<version>` in its own
+repository. The [coordinated release preparation guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_PACKAGE_RELEASE.md)
+describes literal version preparation, source archives and the four-package
+installation/release checks. No package publication is performed by these checks.

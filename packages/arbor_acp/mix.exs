@@ -1,6 +1,7 @@
 defmodule Arbor.ACP.MixProject do
   use Mix.Project
   @version "2.0.0-dev"
+  @internal_requirement "~> 2.0.0-dev"
   def project do
     [
       app: :arbor_acp,
@@ -15,7 +16,14 @@ defmodule Arbor.ACP.MixProject do
         files: ~w(lib mix.exs .formatter.exs README.md LICENSE CHANGELOG.md)
       ],
       source_url: "https://github.com/trust-arbor/arbor_acp",
-      docs: [name: "Arbor.ACP", main: "readme", extras: ["README.md", "CHANGELOG.md"]]
+      docs: [
+        name: "Arbor.ACP",
+        main: "readme",
+        extras: ["README.md", "CHANGELOG.md"],
+        source_ref: "arbor_acp-v#{@version}",
+        source_url_pattern:
+          "https://github.com/trust-arbor/arbor_acp/blob/arbor_acp-v#{@version}/packages/arbor_acp/%{path}#L%{line}"
+      ]
     ]
   end
 
@@ -28,20 +36,28 @@ defmodule Arbor.ACP.MixProject do
     [
       internal_dep(:arbor_rpc),
       external_dep(:jason, "~> 1.4"),
+      external_dep(:ex_doc, "~> 0.40", only: :dev, runtime: false),
       external_dep(:telemetry, "~> 1.2")
     ]
   end
 
-  defp external_dep(app, version) do
+  defp external_dep(app, version, opts \\ []) do
     case System.get_env("ARBOR_V2_DEPS") do
-      nil -> {app, version}
-      directory -> {app, path: Path.join(directory, to_string(app)), override: true}
+      nil ->
+        {app, version, opts}
+
+      directory ->
+        {app, version,
+         Keyword.merge(opts,
+           path: Path.join(directory, to_string(app)),
+           override: true
+         )}
     end
   end
 
   defp internal_dep(app) do
     if System.get_env("ARBOR_V2_LOCAL") == "1",
       do: {app, path: Path.expand("../#{app}", __DIR__)},
-      else: {app, "~> 2.0.0-dev"}
+      else: {app, @internal_requirement}
   end
 end
