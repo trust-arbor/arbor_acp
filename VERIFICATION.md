@@ -141,10 +141,69 @@ actor with a persistent expired reader, and a later queued frame excluded by an
 original zero poll. Both formatters, production warnings-as-errors, source
 boundaries, whitespace and the real RPC archive build pass.
 
+## Fast-child PID retention
+
+Shared mechanics revision `62c006001ac98eed493f743718c1bbf282fbd273` opens
+the resolved executable directly with OTP's `:eof` option. This retains owned
+PID metadata after a very fast exit without changing environment, argv or
+stdin, introducing a launcher or replaying the command. Only a delivered
+`exit_status` proves the direct child died; EOF from a live child does not.
+Failed group startup avoids signalling an already-reaped fallback PID and
+reports unconfirmed cleanup separately from its original ownership-proof error.
+
+The RPC suite passes 74 tests with zero failures on both toolchains. New
+regressions cover 20 fast executions and their complete/unfinished output,
+exact argv and initial stdin, exact environment additions/removals under both
+policies, shell startup-file isolation, live stdout closure, a retained stale
+PID after failed group proof and immediate lifetime-owner shutdown. Both
+formatters, production warnings-as-errors, boundaries, whitespace and a real
+16-file RPC Hex archive pass.
+
+## Native ACP child stdio integration
+
+Native ACP child stdio now uses the shared actor and exact absolute deadline
+API from `62c006001ac98eed493f743718c1bbf282fbd273`. Its old Port ownership,
+executable fallback, buffering and TERM/KILL implementations have been removed.
+Native agent IO-device stdio is a separate transport and remains in ACP core.
+Outbound ACP validation and BOM/noise/UTF-8 policy remain protocol-owned.
+Direct push subscribers use neutral generation-tagged events with explicit
+credit; the built-in client keeps its existing one-message pull handoff waiting
+for processing ACK. The client monitors abrupt actor death, closes after
+receiver failure, and preserves known cleanup errors through disconnect and
+failed initialization. Custom close exceptions/invalid returns are explicit
+errors, and adapter transport no longer hides every close-call exit.
+
+Native integration qualification: both minimum and current core 352 executed
+tests / zero failures, seven exclusions (minimum ExUnit reports 359 total);
+both minimum and current bundle 1,447 executed / zero failures, four exclusions
+(minimum ExUnit reports 1,451 total);
+official SDK six / zero failures. The RPC ABI is qualified at 74 tests on
+both toolchains. Native protocol tests cover temporary openers/readers, exact
+per-frame limits over aggregate chunks, BOM/banner filtering, slow partial
+timeouts, invalid UTF-8, pressure, child PATH denial, direct push credit, actor
+death, native initialize/disconnect and known/unconfirmed cleanup failures.
+
+Current and minimum format checks, production warnings-as-errors compilation,
+source-boundary checks and whitespace checks pass. The real core Hex archive
+contains 39 files with ordinary Hex dependency metadata; it contains no vendor
+code, tests, dependency caches, temporary source paths or absolute host paths.
+
 ## Remaining v2 gates
 
+Vendor utility commands still need the shared bounded command-capture path:
+`ClaudeSdk` authentication logout (`claude_sdk.ex`), Pi startup probes
+(`pi/startup.ex`) and Git worktree discovery (`claude_sdk/session_store.ex`).
+Their command selection, output interpretation and vendor policy remain adapter
+responsibilities. The current native/adapter transport convergence does not
+qualify these utility commands or the entire subprocess release gate.
+
+Fast group startup remains conservative: if the owned group leader exits before
+its PGID can be measured, startup returns `:child_not_process_group_leader`.
+No unverified group is signalled. Supporting this group case and broader
+platform/pressure qualification remain separate release gates.
+
 - Accepted namespaces are `Arbor.ACP.*` and `Arbor.RPC.*`. This checkpoint keeps existing `lib/arbor_acp`, `lib/arbor_rpc`, and matching test paths; directory depth is an implementation detail. Full consumer migration documentation remains a release gate.
-- Adapter support, persistent bridges and Pi managed sessions now share subprocess ownership and acknowledged delivery. Native ACP child stdio still retains its legacy implementation. Shared raw-input pressure/platform qualification and global stdio logger lifecycle remain open.
+- Adapter support, persistent bridges, Pi managed sessions and native ACP child stdio now share subprocess ownership and bounded delivery. Shared raw-input pressure/platform qualification and global stdio logger lifecycle remain open.
 - Full runtime/scheduler redesign and the accepted full v2 protocol/API scope remain release gates.
 - Documentation generation, clean Hex dependency consumer installation, live credential-free ecosystem smoke, and broader cross-runtime interop remain release checks. The local workspace path checks do not establish those outcomes.
 - The public trust-arbor/arbor_acp destination was created and origin points there. The tested extraction and accepted namespace migration are pushed to `main` at `06d153f0bcb515f132b3ab7b439f9b21b503868c`; no package has been published or release tag created.

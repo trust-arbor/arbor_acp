@@ -76,6 +76,7 @@ defmodule Arbor.ACP.Client do
     :transport_mod,
     :transport_state,
     :receiver_pid,
+    :transport_actor_monitor,
     :agent_info,
     :agent_capabilities,
     :client_capabilities,
@@ -99,6 +100,7 @@ defmodule Arbor.ACP.Client do
     # prompt/3 can return it — agents that stream the answer via session/update
     # otherwise leave the prompt result with no text.
     prompt_text: %{},
+    cleanup_result: :ok,
     status: :connecting
   ]
 
@@ -295,7 +297,7 @@ defmodule Arbor.ACP.Client do
   end
 
   @doc "Disconnects from the agent."
-  @spec disconnect(GenServer.server()) :: :ok
+  @spec disconnect(GenServer.server()) :: :ok | {:error, term()}
   def disconnect(client) do
     GenServer.call(client, :disconnect)
   end
@@ -555,7 +557,7 @@ defmodule Arbor.ACP.Client do
 
   def handle_call(:disconnect, _from, state) do
     state = do_disconnect(state)
-    {:reply, :ok, state}
+    {:reply, state.cleanup_result, state}
   end
 
   # Not ready
@@ -648,6 +650,20 @@ defmodule Arbor.ACP.Client do
     end
   end
 
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{transport_actor_monitor: ref} = state)
+      when is_reference(ref) do
+    state = %{state | transport_actor_monitor: nil}
+
+    if reason == :normal do
+      # The pull receiver still carries the terminal result, including any
+      # cleanup failure. Its one-frame handoff preserves ordered admission.
+      {:noreply, state}
+    else
+      state = reply_all_pending({:error, {:transport_error, {:actor_down, reason}}}, state)
+      {:noreply, do_disconnect(state)}
+    end
+  end
+
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case Map.fetch(state.pending_caller_monitors, ref) do
       :error ->
@@ -668,10 +684,16 @@ defmodule Arbor.ACP.Client do
     end
   end
 
-  def handle_info({:transport_closed, _reason}, state) do
+  def handle_info({:transport_closed, reason}, state) do
     Logger.info("ACP transport closed")
     state = reply_all_pending({:error, :transport_closed}, state)
-    {:noreply, %{state | status: :disconnected}}
+
+    state = %{
+      state
+      | cleanup_result: remember_cleanup(state.cleanup_result, terminal_cleanup(reason))
+    }
+
+    {:noreply, do_disconnect(state)}
   end
 
   def handle_info({:transport_error, reason}, state) do
@@ -680,7 +702,13 @@ defmodule Arbor.ACP.Client do
     )
 
     state = reply_all_pending({:error, {:transport_error, reason}}, state)
-    {:noreply, %{state | status: :disconnected}}
+
+    state = %{
+      state
+      | cleanup_result: remember_cleanup(state.cleanup_result, terminal_cleanup(reason))
+    }
+
+    {:noreply, do_disconnect(state)}
   end
 
   def handle_info({:EXIT, pid, reason}, state) do
@@ -693,7 +721,7 @@ defmodule Arbor.ACP.Client do
         end
 
         state = reply_all_pending({:error, :receiver_exited}, state)
-        {:noreply, %{state | status: :disconnected, receiver_pid: nil}}
+        {:noreply, do_disconnect(%{state | receiver_pid: nil})}
 
       pid == state.handler_pid ->
         Logger.warning("ACP handler runner exited",
@@ -781,16 +809,40 @@ defmodule Arbor.ACP.Client do
         {:ok, initialized_state} ->
           {:ok, initialized_state}
 
-        {:error, _reason} = error ->
-          cleanup_failed_initialization(state)
-          error
+        {:error, reason} = error ->
+          state = %{state | cleanup_result: terminal_cleanup(reason)}
+
+          case cleanup_failed_initialization(state) do
+            :ok ->
+              error
+
+            {:error, _} = cleanup ->
+              if cleanup == terminal_cleanup(reason),
+                do: error,
+                else: {:error, {:cleanup_failed, reason, cleanup}}
+          end
       end
     end
   end
 
   defp start_initialization_receiver(state, transport_state) do
+    monitor =
+      if state.transport_mod == Stdio do
+        case Stdio.linked_processes(transport_state) do
+          [actor] -> Process.monitor(actor)
+          _ -> nil
+        end
+      end
+
     receiver_pid = start_receiver(self(), state.transport_mod, transport_state)
-    %{state | transport_state: transport_state, receiver_pid: receiver_pid}
+
+    %{
+      state
+      | transport_state: transport_state,
+        receiver_pid: receiver_pid,
+        transport_actor_monitor: monitor,
+        cleanup_result: :ok
+    }
   end
 
   defp initialize_connection(opts, state, initialize_timeout) do
@@ -846,12 +898,11 @@ defmodule Arbor.ACP.Client do
   end
 
   defp cleanup_failed_initialization(state) do
-    do_disconnect(state)
-    :ok
+    do_disconnect(state).cleanup_result
   rescue
-    _exception -> :ok
+    exception -> {:error, {:cleanup_exception, exception.__struct__}}
   catch
-    _kind, _reason -> :ok
+    kind, reason -> {:error, {:cleanup_failed, kind, reason}}
   end
 
   @client_keys [
@@ -918,6 +969,12 @@ defmodule Arbor.ACP.Client do
 
         {:transport_message, raw} ->
           handle_init_frame(raw, request_id, deadline, max_frame_bytes)
+
+        {:transport_error, reason} ->
+          {:error, reason}
+
+        {:transport_closed, reason} ->
+          {:error, {:transport_closed, reason}}
       after
         remaining ->
           {:error, :init_timeout}
@@ -1837,15 +1894,42 @@ defmodule Arbor.ACP.Client do
   defp path_within_roots?(_path, _roots), do: false
 
   defp do_disconnect(state) do
+    if state.transport_actor_monitor,
+      do: Process.demonitor(state.transport_actor_monitor, [:flush])
+
     if state.receiver_pid && Process.alive?(state.receiver_pid) do
+      Process.unlink(state.receiver_pid)
       Process.exit(state.receiver_pid, :shutdown)
     end
 
-    if state.transport_state do
-      state.transport_mod.close(state.transport_state)
-    end
+    cleanup = if state.transport_state, do: close_transport(state), else: :ok
 
     reply_all_pending({:error, :disconnected}, state)
-    |> Map.merge(%{status: :disconnected, receiver_pid: nil, transport_state: nil})
+    |> Map.merge(%{
+      status: :disconnected,
+      receiver_pid: nil,
+      transport_state: nil,
+      transport_actor_monitor: nil,
+      cleanup_result: remember_cleanup(state.cleanup_result, cleanup)
+    })
   end
+
+  defp close_transport(state) do
+    case state.transport_mod.close(state.transport_state) do
+      :ok -> :ok
+      {:error, _reason} = result -> result
+      other -> {:error, {:invalid_close_result, LogSummary.describe(other)}}
+    end
+  catch
+    :exit, {:noproc, _call} -> :ok
+    kind, reason -> {:error, {:close_failed, kind, reason}}
+  end
+
+  defp terminal_cleanup({:cleanup_failed, _reason, {:error, _} = result}), do: result
+  defp terminal_cleanup({:connection_error, reason}), do: terminal_cleanup(reason)
+  defp terminal_cleanup({:transport_error, reason}), do: terminal_cleanup(reason)
+  defp terminal_cleanup({:transport_closed, reason}), do: terminal_cleanup(reason)
+  defp terminal_cleanup(_reason), do: :ok
+  defp remember_cleanup({:error, _} = previous, _result), do: previous
+  defp remember_cleanup(:ok, result), do: result
 end

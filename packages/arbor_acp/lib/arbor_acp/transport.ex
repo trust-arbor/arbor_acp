@@ -52,9 +52,10 @@ defmodule Arbor.ACP.Transport do
   @doc """
   Closes the transport connection.
 
-  Should clean up any resources and return `:ok`.
+  Should clean up any resources and return `:ok`, or `{:error, reason}` when
+  cleanup could not be confirmed.
   """
-  @callback close(state()) :: :ok
+  @callback close(state()) :: :ok | {:error, term()}
 
   @doc """
   Optional callback to check if the transport is still connected.
@@ -73,6 +74,10 @@ defmodule Arbor.ACP.Transport do
 
   This enables the push (event-driven) model, eliminating the need for a
   receiver task that polls `receive_message/1`.
+
+  The built-in stdio transport instead exposes neutral generation-tagged RPC
+  events with one frame of credit. Direct subscribers use its `event/2`,
+  `frame/1` and `ack/2` helpers and ACK after bounded protocol admission.
 
   Returns `{:ok, new_state}` on success.
   """

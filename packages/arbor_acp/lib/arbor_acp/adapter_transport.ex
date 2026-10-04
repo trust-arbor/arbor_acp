@@ -101,7 +101,8 @@ defmodule Arbor.ACP.AdapterTransport do
   def close(%__MODULE__{bridge: bridge}) do
     AdapterBridge.close(bridge)
   catch
-    :exit, _ -> :ok
+    :exit, {:noproc, _call} -> :ok
+    :exit, reason -> {:error, {:close_failed, reason}}
   end
 
   @impl true

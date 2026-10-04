@@ -85,5 +85,27 @@ delivery bounds, not a hard bound on asynchronous Port driver inboxes or on
 application data retained after ACK. Applications must bound concurrent writers
 and downstream queues. Windows process-tree qualification, broader pressure
 qualification, global stdio logger lifecycle and full runtime convergence remain
-release gates. The native ACP child stdio transport is the next wrapper to adopt
-this API.
+release gates.
+
+## Native child stdio and client close
+
+`Arbor.ACP.Transport.Stdio` also owns an opaque shared handle. Pull callers may
+use temporary tasks without taking Port ownership. `receive_message/2` retains
+one original deadline across noise filtering, including the original cutoff
+for an explicit zero poll. Outbound validation, BOM/noise/UTF-8 policy and ACP
+telemetry remain in that protocol wrapper.
+
+Direct stdio subscribers now receive generation-tagged RPC events and use
+`event/2`, `frame/1`, `identity/1` and `ack/2`. There is no automatic ACK
+forwarder. The built-in ACP client retains its existing pull receiver, with
+one delivered message awaiting the client's processing ACK. Shared managed
+queue counters exclude that bounded one-message handoff.
+
+`Transport.close/1` and `Client.disconnect/1` return `:ok | {:error, reason}`.
+The client monitors its stable stdio actor, closes after receiver failure, and
+preserves a known terminal cleanup failure after the actor has stopped.
+Invalid custom close returns and callback exceptions become explicit errors.
+Failed initialization closes its resources and reports an additional cleanup
+failure if the original error did not already carry it. Adapter transport also
+preserves an unconfirmed close-call failure instead of treating every exit as
+successful cleanup.
