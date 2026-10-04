@@ -3,7 +3,7 @@
 Status: integrated into the unpublished ACP v2 draft; stable releases are unchanged.
 Source base: `b46cbfe8ced0d29519462f8a83b64e5750caaa92`.
 Source-build packaging is the working assumption pending the packaging decision.
-Native C source SHA-256: `f04c32f22eed8ef30d997f059cb17da4119d0cec88013560cdfe5f75d2a19d8b`.
+Native C source SHA-256: `e5c92784c789e9c377d5c777c79bcb898c296f5c2d8877274a878a31eea135e9`.
 
 ## Ownership and receipts
 
@@ -122,3 +122,5 @@ matrix; Windows native handle/Job implementation (currently unsupported-safe
 failure); escaped-descendant containment policy; full protocol/runtime release
 qualification. Local macOS success does not establish Linux/Windows support or
 completion of the complete v2 release.
+
+Linux compilation at the first integrated checkpoint rejected three unchecked startup-pipe writes under GCC warnings-as-errors. The helper now checks each setup/error report and fails before exec when a complete report cannot be written. Fresh Linux qualification is required for this correction.
