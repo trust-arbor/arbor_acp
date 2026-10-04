@@ -1,0 +1,47 @@
+defmodule ArborAcp.MixProject do
+  use Mix.Project
+  @version "2.0.0-dev"
+  def project do
+    [
+      app: :arbor_acp,
+      version: @version,
+      elixir: "~> 1.17",
+      elixirc_paths: paths(Mix.env()),
+      deps: deps(),
+      description: "Agent Client Protocol client, native agent and generic adapter runtime.",
+      package: [
+        licenses: ["MIT"],
+        links: %{"GitHub" => "https://github.com/trust-arbor/arbor_acp"},
+        files: ~w(lib mix.exs .formatter.exs README.md LICENSE CHANGELOG.md)
+      ],
+      source_url: "https://github.com/trust-arbor/arbor_acp",
+      docs: [name: "ArborACP", main: "readme", extras: ["README.md", "CHANGELOG.md"]]
+    ]
+  end
+
+  def application, do: [extra_applications: [:logger, :crypto, :inets, :ssl]]
+  defp paths(:test), do: ["lib", "dev", "test/support"]
+  defp paths(:dev), do: ["lib", "dev"]
+  defp paths(_), do: ["lib"]
+
+  defp deps do
+    [
+      internal_dep(:arbor_rpc),
+      external_dep(:jason, "~> 1.4"),
+      external_dep(:telemetry, "~> 1.2")
+    ]
+  end
+
+  defp external_dep(app, version) do
+    case System.get_env("ARBOR_V2_DEPS") do
+      nil -> {app, version}
+      directory -> {app, path: Path.join(directory, to_string(app)), override: true}
+    end
+  end
+
+  defp internal_dep(app) do
+    if System.get_env("ARBOR_V2_LOCAL") == "1",
+      do: {app, path: Path.expand("../#{app}", __DIR__)},
+      else: {app, "~> 2.0.0-dev"}
+  end
+end

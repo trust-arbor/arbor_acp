@@ -1,0 +1,9 @@
+{
+  "name": "arbor-acp-interop",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "zod": "4.4.3"
+  }
+}

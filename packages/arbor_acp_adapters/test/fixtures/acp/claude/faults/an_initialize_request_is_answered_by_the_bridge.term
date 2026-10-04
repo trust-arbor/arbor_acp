@@ -1,0 +1,29 @@
+[
+  %ArborACP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :init,
+      opts: [
+        cwd: "<sandbox>/project",
+        claude_config_dir: "<sandbox>/claude",
+        cli_path: "<sandbox>/bin/claude"
+      ]
+    },
+    result: %{tag: :ok}
+  },
+  %ArborACP.Test.ClaudeGolden.Entry{
+    step: %{kind: :note, text: "initialize only captures client capabilities; the bridge replies"},
+    result: %{}
+  },
+  %ArborACP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :outbound,
+      message: %{
+        "id" => "acp-init",
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{"clientCapabilities" => %{"elicitation" => %{"form" => %{}}}}
+      }
+    },
+    result: %{skipped: true, tag: :ok}
+  }
+]
