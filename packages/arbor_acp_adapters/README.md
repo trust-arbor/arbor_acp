@@ -9,3 +9,14 @@ Example adapter selection: `adapter: Arbor.ACP.Adapters.Codex` with the generic 
 Legacy `_meta.ex_mcp` wire extensions, generated native request IDs, and Pi's session-map location are preserved. The accepted module namespace is `Arbor.ACP.Adapters.*`; full v2 runtime qualification remains pending.
 
 Pi's managed sessions use shared owned subprocess handles and explicit frame credit. EOF remainder translation preserves a final native response without LF. Startup banner retention is bounded at 64 lines / 64 KiB by default; pressure and queued write rejection fail pending work explicitly. Known cleanup failures surface through bridge close and prevent session replacement/deletion. Existing captured golden fixtures remain unchanged.
+
+Vendor utility commands also use shared bounded capture. Claude logout defaults
+to 5 seconds / 64 KiB and reports nonzero status, pressure, timeout and known
+cleanup failures. Pi version and npm update probes each use 800 ms / 64 KiB;
+Git worktree discovery uses 1 second / 1 MiB. These optional metadata probes omit
+unavailable results on failure. Pi's two probes and Claude worktree discovery
+honor caller environment overrides, child PATH and cwd. Successful capture keeps
+the original bytes, and every utility child belongs to its capturing caller.
+Cleanup can add its own finite budget and actor-call allowance after read expiry.
+Process-group ownership verification, raw Port-driver input limits and platform
+qualification remain the shared RPC constraints.

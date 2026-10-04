@@ -12,4 +12,13 @@ Managed adapters identify frame credit with the pure optional `subprocess_receip
 
 Native child stdio also uses an owned shared handle. Temporary readers retain child lifetime, and filtered reads preserve the original deadline/cutoff. Direct subscribers use generation-tagged RPC events and explicit ACK. The built-in client keeps its bounded pull handoff; transport close and client disconnect expose known cleanup failures.
 
+`AdapterSupport.Subprocess.capture/4` runs finite utility commands with the same
+adapter defaults, `env/1`, caller environment overrides and child PATH/cwd policy
+as managed children. It combines stderr by default and returns original bytes
+plus exit status. Its defaults are 5 seconds and 1 MiB; timeout, pressure and known
+cleanup failures remain explicit. Each capturing caller owns the utility child,
+including when a different `:owner` option is supplied. Cleanup uses its separate
+finite budget after the read deadline; shared raw-driver and platform limits
+still apply.
+
 See `examples/acp` for a native echo agent and controller, and `test/interop` for the pinned official SDK probes. Legacy wire metadata and storage locations are preserved. Shared subprocess pressure/platform qualification and logging convergence, runtime/scheduler redesign, and full v2 qualification remain release gates.

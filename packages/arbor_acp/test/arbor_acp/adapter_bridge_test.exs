@@ -269,17 +269,6 @@ defmodule Arbor.ACP.AdapterBridgeTest do
     def translate_inbound(_line, state), do: {:skip_and_write, "too large\n", state}
   end
 
-  defmodule CleanupFailureActor do
-    use GenServer
-
-    def init(test_pid), do: {:ok, test_pid}
-
-    def handle_call({_generation, :close}, _from, test_pid) do
-      send(test_pid, :cleanup_attempted)
-      {:stop, :normal, {:error, :cleanup_timeout}, test_pid}
-    end
-  end
-
   defmodule ManagedShutdownAdapter do
     @behaviour Arbor.ACP.Adapter
 
@@ -650,15 +639,28 @@ defmodule Arbor.ACP.AdapterBridgeTest do
 
   test "explicit close reports an owned subprocess cleanup failure" do
     {:ok, bridge} = AdapterBridge.start_link(adapter: OneShotMockAdapter, adapter_opts: [])
-    {:ok, actor} = GenServer.start(CleanupFailureActor, self())
+
+    {:ok, handle} =
+      SharedSubprocess.open(["/bin/sh", "-c", "exec /bin/sleep 30"],
+        owner: bridge,
+        cleanup_timeout: 150,
+        term_grace: 50
+      )
+
+    on_exit(fn -> SharedSubprocess.close(handle) end)
+    pid = SharedSubprocess.os_pid(handle)
+    [actor] = SharedSubprocess.linked_processes(handle)
     monitor = Process.monitor(actor)
 
-    handle = %SharedSubprocess{
-      pid: actor,
-      generation: make_ref(),
-      cleanup_timeout: 150,
-      max_write_bytes: 16
-    }
+    # Inject a known failed-cleanup result into a real actor, preserving the
+    # opaque handle and identity validation used by production callers.
+    :sys.replace_state(actor, fn state ->
+      %{
+        state
+        | closed: {:cleanup_failed, :closed, {:error, :cleanup_timeout}},
+          cleanup_result: {:error, :cleanup_timeout}
+      }
+    end)
 
     :sys.replace_state(bridge, fn state ->
       %{
@@ -670,8 +672,15 @@ defmodule Arbor.ACP.AdapterBridgeTest do
     end)
 
     assert {:error, :cleanup_timeout} = AdapterBridge.close(bridge)
-    assert_receive :cleanup_attempted
     assert_receive {:DOWN, ^monitor, :process, ^actor, :normal}
+
+    wait_for_bridge(fn ->
+      {_output, status} =
+        System.cmd("/bin/kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true)
+
+      status != 0
+    end)
+
     refute Process.alive?(bridge)
   end
 

@@ -188,14 +188,74 @@ source-boundary checks and whitespace checks pass. The real core Hex archive
 contains 39 files with ordinary Hex dependency metadata; it contains no vendor
 code, tests, dependency caches, temporary source paths or absolute host paths.
 
-## Remaining v2 gates
+## Bounded utility capture (2026-10-04)
 
-Vendor utility commands still need the shared bounded command-capture path:
-`ClaudeSdk` authentication logout (`claude_sdk.ex`), Pi startup probes
-(`pi/startup.ex`) and Git worktree discovery (`claude_sdk/session_store.ex`).
-Their command selection, output interpretation and vendor policy remain adapter
-responsibilities. The current native/adapter transport convergence does not
-qualify these utility commands or the entire subprocess release gate.
+The working utility slice is based on `25fc8d14d346b3fbe8a53a40ac4d8b3fa7605e54`.
+`Arbor.RPC.Subprocess.capture/2` captures a finite command with the caller as its
+lifetime owner, one monotonic read deadline and a total output-byte cap. Defaults
+are 5 seconds / 1 MiB. LF, CR, blank lines, arbitrary bytes and unfinished EOF
+output count toward the cap and are preserved. Nonzero status remains
+`{:ok, output, status}` for the caller to interpret. Byte overflow normalizes the
+actor's frame/chunk/queue-byte reasons to `:output_too_large`; count/mailbox
+pressure remains explicit. Known cleanup failure takes precedence and includes
+the original capture result reason. Cleanup follows read expiry with its own
+finite budget and up to 1 second of actor-call allowance.
+On unconfirmed close, capture force-stops only its freshly opened actor; its
+guardian attempts bounded OS cleanup while the caller can remain alive. The
+original cleanup failure remains explicit.
+
+`AdapterSupport.Subprocess.capture/4` applies the existing adapter defaults,
+`env/1`, explicit overrides, isolated child PATH/cwd and stderr policy. Claude
+logout, Pi version/npm probes and Claude Git worktree discovery now use this
+path. Logout defaults to 5 seconds / 64 KiB; each Pi probe uses 800 ms / 64 KiB;
+worktree discovery uses 1 second / 1 MiB. Optional metadata probes omit results
+on failure. Both Pi probes and worktree discovery retain caller environment
+policy, including effective PATH and cwd. Golden transcripts were not changed.
+
+On macOS, independent Elixir 1.19.5 / OTP 28.4.1 and minimum Elixir 1.17.3 /
+OTP 27.0.1 source/dependency copies pass the complete suites: RPC 87, core 355
+executed (+7 excluded), adapters 1,454 executed (+4 excluded), zero failures.
+Minimum ExUnit includes exclusions in its displayed totals (362 / 1,458).
+New capture tests cover exact bytes and argv, CR/LF across chunks, nonzero status,
+overflow, one absolute deadline, closed stdout with a live child, caller death,
+explicit environment/unsets/isolation, child PATH denial, finite validation,
+frame-count pressure and a suspended actor's known cleanup-call timeout. That
+regression proves actor death and actual child cleanup without resuming the
+actor or ending its capturing owner's lifetime. Core
+and vendor utility tests cover adapter precedence, real command cleanup,
+logout status/error text, Pi optional failures and mapped worktree options.
+
+Both toolchains pass production warnings-as-errors compilation, complete
+formatter and package source-boundary checks. An independent Elixir 1.20.3 /
+OTP 29.0.5 copy also passes all 87 RPC tests, production warnings-as-errors
+compilation, formatting and workspace package boundaries.
+
+Six real Hex archives (three packages on each minimum/current toolchain) have
+identical checksums across toolchains: RPC contains 17 files, core 39, adapters
+41. Default metadata uses ordinary Hex Jason/Telemetry and `~> 2.0.0-dev`
+internal requirements. Archives contain no tests, caches, local dependency paths
+or absolute host paths; the core archive has no vendor implementation. These
+local archive checks do not establish installation from the unpublished Hex
+dependencies.
+
+Shared process-group ownership and
+fast group startup limits still apply. OTP driver input can accumulate before
+the actor checks its mailbox; managed counters do not imply a hard raw-driver or
+total-memory bound. This utility checkpoint does not qualify the whole
+subprocess platform/pressure matrix or complete the full runtime scope.
+
+Neutral close now validates the local actor's proc-lib identity and private
+generation marker. On timeout it rechecks that identity before force-stopping
+the matching actor, preserving `{:error, :timeout}`. A real suspended-actor
+regression proves live-child reaping; stale generations and an unrelated process
+with a copied marker cannot trigger signalling. No generic abort API is added.
+The guardian after hard actor death has only captured PID/group proof and calls
+`Cleanup.run(proof, nil, ...)`; it has no retained Port or actual `exit_status`.
+Actor DOWN does not confirm its cleanup, and the retained-Port stale-PID test
+qualifies only live-actor cleanup. Delayed-PID-reuse safety and guardian cleanup
+confirmation on the hard-death path remain explicit release gates.
+
+## Remaining v2 gates
 
 Fast group startup remains conservative: if the owned group leader exits before
 its PGID can be measured, startup returns `:child_not_process_group_leader`.

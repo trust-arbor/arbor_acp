@@ -18,11 +18,7 @@ defmodule Arbor.ACP.AdapterSupport.Subprocess do
   def open(cmd, args, opts, adapter_mod) do
     owner = Keyword.get(opts, :owner, self())
 
-    child_opts =
-      opts
-      |> Keyword.put(:cd, Keyword.get(opts, :cwd, Keyword.get(opts, :cd, File.cwd!())))
-      |> Keyword.put(:env, environment_overrides(opts, adapter_mod))
-      |> Keyword.put_new(:stderr_to_stdout, true)
+    child_opts = child_options(opts, adapter_mod)
 
     with {:ok, child} <- Subprocess.open([cmd | args], child_opts) do
       case FramedStream.subscribe(child, owner, window: 1) do
@@ -34,6 +30,28 @@ defmodule Arbor.ACP.AdapterSupport.Subprocess do
           {:error, {:subscribe_failed, reason, cleanup}}
       end
     end
+  end
+
+  @doc """
+  Captures a bounded utility command with the adapter's environment policy.
+
+  Adapter defaults, `env/1` and caller `:env` use the same precedence as `open/4`.
+  Stderr is combined by default. The capturing caller owns the child, and
+  `:timeout` / `:max_output_bytes` default to 5 seconds / 1 MiB. Nonzero status
+  returns `{:ok, output, status}`; pressure, timeout and known cleanup failures
+  return explicit errors. Original line endings and EOF remainder are preserved.
+  """
+  @spec capture(String.t(), [String.t()], keyword(), module()) ::
+          {:ok, binary(), non_neg_integer()} | {:error, term()}
+  def capture(cmd, args, opts, adapter_mod) do
+    Subprocess.capture([cmd | args], child_options(opts, adapter_mod))
+  end
+
+  defp child_options(opts, adapter_mod) do
+    opts
+    |> Keyword.put(:cd, Keyword.get(opts, :cwd, Keyword.get(opts, :cd, File.cwd!())))
+    |> Keyword.put(:env, environment_overrides(opts, adapter_mod))
+    |> Keyword.put_new(:stderr_to_stdout, true)
   end
 
   @spec command(Subprocess.t(), iodata()) :: :ok | {:error, term()}

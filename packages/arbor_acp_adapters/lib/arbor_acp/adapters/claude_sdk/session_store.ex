@@ -41,7 +41,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
 
     sessions =
       config_dir
-      |> project_dir_entries(cwd, include_worktrees)
+      |> project_dir_entries(cwd, include_worktrees, opts)
       |> Enum.flat_map(&session_files/1)
       |> Enum.reduce([], fn file, acc ->
         case read_session(file) do
@@ -300,7 +300,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
 
     result =
       config_dir
-      |> project_dir_entries(cwd, include_worktrees)
+      |> project_dir_entries(cwd, include_worktrees, opts)
       |> Enum.find_value(fn %{dir: project_dir} ->
         path = Path.join(project_dir, "#{session_id}.jsonl")
 
@@ -323,7 +323,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
     cwd = option(opts, :cwd, "cwd") || option(opts, :dir, "dir")
     include_worktrees = option(opts, :include_worktrees, "includeWorktrees", true)
 
-    entries = project_dir_entries(config_dir, cwd, include_worktrees)
+    entries = project_dir_entries(config_dir, cwd, include_worktrees, opts)
     projects_dir = projects_dir(config_dir)
 
     entries
@@ -354,18 +354,18 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
     end
   end
 
-  defp project_dir_entries(config_dir, nil, _include_worktrees),
+  defp project_dir_entries(config_dir, nil, _include_worktrees, _opts),
     do: all_project_dir_entries(config_dir)
 
-  defp project_dir_entries(config_dir, "", _include_worktrees),
+  defp project_dir_entries(config_dir, "", _include_worktrees, _opts),
     do: all_project_dir_entries(config_dir)
 
-  defp project_dir_entries(config_dir, cwd, include_worktrees) when is_binary(cwd) do
+  defp project_dir_entries(config_dir, cwd, include_worktrees, opts) when is_binary(cwd) do
     cwd = normalize_path(cwd)
 
     workspaces =
       if include_worktrees do
-        [cwd | git_worktrees(cwd)]
+        [cwd | git_worktrees(cwd, opts)]
       else
         [cwd]
       end
@@ -840,11 +840,15 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
     end
   end
 
-  defp git_worktrees(cwd) do
+  defp git_worktrees(cwd, opts) do
     with true <- File.dir?(cwd),
-         git when is_binary(git) <- System.find_executable("git"),
-         {output, 0} <-
-           System.cmd(git, ["worktree", "list", "--porcelain"], cd: cwd, stderr_to_stdout: true) do
+         {:ok, output, 0} <-
+           Arbor.ACP.AdapterSupport.Subprocess.capture(
+             "git",
+             ["worktree", "list", "--porcelain"],
+             worktree_options(cwd, opts),
+             Arbor.ACP.Adapters.ClaudeSDK
+           ) do
       output
       |> String.split("\n", trim: true)
       |> Enum.flat_map(fn
@@ -856,6 +860,22 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
     end
   rescue
     _ -> []
+  end
+
+  defp worktree_options(cwd, opts) do
+    policy =
+      for {key, string_key} <- [
+            env: "env",
+            environment_policy: "environmentPolicy",
+            process_group: "processGroup",
+            cleanup_timeout: "cleanupTimeout",
+            term_grace: "termGrace"
+          ],
+          value = option(opts, key, string_key),
+          not is_nil(value),
+          do: {key, value}
+
+    Keyword.merge(policy, cwd: cwd, timeout: 1_000, max_output_bytes: 1_048_576)
   end
 
   defp normalize_path(path) do

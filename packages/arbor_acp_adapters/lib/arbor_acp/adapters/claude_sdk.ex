@@ -310,15 +310,26 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     state = %{state | gateway_auth: nil}
 
     if Keyword.get(state.opts, :logout_cli, true) do
-      case System.cmd(ClaudeProtocol.cli_path(state.opts), ["auth", "logout"],
-             stderr_to_stdout: true
+      utility_opts =
+        state.opts
+        |> Keyword.put_new(:timeout, 5_000)
+        |> Keyword.put_new(:max_output_bytes, 65_536)
+
+      case Arbor.ACP.AdapterSupport.Subprocess.capture(
+             ClaudeProtocol.cli_path(state.opts),
+             ["auth", "logout"],
+             utility_opts,
+             __MODULE__
            ) do
-        {_output, 0} ->
+        {:ok, _output, 0} ->
           {:reply, %{}, state}
 
-        {output, status} ->
+        {:ok, output, status} ->
           {:error, "claude auth logout failed with status #{status}: #{String.trim(output)}",
            state}
+
+        {:error, reason} ->
+          {:error, "claude auth logout failed: #{inspect(reason)}", state}
       end
     else
       {:reply, %{}, state}

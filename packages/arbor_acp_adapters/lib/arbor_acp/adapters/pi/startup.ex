@@ -52,7 +52,7 @@ defmodule Arbor.ACP.Adapters.Pi.Startup do
   defp update_notice(cwd, %{"_opts" => opts} = settings) do
     if Settings.update_notice?(opts) do
       with local when is_binary(local) <- pi_version(cwd, settings),
-           latest when is_binary(latest) <- npm_latest_version() do
+           latest when is_binary(latest) <- npm_latest_version(cwd, opts) do
         if local != latest do
           "Update available: Pi #{local} -> #{latest}"
         end
@@ -65,7 +65,7 @@ defmodule Arbor.ACP.Adapters.Pi.Startup do
   defp pi_version(cwd, settings) do
     cmd = Settings.pi_command(settings["_opts"] || [], settings)
 
-    case run_bounded(cmd, ["--version"], cwd, @notice_timeout) do
+    case run_bounded(cmd, ["--version"], cwd, @notice_timeout, settings["_opts"] || []) do
       {:ok, output} ->
         output
         |> String.trim()
@@ -77,8 +77,8 @@ defmodule Arbor.ACP.Adapters.Pi.Startup do
     end
   end
 
-  defp npm_latest_version do
-    case run_bounded("npm", ["view", @package, "version"], nil, @notice_timeout) do
+  defp npm_latest_version(cwd, opts) do
+    case run_bounded("npm", ["view", @package, "version"], cwd, @notice_timeout, opts) do
       {:ok, output} -> output |> String.trim() |> blank_to_nil()
       _ -> nil
     end
@@ -163,20 +163,16 @@ defmodule Arbor.ACP.Adapters.Pi.Startup do
     end
   end
 
-  defp run_bounded(cmd, args, cwd, timeout) do
-    task =
-      Task.async(fn ->
-        try do
-          opts = [stderr_to_stdout: true]
-          opts = if is_binary(cwd), do: Keyword.put(opts, :cd, cwd), else: opts
-          System.cmd(cmd, args, opts)
-        rescue
-          _ -> {"", 127}
-        end
-      end)
+  defp run_bounded(cmd, args, cwd, timeout, opts) do
+    opts =
+      opts
+      |> Keyword.put(:timeout, timeout)
+      |> Keyword.put(:max_output_bytes, 65_536)
 
-    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {output, 0}} -> {:ok, output}
+    opts = if is_binary(cwd), do: Keyword.put(opts, :cwd, cwd), else: opts
+
+    case Arbor.ACP.AdapterSupport.Subprocess.capture(cmd, args, opts, Arbor.ACP.Adapters.Pi) do
+      {:ok, output, 0} -> {:ok, output}
       _ -> :error
     end
   end

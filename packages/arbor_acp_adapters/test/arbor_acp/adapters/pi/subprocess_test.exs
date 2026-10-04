@@ -8,30 +8,22 @@ defmodule Arbor.ACP.Adapters.Pi.SubprocessTest do
 
   @moduletag timeout: 10_000
 
-  defmodule CleanupFailureActor do
-    use GenServer
-    def init(test_pid), do: {:ok, test_pid}
-
-    def handle_call({_generation, :close}, _from, test_pid) do
-      send(test_pid, :cleanup_attempted)
-      {:stop, :normal, {:error, :cleanup_timeout}, test_pid}
-    end
-  end
-
   test "known cleanup failure surfaces through shutdown and prevents replacement or deletion" do
     for method <- [:shutdown, "session/close", "session/delete", "session/new"] do
-      {:ok, actor} = GenServer.start(CleanupFailureActor, self())
+      state = child("exec /bin/sleep 30", cleanup_timeout: 150, term_grace: 50)
+      port = state.port
+      pid = Subprocess.os_pid(port)
+      [actor] = Subprocess.linked_processes(port)
       monitor = Process.monitor(actor)
 
-      port = %Subprocess{
-        pid: actor,
-        generation: make_ref(),
-        cleanup_timeout: 150,
-        max_write_bytes: 1024
-      }
-
-      {:ok, state} = Pi.init([])
-      state = %{state | port: port, port_monitor: Process.monitor(actor), session_id: "s1"}
+      # Exercise failure propagation with a real owned actor and opaque handle.
+      :sys.replace_state(actor, fn state ->
+        %{
+          state
+          | closed: {:cleanup_failed, :closed, {:error, :cleanup_timeout}},
+            cleanup_result: {:error, :cleanup_timeout}
+        }
+      end)
 
       result =
         if method == :shutdown do
@@ -51,8 +43,14 @@ defmodule Arbor.ACP.Adapters.Pi.SubprocessTest do
       assert {:error, ^expected, state} = result
       assert state.port == nil
       assert state.cleanup_result == {:error, :cleanup_timeout}
-      assert_receive :cleanup_attempted
       assert_receive {:DOWN, ^monitor, :process, ^actor, :normal}
+
+      eventually(fn ->
+        {_output, status} =
+          System.cmd("/bin/kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true)
+
+        status != 0
+      end)
     end
   end
 
@@ -213,6 +211,19 @@ defmodule Arbor.ACP.Adapters.Pi.SubprocessTest do
     assert state.port == nil
     assert state.pending_prompt == nil
   end
+
+  defp eventually(predicate, attempts \\ 100)
+
+  defp eventually(predicate, attempts) when attempts > 0 do
+    if predicate.() do
+      :ok
+    else
+      Process.sleep(10)
+      eventually(predicate, attempts - 1)
+    end
+  end
+
+  defp eventually(_predicate, 0), do: flunk("utility child did not stop")
 
   defp child(script, opts \\ []) do
     {:ok, port} = PortRunner.open("sh", ["-c", script], opts, Pi)
