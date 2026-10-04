@@ -269,3 +269,11 @@ platform/pressure qualification remain separate release gates.
 - The public trust-arbor/arbor_acp destination was created and origin points there. The tested extraction and accepted namespace migration are pushed to `main` at `06d153f0bcb515f132b3ab7b439f9b21b503868c`; no package has been published or release tag created.
 
 Legacy wire `_meta.ex_mcp`, generated native request IDs, client information defaults, and Pi's `~/.ex_mcp/pi/session-map.json` location are intentionally preserved for compatibility.
+
+## Native cleanup in the v2 draft (October 4, 2026)
+
+The `b46cbfe8ced0d29519462f8a83b64e5750caaa92`-based native implementation is integrated in this unpublished v2 draft and replaces the historical numeric cleanup mechanism described above. Stable releases are unchanged. See [Native subprocess cleanup draft](docs/NATIVE_SUBPROCESS_DRAFT.md) for ownership, versioned protocol, typed/finite receipt semantics, source-build installation and explicit platform gates.
+
+The exact draft passes the complete minimum/current/newest RPC103, core355 and adapter1,454 suites with production warnings-as-errors, formatting and source boundaries. The four core intentional invalid-input fixtures retain exact exception assertions using dynamic invocation. Official ACP SDK six cases and unchanged vendor goldens pass. Ten real native protocol tests plus four post-reap syscall-invariant cases pass on macOS; no actual PID-reuse exhaustion was attempted. Current/minimum source archives and fresh package-only consumers qualify reviewed C source build, installed priv lookup and release evaluation with runtime compiler lookup disabled. Local external dependency sources replace unavailable unpublished registry dependencies in these consumer checks.
+
+The exact source/path/verification manifests were checked during draft integration; Linux CI, broader pressure measurement, Windows Job/handle support, hard-helper-loss/uninterruptible exit, packaging selection and full v2 remain gates. No publication or stable release default change occurred.

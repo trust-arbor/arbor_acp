@@ -18,5 +18,7 @@ unavailable results on failure. Pi's two probes and Claude worktree discovery
 honor caller environment overrides, child PATH and cwd. Successful capture keeps
 the original bytes, and every utility child belongs to its capturing caller.
 Cleanup can add its own finite budget and actor-call allowance after read expiry.
-Process-group ownership verification, raw Port-driver input limits and platform
-qualification remain the shared RPC constraints.
+This isolated draft uses the shared source-built native backend. Its retained
+cleanup receipts, targeted-group boundary, kernel/Port allocation and platform
+qualification limits are documented in the Arbor.RPC README. Native packaging
+and platform support remain release gates; canonical defaults are unchanged.

@@ -11,3 +11,6 @@ _verification/
 
 /packages/*/doc/
 **/tmp/
+/packages/arbor_rpc/priv/native/
+
+/packages/arbor_rpc/test/support/native/vendor_fixture

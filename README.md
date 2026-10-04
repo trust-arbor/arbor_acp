@@ -13,3 +13,5 @@ To verify an unpublished workspace package, set `ARBOR_V2_LOCAL=1` for internal 
 `elixir scripts/check_boundaries.exs` checks production source ownership. `VERIFICATION.md` records actual results and remaining gates. Examples and pinned SDK tooling live in the core package; vendor golden fixtures and external CLI smoke tests live in the adapter package.
 
 ACP child stdio, persistent adapter bridges and Pi managed sessions use shared owned subprocess mechanics. Shared raw-input pressure/platform qualification, global stdio logger management, the accepted runtime/scheduler redesign, and the full v2 protocol/API work remain release gates. These packages have not been published. The initial package checkpoint passed GitHub CI; `VERIFICATION.md` records exact revision-specific local and remote evidence. Later implementation requires its own qualification.
+
+This isolated native-backend draft is based on `b46cbfe8ced0d29519462f8a83b64e5750caaa92`. The Arbor.RPC README describes source-build installation, retained cleanup receipts and remaining platform gates. Canonical defaults and package publication are unchanged.
