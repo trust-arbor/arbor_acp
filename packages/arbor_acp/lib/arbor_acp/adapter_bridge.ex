@@ -2,18 +2,21 @@ defmodule Arbor.ACP.AdapterBridge do
   @moduledoc """
   GenServer bridge between ACP clients and non-native CLI agents.
 
-  Owns the Port subprocess and delegates translation to a pluggable
+  Owns a shared subprocess handle and delegates translation to a pluggable
   `Arbor.ACP.Adapter` implementation. Uses an outbox + waiters queue
   for synchronized message delivery.
 
   ## Modes
 
-  - **Persistent** (default) — opens a Port on init, keeps it alive
+  - **Persistent** (default) — opens an owned subprocess on init, keeps it alive
   - **One-shot** — adapter manages subprocess per prompt (Codex pattern)
-  - **Adapter-managed** — adapter owns one or more persistent subprocess Ports
+  - **Adapter-managed** — adapter owns one or more persistent subprocess handles
 
   Pending output is bounded by both `:max_outbox_messages` (1,024 by default)
   and `:max_outbox_bytes` (4 MiB by default). `:max_one_shot_tasks` defaults to 8.
+  Persistent subprocess frames are acknowledged after output admission. Explicit
+  `close/1` returns a cleanup error when the owned subprocess cannot be cleaned
+  within its finite budget.
 
   ## Usage
 
@@ -34,6 +37,7 @@ defmodule Arbor.ACP.AdapterBridge do
   alias Arbor.ACP.Meta
   alias Arbor.ACP.Internal.Maps
   alias Arbor.ACP.Internal.Options
+  alias Arbor.RPC.Subprocess, as: SharedSubprocess
 
   @type t :: GenServer.server()
   @default_max_buffer_bytes 1_048_576
@@ -47,6 +51,8 @@ defmodule Arbor.ACP.AdapterBridge do
     :adapter_state,
     :adapter_opts,
     :port,
+    :port_generation,
+    :port_monitor,
     :outbox,
     :waiters,
     max_buffer_bytes: @default_max_buffer_bytes,
@@ -61,6 +67,7 @@ defmodule Arbor.ACP.AdapterBridge do
     native_events: :off,
     native_sequence: 0,
     adapter_name: nil,
+    cleanup_result: :ok,
     status: :connecting
   ]
 
@@ -79,14 +86,34 @@ defmodule Arbor.ACP.AdapterBridge do
     GenServer.call(bridge, {:send, json})
   end
 
-  @doc "Receive the next ACP message from the agent. Blocks until available."
+  @doc """
+  Receive the next ACP message from the agent. Blocks until available.
+
+  A finite deadline starts in the caller, so a timed-out call cannot consume
+  buffered output when the bridge resumes. Timeout zero polls only messages
+  buffered before the poll, with a small bounded scheduling allowance.
+  """
   @spec receive_message(t(), timeout()) :: {:ok, String.t()} | {:error, term()}
-  def receive_message(bridge, timeout \\ 30_000) do
-    GenServer.call(bridge, {:receive, timeout, deadline(timeout)}, timeout)
+  def receive_message(bridge, timeout \\ 30_000)
+
+  def receive_message(bridge, :infinity) do
+    GenServer.call(bridge, {:receive, :infinity, :infinity, false}, :infinity)
   end
 
+  def receive_message(bridge, timeout) when is_integer(timeout) and timeout >= 0 do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    GenServer.call(
+      bridge,
+      {:receive, deadline, deadline + 10, timeout == 0},
+      max(timeout, 1) + 10
+    )
+  end
+
+  def receive_message(_bridge, _timeout), do: {:error, :invalid_timeout}
+
   @doc "Close the bridge and terminate the subprocess."
-  @spec close(t()) :: :ok
+  @spec close(t()) :: :ok | {:error, term()}
   def close(bridge) do
     GenServer.call(bridge, :close)
   end
@@ -134,11 +161,26 @@ defmodule Arbor.ACP.AdapterBridge do
         {:stop, reason}
 
       {cmd, args} ->
-        case open_port(cmd, args, adapter_opts, adapter_mod) do
+        case open_port(cmd, args, adapter_opts, adapter_mod, state.max_buffer_bytes) do
           {:ok, port} ->
-            state = %{state | port: port, status: :ready}
-            state = maybe_post_connect(state)
-            {:ok, state}
+            [actor] = SharedSubprocess.linked_processes(port)
+
+            state = %{
+              state
+              | port: port,
+                port_generation: PortRunner.identity(port),
+                port_monitor: Process.monitor(actor),
+                status: :ready
+            }
+
+            case maybe_post_connect(state) do
+              {:ok, state} ->
+                {:ok, state}
+
+              {:error, reason, state} ->
+                do_close(state)
+                {:stop, {:post_connect_write_failed, reason}}
+            end
 
           {:error, reason} ->
             {:stop, reason}
@@ -186,58 +228,53 @@ defmodule Arbor.ACP.AdapterBridge do
     end
   end
 
-  def handle_call({:receive, timeout, waiter_deadline}, from, state) do
-    case :queue.out(state.outbox) do
-      {{:value, message}, rest} ->
-        {:reply, {:ok, message},
-         %{state | outbox: rest, outbox_bytes: state.outbox_bytes - byte_size(message)}}
+  def handle_call({:receive, waiter_deadline, acceptance_deadline, immediate}, from, state) do
+    now = System.monotonic_time(:millisecond)
 
-      {:empty, _} ->
-        if state.status == :closed do
-          {:reply, {:error, :closed}, state}
-        else
-          waiters = prune_dead_waiters(state.waiters)
+    cond do
+      acceptance_deadline != :infinity and now >= acceptance_deadline ->
+        {:reply, {:error, :timeout}, state}
 
-          if :queue.len(waiters) >= state.max_waiters do
-            {:reply, {:error, :too_many_waiters}, %{state | waiters: waiters}}
-          else
-            token = make_ref()
-            timer_ref = schedule_waiter_timeout(token, timeout)
+      not immediate and waiter_deadline != :infinity and now >= waiter_deadline ->
+        {:reply, {:error, :timeout}, state}
 
-            waiter = %{
-              from: from,
-              token: token,
-              timer_ref: timer_ref,
-              deadline: waiter_deadline
-            }
+      immediate and not :queue.is_empty(state.outbox) and
+          not buffered_before?(state.outbox, waiter_deadline) ->
+        {:reply, {:error, :timeout}, state}
 
-            {:noreply, %{state | waiters: :queue.in(waiter, waiters)}}
-          end
-        end
+      true ->
+        receive_output(state, from, waiter_deadline, immediate)
     end
   end
 
   def handle_call(:close, _from, state) do
     state = do_close(state)
-    {:stop, :normal, :ok, state}
+    {:stop, :normal, state.cleanup_result, state}
   end
 
   @impl true
-  def handle_info({port, {:data, data}}, %{port: port} = state) do
-    state = process_port_data(state, data)
-    {:noreply, state}
+  def handle_info(
+        {:arbor_rpc, generation, {:frame, token, line}},
+        %{port_generation: generation, port: port} = state
+      )
+      when port != nil do
+    state = translate_port_line(state, line)
+    {:noreply, acknowledge_frame(state, {port, token})}
   end
 
-  def handle_info({port, {:exit_status, _code}}, %{port: port} = state) do
-    state = flush_buffer(state)
-    state = reply_error_to_waiters(state, :port_exited)
-    {:noreply, %{state | port: nil, status: :closed}}
+  def handle_info(
+        {:arbor_rpc, generation, {:closed, reason, remainder}},
+        %{port_generation: generation, port: port} = state
+      )
+      when port != nil do
+    {:noreply, close_stream(state, reason, remainder)}
   end
 
-  def handle_info({port, :closed}, %{port: port} = state) do
-    state = reply_error_to_waiters(state, :port_closed)
-    {:noreply, %{state | port: nil, status: :closed}}
-  end
+  # A closed or superseded persistent child cannot feed another connection.
+  # Adapter-managed events are routed through the adapter's receipt callback.
+  def handle_info({:arbor_rpc, _generation, _event}, %{port_generation: generation} = state)
+      when generation != nil,
+      do: {:noreply, state}
 
   def handle_info({:EXIT, _pid, _reason}, state) do
     {:noreply, state}
@@ -261,10 +298,18 @@ defmodule Arbor.ACP.AdapterBridge do
     end
   end
 
-  def handle_info({:DOWN, monitor_ref, :process, _pid, _reason}, state) do
+  def handle_info(
+        {:DOWN, monitor_ref, :process, _pid, _reason},
+        %{port_monitor: monitor_ref} = state
+      )
+      when monitor_ref != nil do
+    {:noreply, state |> clear_port() |> reply_error_to_waiters(:port_closed)}
+  end
+
+  def handle_info({:DOWN, monitor_ref, :process, _pid, _reason} = message, state) do
     case Map.pop(state.one_shot_monitors, monitor_ref) do
       {nil, _monitors} ->
-        {:noreply, state}
+        {:noreply, handle_adapter_message(message, state)}
 
       {token, monitors} ->
         {:noreply,
@@ -292,7 +337,50 @@ defmodule Arbor.ACP.AdapterBridge do
 
   # Private helpers
 
-  defp open_port(cmd, args, opts, adapter_mod), do: PortRunner.open(cmd, args, opts, adapter_mod)
+  defp receive_output(state, from, waiter_deadline, immediate) do
+    case :queue.out(state.outbox) do
+      {{:value, {message, _received_at}}, rest} ->
+        {:reply, {:ok, message},
+         %{state | outbox: rest, outbox_bytes: state.outbox_bytes - byte_size(message)}}
+
+      {:empty, _} ->
+        cond do
+          state.status == :closed ->
+            {:reply, {:error, :closed}, state}
+
+          immediate ->
+            {:reply, {:error, :timeout}, state}
+
+          true ->
+            register_waiter(state, from, waiter_deadline)
+        end
+    end
+  end
+
+  defp register_waiter(state, from, waiter_deadline) do
+    waiters = prune_dead_waiters(state.waiters)
+
+    if :queue.len(waiters) >= state.max_waiters do
+      {:reply, {:error, :too_many_waiters}, %{state | waiters: waiters}}
+    else
+      token = make_ref()
+      timer_ref = schedule_waiter_timeout(token, deadline_remaining(waiter_deadline))
+
+      waiter = %{
+        from: from,
+        token: token,
+        timer_ref: timer_ref,
+        deadline: waiter_deadline
+      }
+
+      {:noreply, %{state | waiters: :queue.in(waiter, waiters)}}
+    end
+  end
+
+  defp open_port(cmd, args, opts, adapter_mod, max_frame_bytes) do
+    opts = opts |> Keyword.put(:owner, self()) |> Keyword.put(:max_frame_bytes, max_frame_bytes)
+    PortRunner.open(cmd, args, opts, adapter_mod)
+  end
 
   defp synthesize_result(state, request_id, result) do
     push_message(state, request_id |> Envelope.response(result) |> Jason.encode!())
@@ -419,14 +507,18 @@ defmodule Arbor.ACP.AdapterBridge do
     if function_exported?(adapter_mod, :post_connect, 1) do
       case adapter_mod.post_connect(adapter_state) do
         {:ok, data, new_adapter_state} ->
-          _ = write_to_port(state, data)
-          %{state | adapter_state: new_adapter_state}
+          state = %{state | adapter_state: new_adapter_state}
+
+          case write_to_port(state, data) do
+            :ok -> {:ok, state}
+            {:error, reason} -> {:error, reason, state}
+          end
 
         {:ok, new_adapter_state} ->
-          %{state | adapter_state: new_adapter_state}
+          {:ok, %{state | adapter_state: new_adapter_state}}
       end
     else
-      state
+      {:ok, state}
     end
   end
 
@@ -476,9 +568,11 @@ defmodule Arbor.ACP.AdapterBridge do
 
       {:ok, data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
-        state = synthesize_init_response(state, id)
-        _ = write_to_port(state, data)
-        {:reply, :ok, state}
+
+        case write_to_port(state, data) do
+          :ok -> {:reply, :ok, synthesize_init_response(state, id)}
+          {:error, reason} -> reply_translation_error(msg, reason, state)
+        end
 
       {:reply, _result, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
@@ -579,8 +673,11 @@ defmodule Arbor.ACP.AdapterBridge do
 
           {:ok, data, new_adapter_state} ->
             state = %{state | adapter_state: new_adapter_state}
-            _ = write_to_port(state, data)
-            {:reply, :ok, state}
+
+            case write_to_port(state, data) do
+              :ok -> {:reply, :ok, state}
+              {:error, reason} -> reply_translation_error(msg, reason, state)
+            end
 
           {:reply, result, new_adapter_state} ->
             state = %{state | adapter_state: new_adapter_state}
@@ -643,9 +740,15 @@ defmodule Arbor.ACP.AdapterBridge do
 
   defp apply_config_option_translation({:ok, messages, result, data, adapter_state}, id, state) do
     state = %{state | adapter_state: adapter_state}
-    if data, do: _ = write_to_port(state, data)
-    state = push_encoded_messages(state, messages)
-    {:reply, :ok, synthesize_result(state, id, result || config_options_result(state))}
+
+    case optional_write(state, data) do
+      :ok ->
+        state = push_encoded_messages(state, messages)
+        {:reply, :ok, synthesize_result(state, id, result || config_options_result(state))}
+
+      {:error, reason} ->
+        reply_translation_error(%{"id" => id}, reason, state)
+    end
   end
 
   # One shape per translation: messages to push, a result or nil, and a write
@@ -785,8 +888,11 @@ defmodule Arbor.ACP.AdapterBridge do
 
       {:ok, data, adapter_state} ->
         state = %{state | adapter_state: adapter_state}
-        _ = write_to_port(state, data)
-        {:reply, :ok, state}
+
+        case write_to_port(state, data) do
+          :ok -> {:reply, :ok, state}
+          {:error, reason} -> reply_translation_error(%{"id" => id}, reason, state)
+        end
 
       {:reply, result, adapter_state} ->
         lifecycle_reply(state, adapter_state, id, [], nil, result)
@@ -808,15 +914,17 @@ defmodule Arbor.ACP.AdapterBridge do
 
   defp lifecycle_reply(state, adapter_state, id, messages, data, result) do
     state = %{state | adapter_state: adapter_state}
-    if data, do: _ = write_to_port(state, data)
 
-    state =
-      if messages == [],
-        do: state,
-        else: push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    case optional_write(state, data) do
+      :ok ->
+        state = push_encoded_messages(state, messages)
 
-    {:reply, :ok,
-     synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))}
+        {:reply, :ok,
+         synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))}
+
+      {:error, reason} ->
+        reply_translation_error(%{"id" => id}, reason, state)
+    end
   end
 
   defp list_sessions_result(result) when is_list(result), do: %{"sessions" => result}
@@ -1050,25 +1158,8 @@ defmodule Arbor.ACP.AdapterBridge do
     PortRunner.command(port, data)
   end
 
-  defp process_port_data(state, data) do
-    buffer = state.buffer <> data
-    {lines, remaining} = split_lines(buffer)
-
-    if byte_size(remaining) > state.max_buffer_bytes or
-         Enum.any?(lines, &(byte_size(&1) > state.max_buffer_bytes)) do
-      overflow_close(state, :frame_too_large)
-    else
-      state = %{state | buffer: remaining}
-
-      Enum.reduce_while(lines, state, fn line, acc ->
-        if acc.status == :closed do
-          {:halt, acc}
-        else
-          {:cont, translate_port_line(acc, line)}
-        end
-      end)
-    end
-  end
+  defp optional_write(_state, nil), do: :ok
+  defp optional_write(state, data), do: write_to_port(state, data)
 
   defp translate_port_line(state, line) do
     case state.adapter_mod.translate_inbound(line, state.adapter_state) do
@@ -1079,19 +1170,26 @@ defmodule Arbor.ACP.AdapterBridge do
       {:messages_and_write, messages, write_data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
         state = push_native_messages(state, messages, line)
-        _ = write_to_port(state, write_data)
-        state
+        write_native_reply(state, write_data)
 
       {:skip_and_write, write_data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
-        _ = write_to_port(state, write_data)
-        state
+        write_native_reply(state, write_data)
 
       {:partial, new_adapter_state} ->
         %{state | adapter_state: new_adapter_state}
 
       {:skip, new_adapter_state} ->
         %{state | adapter_state: new_adapter_state}
+    end
+  end
+
+  defp write_native_reply(%{status: :closed} = state, _data), do: state
+
+  defp write_native_reply(state, data) do
+    case write_to_port(state, data) do
+      :ok -> state
+      {:error, reason} -> overflow_close(state, {:native_write_failed, reason})
     end
   end
 
@@ -1171,15 +1269,6 @@ defmodule Arbor.ACP.AdapterBridge do
     end
   end
 
-  defp split_lines(buffer) do
-    lines = String.split(buffer, "\n")
-
-    case List.pop_at(lines, -1) do
-      {"", rest} -> {rest, ""}
-      {last, rest} -> {rest, last}
-    end
-  end
-
   defp push_message(state, message) do
     cond do
       byte_size(message) > state.max_buffer_bytes ->
@@ -1220,7 +1309,7 @@ defmodule Arbor.ACP.AdapterBridge do
         else
           %{
             state
-            | outbox: :queue.in(message, state.outbox),
+            | outbox: :queue.in({message, System.monotonic_time(:millisecond)}, state.outbox),
               outbox_bytes: state.outbox_bytes + byte_size(message)
           }
         end
@@ -1282,12 +1371,15 @@ defmodule Arbor.ACP.AdapterBridge do
   defp cancel_timer(nil), do: :ok
   defp cancel_timer(timer_ref), do: Process.cancel_timer(timer_ref, async: true, info: false)
 
-  defp deadline(:infinity), do: :infinity
+  defp deadline_remaining(:infinity), do: :infinity
+  defp deadline_remaining(deadline), do: max(0, deadline - System.monotonic_time(:millisecond))
 
-  defp deadline(timeout) when is_integer(timeout) and timeout > 0,
-    do: System.monotonic_time(:millisecond) + timeout
-
-  defp deadline(_timeout), do: System.monotonic_time(:millisecond)
+  defp buffered_before?(queue, deadline) do
+    case :queue.peek(queue) do
+      {:value, {_message, received_at}} -> received_at <= deadline
+      :empty -> false
+    end
+  end
 
   defp waiter_expired?(%{deadline: :infinity}), do: false
 
@@ -1308,21 +1400,66 @@ defmodule Arbor.ACP.AdapterBridge do
 
   defp handle_adapter_message(msg, state) do
     if function_exported?(state.adapter_mod, :handle_adapter_message, 2) do
-      case state.adapter_mod.handle_adapter_message(msg, state.adapter_state) do
-        {:messages, messages, adapter_state} ->
-          state
-          |> Map.put(:adapter_state, adapter_state)
-          |> push_messages(Enum.map(messages, &Jason.encode!/1))
+      receipt = subprocess_receipt(msg, state)
 
-        {:partial, adapter_state} ->
-          %{state | adapter_state: adapter_state}
+      state =
+        case state.adapter_mod.handle_adapter_message(msg, state.adapter_state) do
+          {:messages, messages, adapter_state} ->
+            state
+            |> Map.put(:adapter_state, adapter_state)
+            |> push_messages(Enum.map(messages, &Jason.encode!/1))
 
-        {:skip, adapter_state} ->
-          %{state | adapter_state: adapter_state}
-      end
+          {:partial, adapter_state} ->
+            %{state | adapter_state: adapter_state}
+
+          {:skip, adapter_state} ->
+            %{state | adapter_state: adapter_state}
+        end
+
+      acknowledge_frame(state, receipt)
     else
       state
     end
+  end
+
+  defp subprocess_receipt(msg, state) do
+    if function_exported?(state.adapter_mod, :subprocess_receipt, 2),
+      do: state.adapter_mod.subprocess_receipt(msg, state.adapter_state),
+      else: nil
+  end
+
+  defp acknowledge_frame(%{status: :closed} = state, _receipt), do: state
+  defp acknowledge_frame(state, nil), do: state
+
+  defp acknowledge_frame(state, {handle, token}) do
+    case PortRunner.ack(handle, token) do
+      :ok -> state
+      # A managed callback may intentionally close or replace this generation
+      # while admitting its final messages. There is no more credit to grant.
+      {:error, :closed} -> state
+      {:error, _reason} -> overflow_close(state, :port_closed)
+    end
+  end
+
+  defp close_stream(state, :frame_too_large, _remainder),
+    do: overflow_close(state, :frame_too_large)
+
+  defp close_stream(state, reason, remainder) do
+    state = %{state | buffer: remainder} |> flush_buffer()
+
+    error =
+      if match?({:exit_status, _}, reason), do: :port_exited, else: {:subprocess_closed, reason}
+
+    state = %{state | cleanup_result: cleanup_result(reason, state.cleanup_result)}
+    state |> clear_port() |> reply_error_to_waiters(error)
+  end
+
+  defp cleanup_result({:cleanup_failed, _reason, result}, _previous), do: result
+  defp cleanup_result(_reason, previous), do: previous
+
+  defp clear_port(state) do
+    if state.port_monitor, do: Process.demonitor(state.port_monitor, [:flush])
+    %{state | port: nil, port_monitor: nil, status: :closed}
   end
 
   defp do_close(%{port: nil} = state) do
@@ -1333,14 +1470,15 @@ defmodule Arbor.ACP.AdapterBridge do
   end
 
   defp do_close(%{port: port} = state) do
-    PortRunner.close(port)
+    result = PortRunner.close(port)
+    state = if result == :ok, do: state, else: %{state | cleanup_result: result}
 
     state =
       state
       |> shutdown_adapter()
       |> reply_error_to_waiters(:closed)
 
-    %{state | port: nil, status: :closed}
+    clear_port(state)
   end
 
   defp shutdown_adapter(state) do
@@ -1351,7 +1489,16 @@ defmodule Arbor.ACP.AdapterBridge do
     state = %{state | one_shot_tasks: %{}, one_shot_monitors: %{}}
 
     if function_exported?(state.adapter_mod, :shutdown, 1) do
-      %{state | adapter_state: state.adapter_mod.shutdown(state.adapter_state)}
+      case state.adapter_mod.shutdown(state.adapter_state) do
+        {:ok, adapter_state} ->
+          %{state | adapter_state: adapter_state}
+
+        {:error, reason, adapter_state} ->
+          %{state | adapter_state: adapter_state, cleanup_result: {:error, reason}}
+
+        adapter_state ->
+          %{state | adapter_state: adapter_state}
+      end
     else
       state
     end

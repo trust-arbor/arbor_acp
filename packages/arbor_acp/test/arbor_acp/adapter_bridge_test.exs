@@ -4,6 +4,7 @@ defmodule Arbor.ACP.AdapterBridgeTest do
 
   alias Arbor.ACP.AdapterBridge
   alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner
+  alias Arbor.RPC.Subprocess, as: SharedSubprocess
 
   # MockAdapter: uses a simple cat-like echo process for testing
   defmodule MockAdapter do
@@ -172,6 +173,124 @@ defmodule Arbor.ACP.AdapterBridgeTest do
     def translate_inbound(_line, state), do: {:skip, state}
   end
 
+  defmodule NativeStreamAdapter do
+    @behaviour Arbor.ACP.Adapter
+
+    def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
+    def command(opts), do: {"sh", ["-c", Keyword.fetch!(opts, :script)]}
+    def translate_outbound(_message, state), do: {:ok, :skip, state}
+
+    def translate_inbound(line, state) do
+      send(state.test_pid, {:native_line, line})
+      {:messages, [%{"jsonrpc" => "2.0", "method" => "native/line", "params" => line}], state}
+    end
+  end
+
+  defmodule ManagedStreamAdapter do
+    @behaviour Arbor.ACP.Adapter
+
+    def init(opts) do
+      {:ok, handle} = PortRunner.open("cat", [], opts, __MODULE__)
+      send(Keyword.fetch!(opts, :test_pid), {:managed_handle, handle})
+      {:ok, %{handle: handle, close_on_frame: Keyword.get(opts, :close_on_frame, false)}}
+    end
+
+    def command(_opts), do: :adapter_managed
+    def translate_outbound(_message, state), do: {:ok, :skip, state}
+    def translate_inbound(_line, state), do: {:skip, state}
+
+    def subprocess_receipt(message, state) do
+      case PortRunner.event(state.handle, message) do
+        {:frame, token, _line} -> {state.handle, token}
+        _ -> nil
+      end
+    end
+
+    def handle_adapter_message(message, state) do
+      case PortRunner.event(state.handle, message) do
+        {:frame, _token, "skip"} ->
+          {:skip, state}
+
+        {:frame, _token, line} ->
+          if state.close_on_frame, do: PortRunner.close(state.handle)
+
+          {:messages, [%{"jsonrpc" => "2.0", "method" => "native/line", "params" => line}], state}
+
+        _ ->
+          {:skip, state}
+      end
+    end
+
+    def shutdown(state) do
+      PortRunner.close(state.handle)
+      state
+    end
+  end
+
+  defmodule FailedWriteAdapter do
+    @behaviour Arbor.ACP.Adapter
+
+    def init(opts), do: {:ok, %{post_connect: Keyword.get(opts, :post_connect, false)}}
+    def command(_opts), do: {"cat", []}
+    def capabilities, do: %{"loadSession" => true, "sessionCapabilities" => %{"list" => %{}}}
+    def post_connect(%{post_connect: true} = state), do: {:ok, "too large\n", state}
+    def post_connect(state), do: {:ok, state}
+
+    def translate_outbound(%{"method" => method}, state)
+        when method in ["initialize", "session/new", "session/list"],
+        do: {:ok, "too large\n", state}
+
+    def translate_outbound(%{"method" => "session/load"}, state),
+      do: {:reply_and_write, %{"sessionId" => "false-success"}, "too large\n", state}
+
+    def translate_outbound(%{"method" => "session/set_config_option"}, state),
+      do:
+        {:messages_and_reply_and_write, [%{"jsonrpc" => "2.0", "method" => "false/success"}], %{},
+         "too large\n", state}
+
+    def translate_inbound(_line, state), do: {:skip, state}
+  end
+
+  defmodule BusyNativeAdapter do
+    @behaviour Arbor.ACP.Adapter
+
+    def init(_opts), do: {:ok, %{}}
+    def command(_opts), do: {"sh", ["-c", "exec sleep 30"]}
+    def translate_outbound(_message, state), do: {:ok, :binary.copy("x", 262_144), state}
+    def translate_inbound(_line, state), do: {:skip, state}
+  end
+
+  defmodule FailedNativeReplyAdapter do
+    @behaviour Arbor.ACP.Adapter
+
+    def init(_opts), do: {:ok, %{}}
+    def command(_opts), do: {"sh", ["-c", "sleep 0.05; printf 'trigger\\n'; exec cat"]}
+    def translate_outbound(_message, state), do: {:ok, :skip, state}
+    def translate_inbound(_line, state), do: {:skip_and_write, "too large\n", state}
+  end
+
+  defmodule CleanupFailureActor do
+    use GenServer
+
+    def init(test_pid), do: {:ok, test_pid}
+
+    def handle_call({_generation, :close}, _from, test_pid) do
+      send(test_pid, :cleanup_attempted)
+      {:stop, :normal, {:error, :cleanup_timeout}, test_pid}
+    end
+  end
+
+  defmodule ManagedShutdownAdapter do
+    @behaviour Arbor.ACP.Adapter
+
+    def init(opts), do: {:ok, %{result: Keyword.fetch!(opts, :shutdown_result)}}
+    def command(_opts), do: :adapter_managed
+    def translate_outbound(_message, state), do: {:ok, :skip, state}
+    def translate_inbound(_line, state), do: {:skip, state}
+    def shutdown(%{result: :ok} = state), do: {:ok, state}
+    def shutdown(%{result: {:error, reason}} = state), do: {:error, reason, state}
+  end
+
   test "adapter subprocess environment clears inherited Mix selectors" do
     env =
       [env: [{"MIX_ENV", "test"}, {"CUSTOM_UNSET", false}]]
@@ -307,19 +426,334 @@ defmodule Arbor.ACP.AdapterBridgeTest do
     end
   end
 
-  defp collect_port_output(port, output \\ "") do
+  defp collect_port_output(handle, output \\ "") do
     receive do
-      {^port, {:data, data}} ->
-        collect_port_output(port, output <> data)
+      message ->
+        case PortRunner.event(handle, message) do
+          {:frame, token, line} ->
+            assert :ok = PortRunner.ack(handle, token)
+            collect_port_output(handle, output <> line <> "\n")
 
-      {^port, {:exit_status, 0}} ->
-        output
+          {:closed, {:exit_status, 0}, remainder} ->
+            output <> remainder
 
-      {^port, {:exit_status, status}} ->
-        flunk("environment probe exited with status #{status}: #{output}")
+          {:closed, reason, _remainder} ->
+            flunk("environment probe closed with #{inspect(reason)}: #{output}")
+
+          :ignore ->
+            collect_port_output(handle, output)
+        end
     after
       10_000 ->
         flunk("timed out waiting for environment probe: #{output}")
+    end
+  end
+
+  describe "shared persistent subprocess" do
+    test "preserves fragmented native bytes, CRLF, BOM and the final EOF remainder" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(
+          adapter: NativeStreamAdapter,
+          adapter_opts: [
+            test_pid: self(),
+            script:
+              "printf '\\357\\273\\277first\\r\\n'; printf 'frag'; sleep 0.05; printf 'ment\\nlast'"
+          ]
+        )
+
+      assert_receive {:native_line, <<239, 187, 191, "first\r">>}, 1_000
+      assert_receive {:native_line, "fragment"}, 1_000
+      assert_receive {:native_line, "last"}, 1_000
+
+      for expected <- [<<239, 187, 191, "first\r">>, "fragment", "last"] do
+        assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+        assert Jason.decode!(raw)["params"] == expected
+      end
+
+      assert {:error, :closed} = AdapterBridge.receive_message(bridge, 1_000)
+      assert :ok = AdapterBridge.close(bridge)
+    end
+
+    test "ignores stale generations and detects abrupt actor death" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      state = :sys.get_state(bridge)
+      [actor] = SharedSubprocess.linked_processes(state.port)
+      send(bridge, {:arbor_rpc, make_ref(), {:closed, {:exit_status, 99}, "stale"}})
+      assert :sys.get_state(bridge).status == :ready
+
+      waiter = Task.async(fn -> AdapterBridge.receive_message(bridge, 1_000) end)
+      wait_for_bridge(fn -> :queue.len(:sys.get_state(bridge).waiters) == 1 end)
+      Process.exit(actor, :kill)
+      assert {:error, :port_closed} = Task.await(waiter, 1_000)
+      assert :sys.get_state(bridge).status == :closed
+      assert :ok = AdapterBridge.close(bridge)
+    end
+
+    test "shared frame pressure closes the child and rejects later writes" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(
+          adapter: NativeStreamAdapter,
+          adapter_opts: [test_pid: self(), script: "sleep 0.05; printf '123456789'; exec cat"],
+          max_buffer_bytes: 8
+        )
+
+      [actor] =
+        bridge |> :sys.get_state() |> Map.fetch!(:port) |> SharedSubprocess.linked_processes()
+
+      monitor = Process.monitor(actor)
+      assert_receive {:DOWN, ^monitor, :process, ^actor, _reason}, 1_000
+      wait_for_bridge(fn -> :sys.get_state(bridge).status == :closed end)
+      assert {:error, :closed} = AdapterBridge.send_message(bridge, "{}")
+      refute_receive {:native_line, _line}, 20
+      assert :ok = AdapterBridge.close(bridge)
+    end
+
+    test "bridge death closes its lifetime-owned actor" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      Process.unlink(bridge)
+
+      [actor] =
+        bridge |> :sys.get_state() |> Map.fetch!(:port) |> SharedSubprocess.linked_processes()
+
+      monitor = Process.monitor(actor)
+      Process.exit(bridge, :kill)
+      assert_receive {:DOWN, ^monitor, :process, ^actor, _reason}, 1_000
+    end
+
+    test "native write admission errors reach the ACP client" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [max_write_bytes: 4])
+
+      assert :ok =
+               AdapterBridge.send_message(
+                 bridge,
+                 Jason.encode!(%{
+                   "jsonrpc" => "2.0",
+                   "id" => 44,
+                   "method" => "session/prompt",
+                   "params" => %{"prompt" => [%{"text" => "too large"}]}
+                 })
+               )
+
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+      assert Jason.decode!(raw)["error"]["message"] =~ "write_too_large"
+      assert :sys.get_state(bridge).status == :ready
+      assert :ok = AdapterBridge.close(bridge)
+    end
+
+    test "required lifecycle and configuration writes cannot synthesize success after rejection" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: FailedWriteAdapter, adapter_opts: [max_write_bytes: 4])
+
+      for {method, id} <-
+            Enum.with_index(
+              [
+                "initialize",
+                "session/new",
+                "session/list",
+                "session/load",
+                "session/set_config_option"
+              ],
+              1
+            ) do
+        assert :ok =
+                 AdapterBridge.send_message(
+                   bridge,
+                   Jason.encode!(%{
+                     "jsonrpc" => "2.0",
+                     "id" => id,
+                     "method" => method,
+                     "params" => %{}
+                   })
+                 )
+
+        assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+        response = Jason.decode!(raw)
+        assert response["id"] == id
+        assert response["error"]["message"] == "write_too_large"
+        refute Map.has_key?(response, "result")
+        assert :queue.is_empty(:sys.get_state(bridge).outbox)
+      end
+
+      assert :ok = AdapterBridge.close(bridge)
+    end
+
+    test "a rejected post-connect write fails startup and cleans its subprocess" do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, {:post_connect_write_failed, :write_too_large}} =
+               AdapterBridge.start_link(
+                 adapter: FailedWriteAdapter,
+                 adapter_opts: [max_write_bytes: 4, post_connect: true]
+               )
+    end
+
+    test "a busy native input queue returns backpressure for an ACP notification" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: BusyNativeAdapter, adapter_opts: [])
+      notification = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "native/busy"})
+
+      result =
+        Enum.reduce_while(1..100, nil, fn _attempt, _acc ->
+          case AdapterBridge.send_message(bridge, notification) do
+            :ok -> {:cont, nil}
+            {:error, :backpressure} = error -> {:halt, error}
+          end
+        end)
+
+      assert result == {:error, :backpressure}
+      assert :ok = AdapterBridge.close(bridge)
+    end
+
+    test "a rejected native feedback write closes the child instead of acknowledging more input" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(
+          adapter: FailedNativeReplyAdapter,
+          adapter_opts: [max_write_bytes: 4]
+        )
+
+      [actor] =
+        bridge |> :sys.get_state() |> Map.fetch!(:port) |> SharedSubprocess.linked_processes()
+
+      monitor = Process.monitor(actor)
+      assert_receive {:DOWN, ^monitor, :process, ^actor, _reason}, 1_000
+      assert :sys.get_state(bridge).status == :closed
+      assert :ok = AdapterBridge.close(bridge)
+    end
+  end
+
+  test "managed frame receipts acknowledge skipped frames after output admission" do
+    {:ok, bridge} =
+      AdapterBridge.start_link(adapter: ManagedStreamAdapter, adapter_opts: [test_pid: self()])
+
+    assert_receive {:managed_handle, handle}
+    assert :ok = PortRunner.command(handle, "skip\nnext\n")
+    assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+    assert Jason.decode!(raw)["params"] == "next"
+    wait_for_bridge(fn -> SharedSubprocess.stats(handle).inflight == 0 end)
+    assert :ok = AdapterBridge.close(bridge)
+  end
+
+  test "managed frame receipts preserve output when translation intentionally closes the child" do
+    {:ok, bridge} =
+      AdapterBridge.start_link(
+        adapter: ManagedStreamAdapter,
+        adapter_opts: [test_pid: self(), close_on_frame: true]
+      )
+
+    assert_receive {:managed_handle, handle}
+    assert :ok = PortRunner.command(handle, "final\n")
+    assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+    assert Jason.decode!(raw)["params"] == "final"
+    refute PortRunner.connected?(handle)
+    assert :ok = AdapterBridge.close(bridge)
+  end
+
+  test "explicit close reports an owned subprocess cleanup failure" do
+    {:ok, bridge} = AdapterBridge.start_link(adapter: OneShotMockAdapter, adapter_opts: [])
+    {:ok, actor} = GenServer.start(CleanupFailureActor, self())
+    monitor = Process.monitor(actor)
+
+    handle = %SharedSubprocess{
+      pid: actor,
+      generation: make_ref(),
+      cleanup_timeout: 150,
+      max_write_bytes: 16
+    }
+
+    :sys.replace_state(bridge, fn state ->
+      %{
+        state
+        | port: handle,
+          port_generation: SharedSubprocess.identity(handle),
+          port_monitor: Process.monitor(actor)
+      }
+    end)
+
+    assert {:error, :cleanup_timeout} = AdapterBridge.close(bridge)
+    assert_receive :cleanup_attempted
+    assert_receive {:DOWN, ^monitor, :process, ^actor, :normal}
+    refute Process.alive?(bridge)
+  end
+
+  test "explicit close preserves managed shutdown success and failure results" do
+    for result <- [:ok, {:error, :cleanup_timeout}] do
+      {:ok, bridge} =
+        AdapterBridge.start_link(
+          adapter: ManagedShutdownAdapter,
+          adapter_opts: [shutdown_result: result]
+        )
+
+      assert ^result = AdapterBridge.close(bridge)
+      refute Process.alive?(bridge)
+    end
+  end
+
+  test "delayed finite reads and zero polls cannot consume buffered output after their caller times out" do
+    for timeout <- [0, 10] do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: OneShotMockAdapter, adapter_opts: [])
+      initialize = Jason.encode!(%{"jsonrpc" => "2.0", "id" => 1, "method" => "initialize"})
+      assert :ok = AdapterBridge.send_message(bridge, initialize)
+      assert :queue.len(:sys.get_state(bridge).outbox) == 1
+      :sys.suspend(bridge)
+      parent = self()
+
+      reader =
+        spawn(fn ->
+          result =
+            try do
+              AdapterBridge.receive_message(bridge, timeout)
+            catch
+              :exit, {:timeout, _call} -> {:error, :call_timeout}
+            end
+
+          send(parent, {:delayed_read, timeout, result})
+
+          receive do
+            :finish -> :ok
+          end
+        end)
+
+      on_exit(fn -> Process.exit(reader, :kill) end)
+
+      assert_receive {:delayed_read, ^timeout, {:error, :call_timeout}}, 1_000
+      assert Process.alive?(reader)
+      :sys.resume(bridge)
+      assert :queue.len(:sys.get_state(bridge).outbox) == 1
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 0)
+      assert Jason.decode!(raw)["id"] == 1
+      assert {:error, :timeout} = AdapterBridge.receive_message(bridge, 0)
+      assert :ok = AdapterBridge.close(bridge)
+      send(reader, :finish)
+    end
+  end
+
+  test "managed output overflow closes the child before another frame can be delivered" do
+    {:ok, bridge} =
+      AdapterBridge.start_link(
+        adapter: ManagedStreamAdapter,
+        adapter_opts: [test_pid: self()],
+        max_outbox_messages: 1
+      )
+
+    assert_receive {:managed_handle, handle}
+    [actor] = SharedSubprocess.linked_processes(handle)
+    monitor = Process.monitor(actor)
+    assert :ok = PortRunner.command(handle, "first\nsecond\nthird\n")
+    assert_receive {:DOWN, ^monitor, :process, ^actor, _reason}, 1_000
+    assert :sys.get_state(bridge).status == :closed
+    assert {:error, :closed} = AdapterBridge.receive_message(bridge, 1_000)
+    assert :ok = AdapterBridge.close(bridge)
+  end
+
+  defp wait_for_bridge(predicate, attempts \\ 100)
+  defp wait_for_bridge(_predicate, 0), do: flunk("bridge did not reach expected state")
+
+  defp wait_for_bridge(predicate, attempts) do
+    if predicate.() do
+      :ok
+    else
+      Process.sleep(5)
+      wait_for_bridge(predicate, attempts - 1)
     end
   end
 

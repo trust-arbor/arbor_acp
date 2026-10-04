@@ -110,8 +110,8 @@ defmodule Arbor.ACP.Adapter do
   @doc """
   Handle raw messages for adapter-managed subprocesses.
 
-  The bridge calls this for messages it does not own, including Port data,
-  exit-status, and close notifications. The adapter is responsible for routing
+  The bridge calls this for messages it does not own, including shared owned
+  subprocess frame and close notifications. The adapter is responsible for routing
   writes back to the correct subprocess and may return ACP messages to emit.
 
   Optional — only used by adapters whose `command/1` returns
@@ -123,11 +123,28 @@ defmodule Arbor.ACP.Adapter do
               | {:skip, state()}
 
   @doc """
+  Identifies an owned subprocess frame's acknowledgement receipt.
+
+  This optional pure callback returns `{shared_handle, frame_token}` for a
+  matching frame, or `nil`. The bridge captures it before calling
+  `handle_adapter_message/2`, then acknowledges only after translated output
+  has been admitted to its bounded outbox. An overflow closes the adapter and
+  does not grant more credit. The callback does not acknowledge or mutate state.
+  """
+  @callback subprocess_receipt(message :: term(), state()) ::
+              {Arbor.RPC.Subprocess.t(), reference()} | nil
+
+  @doc """
   Clean up adapter-managed resources before the bridge exits.
+
+  Return the updated state, `{:ok, state}`, or `{:error, reason, state}` when
+  child cleanup could not be confirmed. The bridge exposes a known cleanup
+  failure to its closing caller. Existing callbacks returning plain state
+  remain supported.
 
   Optional — defaults to no-op.
   """
-  @callback shutdown(state()) :: state()
+  @callback shutdown(state()) :: state() | {:ok, state()} | {:error, term(), state()}
 
   @doc """
   Called after the Port is opened, before any ACP messages are processed.
@@ -246,6 +263,7 @@ defmodule Arbor.ACP.Adapter do
     list_sessions: 2,
     fork_session: 2,
     handle_adapter_message: 2,
+    subprocess_receipt: 2,
     shutdown: 1
   ]
 end

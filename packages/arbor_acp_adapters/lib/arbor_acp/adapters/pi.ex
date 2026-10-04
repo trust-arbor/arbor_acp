@@ -3,8 +3,12 @@ defmodule Arbor.ACP.Adapters.Pi do
   ACP adapter for the Pi coding agent.
 
   The adapter translates ACP JSON-RPC to Pi's RPC NDJSON protocol. In bridge
-  mode it owns Pi subprocess Ports directly so a fresh Pi process can be
+  mode it owns a shared subprocess handle so a fresh Pi process can be
   attached to each loaded or resumed ACP session.
+
+  Managed output uses one frame of shared delivery credit. Startup banners
+  retained for session metadata are limited by `:max_prelude_lines` (64) and
+  `:max_prelude_bytes` (65,536); exceeding either limit fails pending work.
   """
 
   @behaviour Arbor.ACP.Adapter
@@ -15,6 +19,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   require Logger
 
   alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner
+  alias Arbor.RPC.{Framing, Subprocess}
 
   alias Arbor.ACP.Adapters.Pi.Config
   alias Arbor.ACP.Adapters.Pi.Events
@@ -44,6 +49,10 @@ defmodule Arbor.ACP.Adapters.Pi do
     :thinking_level,
     :current_model_id,
     :port,
+    :port_monitor,
+    :framing,
+    :subprocess_error,
+    cleanup_result: :ok,
     opts: [],
     managed?: true,
     delete_session_files?: false,
@@ -241,7 +250,7 @@ defmodule Arbor.ACP.Adapters.Pi do
         state
       end
 
-    {:reply, %{}, state}
+    cleanup_reply(state)
   end
 
   def translate_outbound(%{"method" => "session/delete", "params" => params}, state) do
@@ -254,10 +263,17 @@ defmodule Arbor.ACP.Adapters.Pi do
         state
       end
 
-    entry = if is_binary(session_id), do: SessionStore.delete(state.session_map_path, session_id)
-    maybe_delete_session_file(state, entry || %{"sessionFile" => state.session_file})
+    case state.cleanup_result do
+      :ok ->
+        entry =
+          if is_binary(session_id), do: SessionStore.delete(state.session_map_path, session_id)
 
-    {:reply, %{}, state}
+        maybe_delete_session_file(state, entry || %{"sessionFile" => state.session_file})
+        {:reply, %{}, state}
+
+      {:error, reason} ->
+        {:error, inspect(reason), state}
+    end
   end
 
   def translate_outbound(%{"method" => "session/set_mode", "params" => params}, state) do
@@ -322,18 +338,69 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   @impl true
-  def handle_adapter_message({port, {:data, data}}, %{port: port} = state) do
-    buffer = state.buffer <> data
-    {lines, remaining} = split_lines(buffer)
-    state = %{state | buffer: remaining}
+  def subprocess_receipt(message, state) do
+    case PortRunner.event(state.port, message) do
+      {:frame, token, _bytes} -> {state.port, token}
+      _ -> nil
+    end
+  end
+
+  @impl true
+  def handle_adapter_message({:arbor_rpc, _generation, _event} = message, state) do
+    case PortRunner.event(state.port, message) do
+      {:frame, _token, line} -> managed_lines([line], state)
+      {:closed, reason, remainder} -> managed_closed(state, exit_reason(reason), remainder)
+      :ignore -> {:skip, state}
+    end
+  end
+
+  def handle_adapter_message(
+        {:DOWN, monitor, :process, _pid, reason},
+        %{port_monitor: monitor} = state
+      )
+      when is_reference(monitor) do
+    managed_closed(state, {:actor_down, reason}, "")
+  end
+
+  # Unmanaged callback consumers own their input transport. Keep this byte
+  # adapter for existing direct consumers, bounded by the same shared decoder.
+  def handle_adapter_message({port, {:data, data}}, %{port: port, managed?: false} = state) do
+    decoder = state.framing || Framing.new(max_frame_bytes: max_frame_bytes(state))
+
+    case Framing.push(decoder, data) do
+      {:ok, lines, decoder} ->
+        managed_lines(lines, %{state | framing: decoder, buffer: Framing.remainder(decoder)})
+
+      {:error, reason} ->
+        managed_closed(state, reason, "")
+    end
+  end
+
+  def handle_adapter_message(
+        {port, {:exit_status, code}},
+        %{port: port, managed?: false} = state
+      ),
+      do: managed_closed(state, code, state.buffer)
+
+  def handle_adapter_message({port, :closed}, %{port: port, managed?: false} = state),
+    do: managed_closed(state, :closed, state.buffer)
+
+  def handle_adapter_message(_message, state), do: {:skip, state}
+
+  defp managed_lines(lines, state) do
+    port = state.port
 
     {messages, state} =
-      Enum.reduce(lines, {[], state}, fn line, {messages, acc} ->
+      Enum.reduce_while(lines, {[], state}, fn line, {messages, acc} ->
         case line
              |> translate_inbound_or_prelude(acc)
              |> normalize_managed_inbound(port) do
-          {:skip, state} -> {messages, state}
-          {:messages, emitted, state} -> {Enum.reverse(emitted, messages), state}
+          {:skip, state} ->
+            {:cont, {messages, state}}
+
+          {:messages, emitted, state} ->
+            result = {Enum.reverse(emitted, messages), state}
+            if state.subprocess_error, do: {:halt, result}, else: {:cont, result}
         end
       end)
 
@@ -343,30 +410,58 @@ defmodule Arbor.ACP.Adapters.Pi do
     end
   end
 
-  def handle_adapter_message({port, {:exit_status, code}}, %{port: port} = state) do
-    state =
+  defp managed_closed(state, reason, remainder) do
+    {messages, state} = flush_managed_buffer(%{state | buffer: remainder}, state.port)
+    messages = messages ++ pending_exit_messages(state, reason)
+    demonitor_port(state)
+
+    cleanup =
+      state.cleanup_result
+      |> remember_cleanup(terminal_cleanup(reason))
+      |> remember_cleanup(close_owned_child(state))
+
+    state = %{
       state
-      |> flush_managed_buffer(port)
-      |> Map.put(:port, nil)
+      | port: nil,
+        port_monitor: nil,
+        buffer: "",
+        framing: nil,
+        cleanup_result: cleanup
+    }
 
-    messages = pending_exit_messages(state, code)
     state = clear_pending_runtime_state(state)
 
     if messages == [], do: {:skip, state}, else: {:messages, messages, state}
   end
 
-  def handle_adapter_message({port, :closed}, %{port: port} = state) do
-    state = %{state | port: nil}
-    messages = pending_exit_messages(state, :closed)
-    state = clear_pending_runtime_state(state)
+  defp exit_reason({:exit_status, code}), do: code
+  defp exit_reason(reason), do: reason
 
-    if messages == [], do: {:skip, state}, else: {:messages, messages, state}
-  end
+  defp terminal_cleanup({:cleanup_failed, _reason, result}), do: result
+  defp terminal_cleanup(_reason), do: :ok
+  defp remember_cleanup({:error, _reason} = previous, _result), do: previous
+  defp remember_cleanup(:ok, result), do: result
 
-  def handle_adapter_message(_message, state), do: {:skip, state}
+  defp close_owned_child(%{managed?: true, port: port}) when not is_nil(port),
+    do: PortRunner.close(port)
+
+  defp close_owned_child(_state), do: :ok
+  defp max_frame_bytes(state), do: Keyword.get(state.opts, :max_frame_bytes, 1_048_576)
+
+  defp demonitor_port(%{port_monitor: monitor}) when is_reference(monitor),
+    do: Process.demonitor(monitor, [:flush])
+
+  defp demonitor_port(_state), do: :ok
 
   @impl true
-  def shutdown(state), do: close_active_session(state)
+  def shutdown(state) do
+    state = close_active_session(state)
+
+    case state.cleanup_result do
+      {:error, reason} -> {:error, reason, state}
+      :ok -> state
+    end
+  end
 
   defp prepare_session_process(cwd, _session_file, %{managed?: false} = state) do
     settings = Settings.load(cwd, state.opts)
@@ -396,26 +491,63 @@ defmodule Arbor.ACP.Adapters.Pi do
         prelude_lines: []
       })
 
-    opts =
-      state.opts
-      |> Keyword.put(:cwd, cwd)
-      |> maybe_keyword_put(:session_path, session_file)
+    case state.cleanup_result do
+      :ok ->
+        opts =
+          state.opts |> Keyword.put(:cwd, cwd) |> maybe_keyword_put(:session_path, session_file)
 
-    {cmd, args} = cli_command(opts)
+        {cmd, args} = cli_command(opts)
 
-    case PortRunner.open(cmd, args, opts, __MODULE__) do
-      {:ok, port} -> {:ok, %{state | port: port}}
-      {:error, reason} -> {:error, inspect(reason)}
+        case PortRunner.open(cmd, args, opts, __MODULE__) do
+          {:ok, port} ->
+            [actor] = Subprocess.linked_processes(port)
+
+            {:ok,
+             %{
+               state
+               | port: port,
+                 port_monitor: Process.monitor(actor),
+                 framing: nil,
+                 subprocess_error: nil,
+                 cleanup_result: :ok
+             }}
+
+          {:error, reason} ->
+            {:error, inspect(reason), state}
+        end
+
+      {:error, reason} ->
+        {:error, inspect(reason), state}
     end
   end
 
   defp close_active_session(%{port: nil} = state) do
-    clear_pending_runtime_state(%{state | buffer: "", prelude_lines: []})
+    demonitor_port(state)
+
+    clear_pending_runtime_state(%{
+      state
+      | buffer: "",
+        framing: nil,
+        port_monitor: nil,
+        prelude_lines: []
+    })
   end
 
   defp close_active_session(state) do
-    PortRunner.close(state.port)
-    clear_pending_runtime_state(%{state | port: nil, buffer: "", prelude_lines: []})
+    result = remember_cleanup(state.cleanup_result, close_owned_child(state))
+    demonitor_port(state)
+    error = if result == :ok, do: nil, else: result
+
+    clear_pending_runtime_state(%{
+      state
+      | port: nil,
+        port_monitor: nil,
+        framing: nil,
+        buffer: "",
+        prelude_lines: [],
+        subprocess_error: error,
+        cleanup_result: result
+    })
   end
 
   defp clear_pending_runtime_state(state) do
@@ -433,6 +565,11 @@ defmodule Arbor.ACP.Adapters.Pi do
         last_usage: %{}
     }
   end
+
+  defp cleanup_reply(%{cleanup_result: :ok} = state), do: {:reply, %{}, state}
+
+  defp cleanup_reply(%{cleanup_result: {:error, reason}} = state),
+    do: {:error, inspect(reason), state}
 
   defp deliver_pending(data, %{managed?: false} = state), do: {:ok, data, state}
 
@@ -487,7 +624,13 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   defp write_managed(_data, %{port: nil}), do: {:error, :no_active_pi_session}
-  defp write_managed(data, %{port: port}), do: PortRunner.command(port, data)
+
+  defp write_managed(data, %{port: port}) do
+    case PortRunner.command(port, data) do
+      {:error, :closed} -> {:error, :badarg}
+      result -> result
+    end
+  end
 
   defp translate_inbound_or_prelude(line, state) do
     case translate_inbound(line, state) do
@@ -497,7 +640,15 @@ defmodule Arbor.ACP.Adapters.Pi do
         if trimmed == "" or String.starts_with?(trimmed, "{") do
           {:skip, state}
         else
-          {:skip, %{state | prelude_lines: state.prelude_lines ++ [trimmed]}}
+          count = length(state.prelude_lines) + 1
+          bytes = byte_size(trimmed) + Enum.reduce(state.prelude_lines, 0, &(byte_size(&1) + &2))
+
+          if count > Keyword.get(state.opts, :max_prelude_lines, 64) or
+               bytes > Keyword.get(state.opts, :max_prelude_bytes, 65_536) do
+            fail_managed_input(state, {:prelude_overflow, count, bytes})
+          else
+            {:skip, %{state | prelude_lines: state.prelude_lines ++ [trimmed]}}
+          end
         end
 
       result ->
@@ -509,25 +660,46 @@ defmodule Arbor.ACP.Adapters.Pi do
     do: {:messages, messages, state}
 
   defp normalize_managed_inbound({:messages_and_write, messages, data, state}, port) do
-    _ = PortRunner.command(port, data)
-    {:messages, messages, state}
+    managed_followup(messages, data, port, state)
   end
 
   defp normalize_managed_inbound({:skip_and_write, data, state}, port) do
-    _ = PortRunner.command(port, data)
-    {:skip, state}
+    managed_followup([], data, port, state)
   end
 
   defp normalize_managed_inbound({:skip, state}, _port), do: {:skip, state}
 
-  defp flush_managed_buffer(%{buffer: ""} = state, _port), do: state
+  defp managed_followup(messages, _data, _port, %{managed?: false} = state),
+    do: inbound_messages(messages, state)
+
+  defp managed_followup(messages, data, port, state) do
+    case PortRunner.command(port, data) do
+      :ok ->
+        inbound_messages(messages, state)
+
+      {:error, reason} ->
+        {:messages, failure_messages, state} = fail_managed_input(state, {:write_failed, reason})
+        inbound_messages(messages ++ failure_messages, state)
+    end
+  end
+
+  defp fail_managed_input(state, reason) do
+    messages = pending_exit_messages(state, reason)
+    state = close_active_session(state)
+    {:messages, messages, %{state | subprocess_error: {:error, reason}}}
+  end
+
+  defp inbound_messages([], state), do: {:skip, state}
+  defp inbound_messages(messages, state), do: {:messages, messages, state}
+
+  defp flush_managed_buffer(%{buffer: ""} = state, _port), do: {[], state}
 
   defp flush_managed_buffer(%{buffer: buffer} = state, port) do
     case buffer
          |> translate_inbound_or_prelude(%{state | buffer: ""})
          |> normalize_managed_inbound(port) do
-      {_, state} -> state
-      {:messages, _messages, state} -> state
+      {:skip, state} -> {[], state}
+      {:messages, messages, state} -> {messages, state}
     end
   end
 
@@ -555,15 +727,6 @@ defmodule Arbor.ACP.Adapters.Pi do
       |> Enum.map(&Envelope.response(&1.acp_id, %{"stopReason" => "cancelled"}))
 
     prompt_messages ++ control_messages ++ queued_messages
-  end
-
-  defp split_lines(buffer) do
-    lines = String.split(buffer, "\n")
-
-    case List.pop_at(lines, -1) do
-      {"", rest} -> {rest, ""}
-      {last, rest} -> {rest, last}
-    end
   end
 
   defp translate_prompt_message(message, images, acp_id, params, state) do
@@ -638,6 +801,7 @@ defmodule Arbor.ACP.Adapters.Pi do
         state
       )
     else
+      {:error, reason, failed_state} -> {:error, reason, failed_state}
       {:error, reason} -> {:error, reason, state}
       _ -> {:error, "Unknown sessionId: #{session_id}", state}
     end
@@ -646,7 +810,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp start_session_new(acp_id, cwd, state) do
     case prepare_session_process(cwd, nil, state) do
       {:ok, state} -> do_start_session_new(acp_id, cwd, state)
-      {:error, reason} -> {:error, reason, state}
+      {:error, reason, failed_state} -> {:error, reason, failed_state}
     end
   end
 
@@ -1057,6 +1221,10 @@ defmodule Arbor.ACP.Adapters.Pi do
       {:ok, messages, write_data, state} ->
         {:messages_and_write, [response | messages], write_data, state}
 
+      {:error, reason, state} ->
+        {:messages, failures, state} = fail_managed_input(state, {:write_failed, reason})
+        {:messages, [response | failures], state}
+
       :empty ->
         {:messages, [response], state}
     end
@@ -1456,12 +1624,14 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp start_next_queued_prompt(state) do
     case PromptFlow.next_queued(state) do
       {:ok, queued, state} ->
-        {:ok, data, state} =
-          start_prompt(queued.acp_id, queued.message, queued.images, queued.params, state)
+        case start_prompt(queued.acp_id, queued.message, queued.images, queued.params, state) do
+          {:ok, data, state} ->
+            write_data = if data == :pending, do: nil, else: data
+            {:ok, PromptFlow.queue_started_messages(state), write_data, state}
 
-        write_data = if data == :pending, do: nil, else: data
-
-        {:ok, PromptFlow.queue_started_messages(state), write_data, state}
+          {:error, reason, state} ->
+            {:error, reason, state}
+        end
 
       :empty ->
         :empty
