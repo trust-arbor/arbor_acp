@@ -22,3 +22,28 @@ finite budget after the read deadline; shared kernel/Port allocation and platfor
 still apply.
 
 See `examples/acp` for a native echo agent and controller, and `test/interop` for the pinned official SDK probes. Legacy wire metadata and storage locations are preserved. Shared subprocess pressure/platform qualification and logging convergence, runtime/scheduler redesign, and full v2 qualification remain release gates.
+
+## Stdio host logging
+
+The host owns logging policy. Agent stdio connection preserves Logger levels,
+handlers, filters and Application settings, including when using default stdio.
+Route every diagnostic handler to stderr or another non-protocol sink before
+starting applications. A release can use:
+
+```elixir
+config :logger, :default_handler, config: [type: :standard_error]
+```
+
+Normal logging remains enabled. Standalone Mix tasks and the echo-agent example
+explicitly route their own default handler to stderr before starting the agent;
+they preserve its levels, filters and formatter. In an already running VM,
+`:logger_std_h` requires replacing the host-owned handler to change its `:type`.
+`Mix.install/2` may still print dependency/compiler output to stdout; compiled
+releases avoid that startup caveat.
+
+`Arbor.ACP.Internal.StdioLoggerConfig.configure/0` remains exported with its legacy
+behavior as an explicit host opt-in. It sets `:arbor_acp` `:stdio_mode` and the
+VM-global Logger, `:logger` application and OTP primary levels to `:emergency`.
+It suppresses unrelated application logs and does not redirect them to stderr.
+No transport calls it automatically in 2.0. The old `:stdio_mode` flag itself has
+no automatic logger effect.

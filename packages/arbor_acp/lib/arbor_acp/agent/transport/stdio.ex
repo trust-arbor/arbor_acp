@@ -10,13 +10,16 @@ defmodule Arbor.ACP.Agent.Transport.Stdio do
   and subject to change by the VM, and the transport reads and writes it the
   way it is configured at that moment so nothing translates the frames.
   Embedders may pass their own `:input` and `:output` devices.
+
+  Connection never changes VM-global logger levels, handlers, filters, or
+  Application settings. The host must route all diagnostics to stderr or another
+  non-protocol sink before starting the agent.
   """
 
   @behaviour Arbor.ACP.Agent.Transport
 
   alias Arbor.ACP.Internal.Options
   alias Arbor.RPC.StdioFraming
-  alias Arbor.ACP.Internal.StdioLoggerConfig
 
   @default_max_frame_bytes 1_048_576
   @collector_chunk_bytes 4_096
@@ -31,10 +34,6 @@ defmodule Arbor.ACP.Agent.Transport.Stdio do
   def connect(opts) do
     output = Keyword.get(opts, :output, :stdio)
     input = Keyword.get(opts, :input, :stdio)
-
-    if output in [:stdio, :standard_io] do
-      StdioLoggerConfig.configure()
-    end
 
     {:ok,
      %__MODULE__{
