@@ -4,6 +4,12 @@ ACP controller/client, native agent, and generic adapter runtime. This core pack
 
 Version `2.0.0-dev` is an unpublished implementation snapshot. The accepted namespace is `Arbor.ACP.*`.
 
+Installing the transitive `arbor_rpc` source package on macOS/Darwin or Linux
+requires a C17 compiler, even when no subprocess is used. `CC` selects one
+compiler executable. There is no prebuilt-helper promise; assembled releases
+include the built helper and need no runtime compiler. Windows native subprocess
+operations are unsupported; framing is separate. See the [RPC source-install policy](../arbor_rpc/README.md#source-build-and-remaining-gates).
+
 Native agents implement `Arbor.ACP.Agent.Handler` and run with `Arbor.ACP.run_agent/1`. Controllers start with `Arbor.ACP.start_client/1`. Custom adapters implement `Arbor.ACP.Adapter` and use the generic bridge. Public `Arbor.ACP.AdapterSupport` helpers own name/value validation, workspace authorization, and adapter policy over shared RPC subprocess handles; adapter packages must not call core `Internal` modules.
 
 `Adapter.environment_defaults/1` is an optional callback for vendor-owned environment policy. It accepts unset values (`false`) and is applied after the generic baseline, before `env/1` and explicit caller `:env`. Existing `env/1` output stays unchanged.

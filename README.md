@@ -10,11 +10,19 @@ These are unpublished `2.0.0-dev` implementation snapshots. Accepted namespaces 
 
 To verify an unpublished workspace package, set `ARBOR_V2_LOCAL=1` for internal path dependencies. For offline verification also set `ARBOR_V2_DEPS=/path/to/reviewed/deps` to a cache containing Jason and Telemetry. Then run `mix test` inside each package. Leave these overrides unset for `mix hex.build`: archive metadata must refer to normal Hex versions. The package dependencies themselves do not contain host-specific paths.
 
+Source installation on macOS/Darwin and Linux requires a C17 compiler for the
+shared `arbor_rpc` dependency, including transitive protocol-only use. `CC`
+selects a compiler executable. Source archives ship reviewed C source rather than
+prebuilt helpers; assembled releases include the built target helper and need no
+runtime compiler. Windows native subprocess operations are unsupported, while
+framing remains separate. See the [RPC source-install policy](packages/arbor_rpc/README.md#source-build-and-remaining-gates)
+for the native ownership limits and final platform/architecture qualification.
+
 `elixir scripts/check_boundaries.exs` checks production source ownership. `VERIFICATION.md` records actual results and remaining gates. Examples and pinned SDK tooling live in the core package; vendor golden fixtures and external CLI smoke tests live in the adapter package.
 
 ACP child stdio, persistent adapter bridges and Pi managed sessions use shared owned subprocess mechanics. Shared raw-input pressure/platform qualification, global stdio logger management, the accepted runtime/scheduler redesign, and the full v2 protocol/API work remain release gates. These packages have not been published. The initial package checkpoint passed GitHub CI; `VERIFICATION.md` records exact revision-specific local and remote evidence. Later implementation requires its own qualification.
 
-This isolated native-backend draft is based on `b46cbfe8ced0d29519462f8a83b64e5750caaa92`. The Arbor.RPC README describes source-build installation, retained cleanup receipts and remaining platform gates. Canonical defaults and package publication are unchanged.
+The historical isolated native-backend draft was based on `b46cbfe8ced0d29519462f8a83b64e5750caaa92`. The shipped source-build policy is documented in the Arbor.RPC README alongside retained cleanup receipts and remaining qualification gates. These packages remain unpublished; source-install policy is not final-graph release approval.
 
 ## Package versions and documentation
 

@@ -4,6 +4,13 @@ Optional adapters for Claude Code, Codex, Pi, and ZCode, under `Arbor.ACP.Adapte
 
 Version `2.0.0-dev` is an unpublished implementation snapshot. Vendor translation, session storage, prompt queues, MCP configuration, tool mapping, and credential/session environment policy belong here. Shared isolation, JSON-RPC validation, and workspace/name validation remain in their owning dependencies.
 
+Its shared `arbor_rpc` source dependency requires a C17 compiler when installed
+on macOS/Darwin or Linux. `CC` selects one compiler executable. Source archives
+include C source rather than prebuilt helpers; assembled releases include the
+built target helper and need no runtime compiler. Windows native subprocess
+operations are unsupported. See the [RPC source-install policy](../arbor_rpc/README.md#source-build-and-remaining-gates)
+for framing availability and the qualified platform/architecture boundary.
+
 Example adapter selection: `adapter: Arbor.ACP.Adapters.Codex` with the generic ACP adapter transport/bridge. Vendor CLI executables are separate prerequisites; package tests use captured golden fixtures by default. Live external CLI tests are explicitly tagged and excluded from ordinary tests.
 
 Legacy `_meta.ex_mcp` wire extensions, generated native request IDs, and Pi's session-map location are preserved. The accepted module namespace is `Arbor.ACP.Adapters.*`; full v2 runtime qualification remains pending.
@@ -18,10 +25,11 @@ unavailable results on failure. Pi's two probes and Claude worktree discovery
 honor caller environment overrides, child PATH and cwd. Successful capture keeps
 the original bytes, and every utility child belongs to its capturing caller.
 Cleanup can add its own finite budget and actor-call allowance after read expiry.
-This isolated draft uses the shared source-built native backend. Its retained
+This package uses the shared source-built native backend. Its retained
 cleanup receipts, targeted-group boundary, kernel/Port allocation and platform
-qualification limits are documented in the Arbor.RPC README. Native packaging
-and platform support remain release gates; canonical defaults are unchanged.
+qualification limits are documented in the Arbor.RPC README. Final archive and
+supported-platform qualification remain release gates; no Windows backend or
+prebuilt helper is promised.
 
 ## Standalone documentation
 
