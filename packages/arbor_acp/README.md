@@ -27,7 +27,7 @@ including when a different `:owner` option is supplied. Cleanup uses its separat
 finite budget after the read deadline; shared kernel/Port allocation and platform limits
 still apply.
 
-See `examples/acp` for a native echo agent and controller, and `test/interop` for the pinned official SDK probes. Legacy wire metadata and storage locations are preserved. Shared subprocess pressure/platform qualification and logging convergence, runtime/scheduler redesign, and full v2 qualification remain release gates.
+See `examples/acp` for a native echo agent and controller, and `test/interop` for the pinned official SDK probes. Legacy wire metadata and storage locations are preserved. Shared subprocess write admission, cleanup receipts and host-owned logging have implemented, revision-specific qualification checkpoints. Final compiled API/consumer and platform qualification remain release gates; MCP owns its separate handler runtime/scheduler. The coordinated final 48-hour soak is accepted and has not started.
 
 ## Stdio host logging
 

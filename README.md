@@ -20,7 +20,7 @@ for the native ownership limits and final platform/architecture qualification.
 
 `elixir scripts/check_boundaries.exs` checks production source ownership. `VERIFICATION.md` records actual results and remaining gates. Examples and pinned SDK tooling live in the core package; vendor golden fixtures and external CLI smoke tests live in the adapter package.
 
-ACP child stdio, persistent adapter bridges and Pi managed sessions use shared owned subprocess mechanics. Shared raw-input pressure/platform qualification, global stdio logger management, the accepted runtime/scheduler redesign, and the full v2 protocol/API work remain release gates. These packages have not been published. The initial package checkpoint passed GitHub CI; `VERIFICATION.md` records exact revision-specific local and remote evidence. Later implementation requires its own qualification.
+ACP child stdio, persistent adapter bridges and Pi managed sessions use shared owned subprocess mechanics, with bounded native write admission and retained cleanup receipts. Host-owned stdio logging is implemented; library startup and transport connection preserve host Logger policy. `VERIFICATION.md` records revision-specific local and remote CI evidence. The final four-package compiled API, installed consumer/platform matrix and coordinated RC qualification remain gates; these packages have not been published. MCP owns its separate handler runtime/scheduler, and these checkpoints do not certify the final combined graph or start the accepted 48-hour soak.
 
 The historical isolated native-backend draft was based on `b46cbfe8ced0d29519462f8a83b64e5750caaa92`. The shipped source-build policy is documented in the Arbor.RPC README alongside retained cleanup receipts and remaining qualification gates. These packages remain unpublished; source-install policy is not final-graph release approval.
 
@@ -32,6 +32,7 @@ Development/RC dependencies use explicit prerelease floors. Stable 2.0.0 uses
 `~> 2.0` for internal dependencies. The three package-qualified release tags
 (`arbor_rpc-v<version>`, `arbor_acp-v<version>`, `arbor_acp_adapters-v<version>`)
 refer to the same coordinated monorepo commit. MCP uses `v<version>` in its own
-repository. The [coordinated release preparation guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_PACKAGE_RELEASE.md)
+repository. Publish RPC, ACP, MCP and then the optional adapter bundle. The
+[coordinated release preparation guide](https://github.com/trust-arbor/arbor_mcp/blob/ecc4ee9944dbb657b8d0bb06c614af12939fbb3e/docs/V2_PACKAGE_RELEASE.md)
 describes literal version preparation, source archives and the four-package
 installation/release checks. No package publication is performed by these checks.
