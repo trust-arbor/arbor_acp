@@ -4,9 +4,10 @@ defmodule Arbor.ACP.Integration.ACPAdapterCLIInteropTest do
 
   The tests exercise process startup, each vendor's native control protocol, ACP
   initialization, session creation/listing/close, and clean shutdown. They never
-  send `session/prompt`, so no LLM request is made. Pi and ZCode receive isolated
-  dummy model definitions because both require a configured model even to create
-  a session; the deliberately unreachable endpoints are never contacted.
+  send `session/prompt`, so no LLM request is made. Pi and older ZCode versions
+  receive isolated dummy model definitions for session creation. ZCode 0.16.9
+  app-server uses a separate provider config and supports this lifecycle without
+  a configured model. The dummy endpoints are deliberately unreachable.
 
   Run all four explicitly with:
 
@@ -77,10 +78,14 @@ defmodule Arbor.ACP.Integration.ACPAdapterCLIInteropTest do
   end
 
   test "ZCode app-server adapter completes a no-model ACP lifecycle", %{root: root} do
+    cli_path = executable!(:zcode)
     home = mkdir!(root, "home")
     zcode_home = mkdir!(root, "zcode")
     config_dir = mkdir!(home, ".zcode/cli")
+    provider_dir = mkdir!(home, ".zcode/v2")
+    storage_dir = mkdir!(home, ".zcode/storage")
 
+    # Retain the legacy model fixture for older CLIs; current app-server ignores it.
     write_json!(Path.join(config_dir, "config.json"), %{
       "model" => %{"main" => "ex-mcp-interop/no-model-call"},
       "provider" => %{
@@ -99,13 +104,32 @@ defmodule Arbor.ACP.Integration.ACPAdapterCLIInteropTest do
       }
     })
 
+    env = [
+      {"HOME", home},
+      {"ZCODE_HOME", zcode_home},
+      {"ZCODE_DATA_BASE_DIR", home},
+      {"ZCODE_STORAGE_DIR", storage_dir},
+      {"ZCODE_SESSION_DB", false},
+      {"ZCODE_SESSION_DB_PATH", Path.join(storage_dir, "sessions.db")},
+      {"ZCODE_PERSONAL_PROVIDER_CONFIG_FILE", Path.join(provider_dir, "provider_config.json")}
+    ]
+
+    # The desktop bundle stores this beside glm/, outside the CLI's default lookup.
+    # Other installations retain their own built-in provider discovery.
+    builtin_config = Path.expand("../config/provider/zcode-builtin.json", Path.dirname(cli_path))
+
+    env =
+      if File.regular?(builtin_config),
+        do: [{"ZCODE_BUILTIN_PROVIDER_CONFIG_FILE", builtin_config} | env],
+        else: env
+
     exercise_adapter(
       ZCode,
       [
-        cli_path: executable!(:zcode),
+        cli_path: cli_path,
         cwd: root,
         workspace_roots: [root],
-        env: [{"HOME", home}, {"ZCODE_HOME", zcode_home}]
+        env: env
       ],
       root
     )

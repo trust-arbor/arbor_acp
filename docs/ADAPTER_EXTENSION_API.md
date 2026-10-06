@@ -4,6 +4,22 @@ Custom adapters implement `Arbor.ACP.Adapter`. Native protocol translation,
 request correlation, credentials and session state stay in the adapter. Generic
 ACP output admission and RPC child ownership stay in their owning packages.
 
+For setters that need native confirmation, `translate_outbound/2` may return
+`{:pending_and_write, data, state}`. The bridge writes `data` and leaves the ACP
+request pending, including `session/set_model`, `session/set_mode` and
+`session/set_config_option`. The adapter must emit one correlated result or
+error from its inbound callback and ignore duplicate native replies. Write
+admission errors are returned immediately; client timeout and transport closure
+still settle the caller. This explicit shape does not alter the response behavior
+of existing `:ok`, `:pending`, or immediate-reply return shapes.
+
+Adapters retaining native correlations for this form must implement
+`outbound_write_failed(acp_message, reason, state) :: state`. It is called only
+for a failed `:pending_and_write` write, before the bridge emits its ACP error.
+Retire the pending correlation so late native replies are ignored, but preserve
+the native ID sequence. A reported write failure can have an uncertain outcome;
+the callback does not undo native side effects or emit another response.
+
 ## Owned child support
 
 `Arbor.ACP.AdapterSupport.Subprocess.open(command, args, opts, adapter_module)`

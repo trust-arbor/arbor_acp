@@ -18,6 +18,9 @@ Release candidate for downstream migration testing; publication is pending.
   troubleshooting. Include the guide and echo examples in source archives.
 - Preserve host Logger policy on stdio startup and return known cleanup errors
   from transport close and client disconnect.
+- Let adapters defer setter responses until the native agent acknowledges them,
+  with explicit write-failure cleanup for pending correlations. Existing adapter
+  return forms keep their response behavior.
 
 Stable promotion remains gated on the unfinished 48-hour qualification.
 

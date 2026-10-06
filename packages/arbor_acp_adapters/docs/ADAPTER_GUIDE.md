@@ -188,6 +188,21 @@ permissions, model catalogs and mode/thought controls. Modes include plan,
 build, edit, auto and yolo, with different vendor permission policies. Inspect
 the catalog and choose deliberately.
 
+The existing explicit `session/prompt` `params.model` extension accepts a
+qualified model ID, an ID from that session's catalog, or a native typed
+`{providerId, modelId, options?: {reasoningLevel}}` object. It maps to
+`session/send.modelSelection`, as required by ZCode 0.16.9. An explicit reasoning
+level is checked against the known model catalog; an omitted level uses a
+supported session choice, then the model default or first advertised level.
+Without catalog metadata, validation is left to ZCode. A prompt without an
+override uses the native session's selected model. Queued overrides retain the
+selection resolved when queued.
+
+Legacy flat model catalogs remain supported. Older app-server releases that
+require the former `runtimeModel` prompt field are not automatically detected;
+explicit prompt overrides require the `modelSelection` schema. The adapter does
+not retry prompts under another field name.
+
 ZCode accepts text prompts; image and embedded-context capabilities are not
 advertised. Session delete and non-empty additional directories are unsupported.
 Structured user-input requests are answered as cancelled because the corresponding
@@ -218,6 +233,16 @@ post-connect writes, environment policy, managed process messages and shutdown.
 Correlate native replies with the original ACP request and emit a final prompt
 result as well as stream updates. Do not copy a streaming-only adapter skeleton
 that never settles its prompt.
+
+For native setters, return `{:pending_and_write, data, state}` when success
+depends on the subprocess reply. The bridge writes `data` without synthesizing
+an ACP success; `translate_inbound/2` must correlate the native reply and emit
+one ACP result or error. Duplicate native responses must not settle it twice.
+Write failures still become ACP errors, and client timeouts or transport closure
+remain terminal for the caller. Existing immediate-reply return forms are unchanged.
+Implement `outbound_write_failed/3` when retaining a native correlation for this
+form: remove its pending entry without reusing the native ID or emitting a
+response. The bridge emits the write error, and late native replies must be ignored.
 
 Use `Arbor.ACP.AdapterEvents` for ACP message construction and public
 `Arbor.ACP.AdapterSupport` helpers for shared policy and owned subprocess handles.

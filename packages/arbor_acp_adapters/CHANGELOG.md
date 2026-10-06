@@ -19,6 +19,13 @@ Release candidate for downstream migration testing; publication is pending.
 - Honor Claude `read_file.max_bytes` on correlated UTF-8 responses. Invalid
   limits and oversized or malformed contents return control errors without
   truncation; ACP line limits and independent bridge bounds remain unchanged.
+- Read ZCode model and reasoning choices from current session snapshots while
+  preserving legacy catalogs and session isolation. Model, mode and reasoning
+  setters now report native rejection instead of acknowledging success before
+  the CLI responds; partial settings updates retain the full model catalog.
+- Send explicit ZCode prompt model overrides through the current `modelSelection`
+  field, preserving supported reasoning choices and validating them before
+  sending or queuing. Prompts without overrides use the native session selection.
 
 Stable promotion remains gated on the unfinished 48-hour qualification; captured
 vendor fixtures do not certify live vendor/network behavior.
