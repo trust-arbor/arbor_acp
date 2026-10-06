@@ -2,7 +2,7 @@
 
 ACP controller/client, native agent, and generic adapter runtime. This core package depends on `arbor_rpc` and contains no vendor adapter runtime modules. Add the optional `arbor_acp_adapters` package to use built-in Claude, Codex, Pi, or ZCode integrations.
 
-Version `2.0.0-dev` is an unpublished implementation snapshot. The accepted namespace is `Arbor.ACP.*`.
+Version `2.0.0-rc.1` is an unpublished implementation snapshot. The accepted namespace is `Arbor.ACP.*`.
 
 Installing the transitive `arbor_rpc` source package on macOS/Darwin or Linux
 requires a C17 compiler, even when no subprocess is used. `CC` selects one

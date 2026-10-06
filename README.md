@@ -6,7 +6,7 @@ Three independent Mix projects live here:
 - `packages/arbor_acp_adapters`: optional Claude, Codex, Pi, and ZCode adapters.
 - `packages/arbor_rpc`: shared JSON-RPC, framing, environment isolation, and log primitives. Both protocol libraries use this dependency; neither depends on the other.
 
-These are unpublished `2.0.0-dev` implementation snapshots. Accepted namespaces are `Arbor.ACP.*` and `Arbor.RPC.*`; package and directory names remain `arbor_acp`, `arbor_acp_adapters`, and `arbor_rpc`. Git history begins with the original local ACP extraction and the current main source snapshot is recorded in `SOURCE_SNAPSHOT`.
+These are unpublished `2.0.0-rc.1` implementation snapshots. Accepted namespaces are `Arbor.ACP.*` and `Arbor.RPC.*`; package and directory names remain `arbor_acp`, `arbor_acp_adapters`, and `arbor_rpc`. Git history begins with the original local ACP extraction and the current main source snapshot is recorded in `SOURCE_SNAPSHOT`.
 
 To verify an unpublished workspace package, set `ARBOR_V2_LOCAL=1` for internal path dependencies. For offline verification also set `ARBOR_V2_DEPS=/path/to/reviewed/deps` to a cache containing Jason and Telemetry. Then run `mix test` inside each package. Leave these overrides unset for `mix hex.build`: archive metadata must refer to normal Hex versions. The package dependencies themselves do not contain host-specific paths.
 

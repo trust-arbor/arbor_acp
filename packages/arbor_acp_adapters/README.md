@@ -2,7 +2,7 @@
 
 Optional adapters for Claude Code, Codex, Pi, and ZCode, under `Arbor.ACP.Adapters.*`. This package depends on the generic `arbor_acp` core and `arbor_rpc`; consumers of the native ACP core do not need it.
 
-Version `2.0.0-dev` is an unpublished implementation snapshot. Vendor translation, session storage, prompt queues, MCP configuration, tool mapping, and credential/session environment policy belong here. Shared isolation, JSON-RPC validation, and workspace/name validation remain in their owning dependencies.
+Version `2.0.0-rc.1` is an unpublished implementation snapshot. Vendor translation, session storage, prompt queues, MCP configuration, tool mapping, and credential/session environment policy belong here. Shared isolation, JSON-RPC validation, and workspace/name validation remain in their owning dependencies.
 
 Its shared `arbor_rpc` source dependency requires a C17 compiler when installed
 on macOS/Darwin or Linux. `CC` selects one compiler executable. Source archives
