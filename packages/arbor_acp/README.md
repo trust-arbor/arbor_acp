@@ -13,7 +13,7 @@ Installing the transitive `arbor_rpc` source package on macOS/Darwin or Linux
 requires a C17 compiler, even when no subprocess is used. `CC` selects one
 compiler executable. There is no prebuilt-helper promise; assembled releases
 include the built helper and need no runtime compiler. Windows native subprocess
-operations are unsupported; framing is separate. See the [RPC source-install policy](../arbor_rpc/README.md#source-build-and-remaining-gates).
+operations are unsupported; framing is separate. See the [RPC source-install policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates).
 
 Native agents implement `Arbor.ACP.Agent.Handler` and run with `Arbor.ACP.run_agent/1`. Controllers start with `Arbor.ACP.start_client/1`. Custom adapters implement `Arbor.ACP.Adapter` and use the generic bridge. Public `Arbor.ACP.AdapterSupport` helpers own name/value validation, workspace authorization, and adapter policy over shared RPC subprocess handles; adapter packages must not call core `Internal` modules.
 
@@ -61,12 +61,14 @@ no automatic logger effect.
 
 ## Standalone documentation
 
-From the workspace root, run:
+Clone [ArborRPC](https://github.com/trust-arbor/arbor_rpc) separately while the
+dependency is unpublished. From the ACP workspace root, run:
 
 ```sh
 cd packages/arbor_acp
-ARBOR_V2_LOCAL=1 MIX_ENV=dev mix deps.get
-ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
+export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
+MIX_ENV=dev mix deps.get
+MIX_ENV=dev mix docs --warnings-as-errors
 ```
 
 ExDoc is a dev-only dependency and does not run in consumer applications. Source

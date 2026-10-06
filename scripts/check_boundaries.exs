@@ -1,7 +1,14 @@
 root = Path.expand("..", __DIR__)
 
+packages = ~w(arbor_acp arbor_acp_adapters)
+
+for package <- packages do
+  source = Path.join(root, "packages/#{package}/lib")
+  unless File.dir?(source), do: raise("Missing package source: #{source}")
+end
+
 violations =
-  for package <- ~w(arbor_rpc arbor_acp arbor_acp_adapters),
+  for package <- packages,
       path <- Path.wildcard(Path.join(root, "packages/#{package}/lib/**/*.ex")),
       reduce: [] do
     errors ->
@@ -21,9 +28,6 @@ violations =
           cond do
             String.starts_with?(module, ["ExMCP", "ExACP"]) ->
               true
-
-            package == "arbor_rpc" ->
-              String.starts_with?(module, ["Arbor.ACP", "Arbor.MCP"])
 
             package == "arbor_acp" ->
               String.starts_with?(module, "Arbor.ACP.Adapters")

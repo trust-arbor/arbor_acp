@@ -14,6 +14,7 @@ permissions:
 
 env:
   ARBOR_V2_LOCAL: '1'
+  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/rpc
 
 jobs:
   package:
@@ -23,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [arbor_rpc, arbor_acp, arbor_acp_adapters]
+        package: [arbor_acp, arbor_acp_adapters]
         toolchain:
           - {label: 'Elixir 1.17 / OTP 27', elixir: '1.17', otp: '27', pinned_elixir: '1.17.3', pinned_otp: '27.0', minimum: true}
           - {label: 'Elixir 1.18 / OTP 27', elixir: '1.18', otp: '27', pinned_elixir: '1.18.5', pinned_otp: '27.3.4.18', minimum: false}
@@ -38,6 +39,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          persist-credentials: false
+      - name: Check out shared RPC
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: trust-arbor/arbor_rpc
+          ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+          path: .arbor-v2/rpc
           persist-credentials: false
       - id: beam
         uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124

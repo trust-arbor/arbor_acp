@@ -56,9 +56,10 @@ defmodule Arbor.ACP.MixProject do
     end
   end
 
-  defp internal_dep(app) do
-    if System.get_env("ARBOR_V2_LOCAL") == "1",
-      do: {app, path: Path.expand("../#{app}", __DIR__)},
-      else: {app, @internal_requirement}
+  defp internal_dep(:arbor_rpc) do
+    case System.get_env("ARBOR_RPC_PATH") do
+      nil -> {:arbor_rpc, @internal_requirement}
+      path -> {:arbor_rpc, path: Path.expand(path)}
+    end
   end
 end

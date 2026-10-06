@@ -8,6 +8,7 @@ permissions:
   contents: read
 env:
   ARBOR_V2_LOCAL: '1'
+  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/rpc
 jobs:
   package:
     name: ${{ matrix.package }} / Elixir ${{ matrix.toolchain.elixir }} / OTP ${{ matrix.toolchain.otp }}
@@ -15,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [arbor_rpc, arbor_acp, arbor_acp_adapters]
+        package: [arbor_acp, arbor_acp_adapters]
         toolchain:
           - {elixir: '1.17.3', otp: '27.0'}
           - {elixir: '1.18.5', otp: '27.3.4.18'}
@@ -27,6 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          persist-credentials: false
+      - name: Check out shared RPC
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: trust-arbor/arbor_rpc
+          ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+          path: .arbor-v2/rpc
           persist-credentials: false
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
         with:
@@ -44,7 +52,7 @@ jobs:
       - run: mix test --warnings-as-errors --no-deps-check
       - run: elixir ../../scripts/check_boundaries.exs
       - name: Build the publishable manifest without workspace overrides
-        run: ARBOR_V2_LOCAL=0 mix hex.build
+        run: env -u ARBOR_RPC_PATH ARBOR_V2_LOCAL=0 mix hex.build
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ${{ matrix.package }}-${{ matrix.toolchain.elixir }}
@@ -57,6 +65,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          persist-credentials: false
+      - name: Check out shared RPC
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: trust-arbor/arbor_rpc
+          ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+          path: .arbor-v2/rpc
           persist-credentials: false
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
         with:
@@ -87,6 +102,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Check out shared RPC
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: trust-arbor/arbor_rpc
+          ref: 81ac7c8ce4c5d721a85c9f040df86fbc54c10820
+          path: .arbor-v2/rpc
+          persist-credentials: false
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
         with:
           otp-version: ${{ matrix.toolchain.otp }}
@@ -97,4 +119,9 @@ jobs:
           pattern: arbor_*-${{ matrix.toolchain.elixir }}
           path: archive-consumer-input
           merge-multiple: true
+      - name: Build the independent RPC source archive
+        working-directory: .arbor-v2/rpc
+        run: |
+          MIX_ENV=prod mix deps.get --only prod
+          MIX_ENV=prod mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/arbor_rpc-source.tar"
       - run: python3 scripts/check_archive_consumer.py archive-consumer-input

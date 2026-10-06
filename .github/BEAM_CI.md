@@ -1,6 +1,6 @@
 # BEAM compatibility CI
 
-`workflows/ci.yml` compiles and tests all three packages and checks installed
+`workflows/ci.yml` compiles and tests both ACP packages and checks installed
 source archives on these explicit, compatible pairs:
 
 | Elixir | Erlang/OTP | Purpose |
@@ -35,3 +35,9 @@ caches, publish packages, or merge updates. Version output, resolved dependency
 lists, and generated lockfiles are retained as artifacts; ACP currently resolves
 external dependencies without committed package lockfiles, so a failure can
 also reflect dependency drift.
+
+ArborRPC lives in `trust-arbor/arbor_rpc` with its own equivalent BEAM matrix.
+Compiling ACP jobs use an immutable RPC revision and `ARBOR_RPC_PATH`; update
+that pin deliberately when adopting RPC changes. The archive-consumer lanes
+build an RPC tar from the same pin and install it alongside the two ACP tars.
+Packaging clears local dependency overrides so the manifests retain Hex ranges.

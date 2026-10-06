@@ -5,9 +5,13 @@ These examples show both sides of the Agent Client Protocol:
 - `echo_agent.exs` exposes a native Elixir ACP agent over stdio.
 - `controller.exs` starts that agent as a subprocess, creates a session, sends a prompt, and prints streamed updates plus the final prompt result.
 
-From `packages/arbor_acp` (set `ARBOR_V2_LOCAL=1` before the first release):
+Before the first release, clone [ArborRPC](https://github.com/trust-arbor/arbor_rpc)
+separately. From `packages/arbor_acp`, set its checkout path and enable the
+controller's explicit forwarding of local development settings to the echo agent:
 
 ```bash
+export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
+export ARBOR_V2_LOCAL=1
 mix deps.get
 mix compile
 mix run examples/acp/controller.exs

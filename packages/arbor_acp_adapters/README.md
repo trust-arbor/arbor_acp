@@ -13,7 +13,7 @@ Its shared `arbor_rpc` source dependency requires a C17 compiler when installed
 on macOS/Darwin or Linux. `CC` selects one compiler executable. Source archives
 include C source rather than prebuilt helpers; assembled releases include the
 built target helper and need no runtime compiler. Windows native subprocess
-operations are unsupported. See the [RPC source-install policy](../arbor_rpc/README.md#source-build-and-remaining-gates)
+operations are unsupported. See the [RPC source-install policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates)
 for framing availability and the qualified platform/architecture boundary.
 
 Example adapter selection: `adapter: Arbor.ACP.Adapters.Codex` with the generic ACP adapter transport/bridge. Vendor CLI executables are separate prerequisites; package tests use captured golden fixtures by default. Live external CLI tests are explicitly tagged and excluded from ordinary tests.
@@ -38,13 +38,18 @@ prebuilt helper is promised.
 
 ## Standalone documentation
 
-From the workspace root, run:
+Clone [ArborRPC](https://github.com/trust-arbor/arbor_rpc) separately while the
+dependency is unpublished. From the ACP workspace root, run:
 
 ```sh
 cd packages/arbor_acp_adapters
+export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
 ARBOR_V2_LOCAL=1 MIX_ENV=dev mix deps.get
 ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
 ```
+
+`ARBOR_RPC_PATH` selects the independent RPC checkout; `ARBOR_V2_LOCAL=1`
+selects the sibling ACP core package.
 
 ExDoc is a dev-only dependency and does not run in consumer applications. Source
 links use `arbor_acp_adapters-v<version>` and the `packages/arbor_acp_adapters/` source prefix.
