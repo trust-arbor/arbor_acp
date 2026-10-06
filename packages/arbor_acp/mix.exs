@@ -5,6 +5,7 @@ defmodule Arbor.ACP.MixProject do
   def project do
     [
       app: :arbor_acp,
+      name: "ArborACP",
       version: @version,
       elixir: "~> 1.17",
       elixirc_paths: paths(Mix.env()),
@@ -18,7 +19,6 @@ defmodule Arbor.ACP.MixProject do
       ],
       source_url: "https://github.com/trust-arbor/arbor_acp",
       docs: [
-        name: "ArborACP",
         main: "readme",
         extras: ["README.md", "CHANGELOG.md"],
         source_ref: "arbor_acp-v#{@version}",
