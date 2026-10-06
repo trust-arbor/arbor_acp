@@ -9,7 +9,7 @@ defmodule Arbor.ACP.Adapters.MixProject do
       elixir: "~> 1.17",
       elixirc_paths: paths(Mix.env()),
       deps: deps(),
-      description: "Optional Claude, Codex, Pi and ZCode adapters for Arbor.ACP.",
+      description: "Optional Claude, Codex, Pi and ZCode adapters for ArborACP.",
       package: [
         licenses: ["MIT"],
         links: %{"GitHub" => "https://github.com/trust-arbor/arbor_acp"},
@@ -17,7 +17,7 @@ defmodule Arbor.ACP.Adapters.MixProject do
       ],
       source_url: "https://github.com/trust-arbor/arbor_acp",
       docs: [
-        name: "Arbor.ACP.Adapters",
+        name: "ArborACP adapters",
         main: "readme",
         extras: ["README.md", "CHANGELOG.md"],
         source_ref: "arbor_acp_adapters-v#{@version}",

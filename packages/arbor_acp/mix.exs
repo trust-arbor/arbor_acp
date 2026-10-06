@@ -9,7 +9,8 @@ defmodule Arbor.ACP.MixProject do
       elixir: "~> 1.17",
       elixirc_paths: paths(Mix.env()),
       deps: deps(),
-      description: "Agent Client Protocol client, native agent and generic adapter runtime.",
+      description:
+        "ArborACP: Agent Client Protocol client, native agent and generic adapter runtime.",
       package: [
         licenses: ["MIT"],
         links: %{"GitHub" => "https://github.com/trust-arbor/arbor_acp"},
@@ -17,7 +18,7 @@ defmodule Arbor.ACP.MixProject do
       ],
       source_url: "https://github.com/trust-arbor/arbor_acp",
       docs: [
-        name: "Arbor.ACP",
+        name: "ArborACP",
         main: "readme",
         extras: ["README.md", "CHANGELOG.md"],
         source_ref: "arbor_acp-v#{@version}",

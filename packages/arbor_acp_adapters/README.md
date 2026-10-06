@@ -1,4 +1,4 @@
-# Arbor ACP adapters
+# ArborACP adapters
 
 Optional adapters for Claude Code, Codex, Pi, and ZCode, under `Arbor.ACP.Adapters.*`. This package depends on the generic `arbor_acp` core and `arbor_rpc`; consumers of the native ACP core do not need it.
 
@@ -32,7 +32,7 @@ the original bytes, and every utility child belongs to its capturing caller.
 Cleanup can add its own finite budget and actor-call allowance after read expiry.
 This package uses the shared source-built native backend. Its retained
 cleanup receipts, targeted-group boundary, kernel/Port allocation and platform
-qualification limits are documented in the Arbor.RPC README. Final archive and
+qualification limits are documented in the ArborRPC README. Final archive and
 supported-platform qualification remain release gates; no Windows backend or
 prebuilt helper is promised.
 

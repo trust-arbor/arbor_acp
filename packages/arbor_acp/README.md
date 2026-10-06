@@ -1,8 +1,8 @@
-# Arbor.ACP
+# ArborACP
 
 ACP controller/client, native agent, and generic adapter runtime. This core package depends on `arbor_rpc` and contains no vendor adapter runtime modules. Add the optional `arbor_acp_adapters` package to use built-in Claude, Codex, Pi, or ZCode integrations.
 
-Version `2.0.0-rc.1` is an unpublished implementation snapshot. The accepted namespace is `Arbor.ACP.*`.
+Version `2.0.0-rc.1` is an unpublished implementation snapshot. ArborACP is the library name; its Hex package and OTP application are `arbor_acp`, and its module namespace is `Arbor.ACP.*`.
 
 The planned prerelease is for downstream migration testing. See the
 [v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)

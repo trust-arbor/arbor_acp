@@ -1,10 +1,10 @@
-# Arbor ACP workspace
+# ArborACP workspace
 
 Three independent Mix projects live here:
 
-- `packages/arbor_acp`: ACP client, native agent, and generic adapter runtime.
-- `packages/arbor_acp_adapters`: optional Claude, Codex, Pi, and ZCode adapters.
-- `packages/arbor_rpc`: shared JSON-RPC, framing, environment isolation, and log primitives. Both protocol libraries use this dependency; neither depends on the other.
+- ArborACP (`packages/arbor_acp`): ACP client, native agent, and generic adapter runtime.
+- ArborACP adapters (`packages/arbor_acp_adapters`): optional Claude, Codex, Pi, and ZCode adapters.
+- ArborRPC (`packages/arbor_rpc`): shared JSON-RPC, framing, environment isolation, and log primitives. Both protocol libraries use this dependency; neither depends on the other.
 
 These are unpublished `2.0.0-rc.1` implementation snapshots. Accepted namespaces are `Arbor.ACP.*` and `Arbor.RPC.*`; package and directory names remain `arbor_acp`, `arbor_acp_adapters`, and `arbor_rpc`. Git history begins with the original local ACP extraction and the current main source snapshot is recorded in `SOURCE_SNAPSHOT`.
 
@@ -27,7 +27,7 @@ for the native ownership limits and final platform/architecture qualification.
 
 ACP child stdio, persistent adapter bridges and Pi managed sessions use shared owned subprocess mechanics, with bounded native write admission and retained cleanup receipts. Host-owned stdio logging is implemented; library startup and transport connection preserve host Logger policy. `VERIFICATION.md` records revision-specific local and remote CI evidence. The RPC write handoff reloads the published payload after claiming ownership, retaining original deadlines and credit limits. MCP owns its separate handler runtime/scheduler. The final 48-hour gate has not passed: the latest rehearsal stopped at the documented 10,000-entry HandlerServer cap. Broader platform coverage and stable promotion remain pending; these packages have not been published.
 
-The historical isolated native-backend draft was based on `b46cbfe8ced0d29519462f8a83b64e5750caaa92`. The shipped source-build policy is documented in the Arbor.RPC README alongside retained cleanup receipts and remaining qualification gates. These packages remain unpublished; source-install policy is not final-graph release approval.
+The historical isolated native-backend draft was based on `b46cbfe8ced0d29519462f8a83b64e5750caaa92`. The shipped source-build policy is documented in the ArborRPC README alongside retained cleanup receipts and remaining qualification gates. These packages remain unpublished; source-install policy is not final-graph release approval.
 
 ## Package versions and documentation
 
