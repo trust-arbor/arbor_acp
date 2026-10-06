@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.0-rc.1 (planned)
+
+Release candidate for downstream migration testing; publication is pending.
+Stable 2.0.0 promotion remains gated on the unfinished 48-hour qualification.
+
+- Split ACP into the independent `arbor_acp` core and optional
+  `arbor_acp_adapters` vendor bundle, under `Arbor.ACP.*`.
+- Use shared `Arbor.RPC.*` JSON-RPC, framing and owned subprocess mechanics in
+  both protocol libraries. Native helpers provide typed child/group cleanup
+  receipts; source installs on macOS/Linux require C17, while assembled releases
+  run without a compiler. Windows native subprocess operations are unsupported.
+- Fix the private RPC write-publication race by reloading the published payload
+  after ownership is claimed, preserving the original deadline, producer checks
+  and bounded credit accounting.
+- Add the [v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md).
+
 ## [Unreleased]
 
 ### Added

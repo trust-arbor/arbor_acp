@@ -4,6 +4,11 @@ Optional adapters for Claude Code, Codex, Pi, and ZCode, under `Arbor.ACP.Adapte
 
 Version `2.0.0-rc.1` is an unpublished implementation snapshot. Vendor translation, session storage, prompt queues, MCP configuration, tool mapping, and credential/session environment policy belong here. Shared isolation, JSON-RPC validation, and workspace/name validation remain in their owning dependencies.
 
+The planned prerelease is for downstream migration testing. See the
+[v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)
+for package and namespace changes. Publication is pending; the stable-release
+48-hour gate has not passed, and vendor CLI executables remain separate.
+
 Its shared `arbor_rpc` source dependency requires a C17 compiler when installed
 on macOS/Darwin or Linux. `CC` selects one compiler executable. Source archives
 include C source rather than prebuilt helpers; assembled releases include the
@@ -43,5 +48,5 @@ ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
 
 ExDoc is a dev-only dependency and does not run in consumer applications. Source
 links use `arbor_acp_adapters-v<version>` and the `packages/arbor_acp_adapters/` source prefix.
-Version tags are created only for a reviewed release; this unpublished development
+Version tags are created only for a reviewed release; this unpublished prerelease
 snapshot does not imply that those prospective tags already exist.

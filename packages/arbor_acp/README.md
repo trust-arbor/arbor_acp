@@ -4,6 +4,11 @@ ACP controller/client, native agent, and generic adapter runtime. This core pack
 
 Version `2.0.0-rc.1` is an unpublished implementation snapshot. The accepted namespace is `Arbor.ACP.*`.
 
+The planned prerelease is for downstream migration testing. See the
+[v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)
+for replacing the v1 package/namespace and selecting the optional adapter bundle.
+Publication is pending; the stable-release 48-hour gate has not passed.
+
 Installing the transitive `arbor_rpc` source package on macOS/Darwin or Linux
 requires a C17 compiler, even when no subprocess is used. `CC` selects one
 compiler executable. There is no prebuilt-helper promise; assembled releases
@@ -27,7 +32,7 @@ including when a different `:owner` option is supplied. Cleanup uses its separat
 finite budget after the read deadline; shared kernel/Port allocation and platform limits
 still apply.
 
-See `examples/acp` for a native echo agent and controller, and `test/interop` for the pinned official SDK probes. Legacy wire metadata and storage locations are preserved. Shared subprocess write admission, cleanup receipts and host-owned logging have implemented, revision-specific qualification checkpoints. Final compiled API/consumer and platform qualification remain release gates; MCP owns its separate handler runtime/scheduler. The coordinated final 48-hour soak is accepted and has not started.
+See `examples/acp` for a native echo agent and controller, and `test/interop` for the pinned official SDK probes. Legacy wire metadata and storage locations are preserved. Shared subprocess write admission, cleanup receipts and host-owned logging have revision-specific qualification checkpoints. The corrected RPC write handoff retains original deadlines and bounded credits. MCP owns its separate handler runtime/scheduler; broader platform coverage and completion of the final 48-hour stable-release gate remain pending.
 
 ## Stdio host logging
 
@@ -66,5 +71,5 @@ ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
 
 ExDoc is a dev-only dependency and does not run in consumer applications. Source
 links use `arbor_acp-v<version>` and the `packages/arbor_acp/` source prefix.
-Version tags are created only for a reviewed release; this unpublished development
+Version tags are created only for a reviewed release; this unpublished prerelease
 snapshot does not imply that those prospective tags already exist.
