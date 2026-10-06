@@ -49,7 +49,7 @@ defmodule Arbor.ACP.Client.Handler do
   the selected adapter construct the ACP message from the agent's native
   protocol. Native fields that the adapter does not map are not present.
 
-  ExMCP validates the update and session before dispatch. Message data counts
+  ArborACP validates the update and session before dispatch. Message data counts
   toward the existing handler update queue byte limit.
   """
   @callback handle_session_update(
@@ -78,7 +78,7 @@ defmodule Arbor.ACP.Client.Handler do
 
   When implemented, this optional callback is called instead of
   `c:handle_permission_request/4`. The message includes the original request
-  ID and all received fields. ExMCP retains request correlation, validation,
+  ID and all received fields. ArborACP retains request correlation, validation,
   cancellation, and timeout ownership. Return the same outcome as the legacy
   callback; do not send a JSON-RPC response from the handler. This callback
   has the same ACP-boundary limit as `c:handle_session_update/4`: an adapted

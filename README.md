@@ -16,7 +16,48 @@ The planned prerelease is for downstream migration testing. Follow the
 for package selection, namespace changes and host ownership requirements.
 Publication is pending; stable promotion requires completing the 48-hour gate.
 
-To verify unpublished packages, clone `trust-arbor/arbor_rpc` separately and set `ARBOR_RPC_PATH` to its absolute checkout path. Set `ARBOR_V2_LOCAL=1` for the adapters’ local ACP dependency. For offline verification also set `ARBOR_V2_DEPS=/path/to/reviewed/deps` to a cache containing Jason and Telemetry. Then run `mix test` inside each package. Leave these overrides unset for `mix hex.build`: archive metadata must refer to normal Hex versions. The package dependencies themselves do not contain host-specific paths.
+## Start here
+
+| Task | Documentation |
+| --- | --- |
+| Connect to an ACP agent or write a native agent | [Core installation and quickstart](packages/arbor_acp/README.md), [ACP guide](packages/arbor_acp/docs/ACP_GUIDE.md) |
+| Use Claude Code, Codex, Pi, or ZCode | [Adapter installation and quickstart](packages/arbor_acp_adapters/README.md), [adapter guide](packages/arbor_acp_adapters/docs/ADAPTER_GUIDE.md) |
+| Run a local session without vendor credentials | [Echo agent and controller](packages/arbor_acp/examples/acp/README.md) |
+| Build, test, or contribute | [Contributor guide](CONTRIBUTING.md), [BEAM compatibility](.github/BEAM_CI.md) |
+| Migrate a custom adapter | [Adapter subprocess contract](docs/ADAPTER_EXTENSION_API.md) |
+| Review changes and release evidence | [Workspace changelog](CHANGELOG.md), [core changelog](packages/arbor_acp/CHANGELOG.md), [adapter changelog](packages/arbor_acp_adapters/CHANGELOG.md), [verification record](VERIFICATION.md) |
+
+ACP is the editor/controller-to-agent protocol. MCP is the separate protocol
+agents use to access tools, resources, and prompts; use
+[ArborMCP](https://github.com/trust-arbor/arbor_mcp) for MCP servers and clients.
+Installing the core is enough for native ACP agents and custom adapters. The
+vendor bundle is optional, and vendor CLIs are installed separately.
+
+## Source checkout requirements
+
+Both packages declare Elixir `~> 1.17`; the [CI guide](.github/BEAM_CI.md)
+records the four pinned Elixir/OTP pairs and rolling compatibility checks. Use
+a reviewed v2 checkout: migration branches and prospective release tags are
+not a published release. Consumer dependency examples are in each package README. Clone the current
+migration branch explicitly; the default branch does not select the reviewed v2
+changes:
+
+```sh
+git clone --branch codex/shared-subprocess https://github.com/trust-arbor/arbor_acp.git
+git clone https://github.com/trust-arbor/arbor_rpc.git
+cd arbor_acp
+export ARBOR_RPC_PATH="$(cd ../arbor_rpc && pwd)"
+export ARBOR_V2_LOCAL=1
+cd packages/arbor_acp
+mix deps.get
+mix compile
+mix run examples/acp/controller.exs
+```
+
+Run adapter package commands from `packages/arbor_acp_adapters`, after its own
+`mix deps.get`. The [contributor guide](CONTRIBUTING.md) covers both projects.
+
+To verify unpublished packages, clone `trust-arbor/arbor_rpc` separately and set `ARBOR_RPC_PATH` to its absolute checkout path. Set `ARBOR_V2_LOCAL=1` for the adapters’ local ACP dependency. For offline verification also set `ARBOR_V2_DEPS=/path/to/reviewed/deps` to a cache containing the external dependencies, including ExDoc and its dependencies when building documentation. Then run `mix test` inside each package. Leave these overrides unset for `mix hex.build`: archive metadata must refer to normal Hex versions. The package dependencies themselves do not contain host-specific paths.
 
 Source installation on macOS/Darwin and Linux requires a C17 compiler for the
 shared `arbor_rpc` dependency, including transitive protocol-only use. `CC`
@@ -44,3 +85,10 @@ repositories. Publish RPC, ACP, MCP and then the optional adapter bundle. The
 [coordinated release preparation guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_PACKAGE_RELEASE.md)
 describes literal version preparation, source archives and the four-package
 installation/release checks. No package publication is performed by these checks.
+
+## Reporting issues
+
+Report suspected vulnerabilities through the
+[private vulnerability reporting form](https://github.com/trust-arbor/arbor_acp/security/advisories/new).
+Use [GitHub issues](https://github.com/trust-arbor/arbor_acp/issues) for other bugs
+and feature requests.

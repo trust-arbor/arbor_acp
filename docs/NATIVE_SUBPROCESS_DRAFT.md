@@ -1,5 +1,12 @@
 # Native subprocess cleanup draft
 
+This is the historical implementation/qualification checkpoint for the source
+base below. Its pending-decision and gate notes are retained as evidence, not
+current installation instructions. The implemented source-build policy and
+current remaining limits live in the separate
+[ArborRPC repository](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates);
+see the [workspace README](../README.md) for ACP setup and release status.
+
 Status: integrated into the unpublished ACP v2 draft; stable releases are unchanged.
 Source base: `b46cbfe8ced0d29519462f8a83b64e5750caaa92`.
 Source-build packaging is the working assumption pending the packaging decision.

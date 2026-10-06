@@ -15,11 +15,58 @@ compiler executable. There is no prebuilt-helper promise; assembled releases
 include the built helper and need no runtime compiler. Windows native subprocess
 operations are unsupported; framing is separate. See the [RPC source-install policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates).
 
+## Installation
+
+Use Elixir `~> 1.17` with a compatible OTP release. While RC1 is unpublished,
+use reviewed local checkouts of the ACP workspace and the separate ArborRPC
+repository. In a consumer project next to those checkouts:
+
+```elixir
+defp deps do
+  [
+    {:arbor_rpc, path: "../arbor_rpc", override: true},
+    {:arbor_acp, path: "../arbor_acp/packages/arbor_acp"}
+  ]
+end
+```
+
+Adjust the paths to your checkout layout, then run `mix deps.get`. The explicit
+RPC override replaces the unpublished transitive Hex dependency. Package
+development instead uses `ARBOR_RPC_PATH`, as shown below. Once RC1 is actually
+published, the planned Hex dependency is `{:arbor_acp, "~> 2.0.0-rc.1"}`; that
+command is not an available installation route yet.
+
+## First session
+
+The credential-free example starts a native Elixir echo agent, creates a session,
+prints streamed updates, and closes its subprocess. From this package directory:
+
+```sh
+export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
+export ARBOR_V2_LOCAL=1
+mix deps.get
+mix compile
+mix run examples/acp/controller.exs
+```
+
+Expect streamed echo text followed by a prompt result containing
+`"stopReason" => "end_turn"`. `ARBOR_V2_LOCAL=1` makes the controller forward
+the local dependency settings to the child agent. No vendor CLI, account, or
+API key is needed. See the [example notes](examples/acp/README.md).
+
+The [ACP guide](docs/ACP_GUIDE.md) covers native client connections, session
+lifecycle, streaming, handlers, content, limits, registry discovery and writing
+an agent. For vendor CLIs, use the optional
+[adapter package](https://github.com/trust-arbor/arbor_acp/tree/codex/shared-subprocess/packages/arbor_acp_adapters).
+See the [changelog](CHANGELOG.md) for the planned RC changes.
+
+## Runtime and custom adapters
+
 Native agents implement `Arbor.ACP.Agent.Handler` and run with `Arbor.ACP.run_agent/1`. Controllers start with `Arbor.ACP.start_client/1`. Custom adapters implement `Arbor.ACP.Adapter` and use the generic bridge. Public `Arbor.ACP.AdapterSupport` helpers own name/value validation, workspace authorization, and adapter policy over shared RPC subprocess handles; adapter packages must not call core `Internal` modules.
 
 `Adapter.environment_defaults/1` is an optional callback for vendor-owned environment policy. It accepts unset values (`false`) and is applied after the generic baseline, before `env/1` and explicit caller `:env`. Existing `env/1` output stays unchanged.
 
-Managed adapters identify frame credit with the pure optional `subprocess_receipt/2` callback. The bridge ACKs after bounded output admission. `shutdown/1` supports legacy state and explicit success/error tuples; bridge close exposes known cleanup failures. See the workspace's `docs/ADAPTER_EXTENSION_API.md` for exact signatures and migration details.
+Managed adapters identify frame credit with the pure optional `subprocess_receipt/2` callback. The bridge ACKs after bounded output admission. `shutdown/1` supports legacy state and explicit success/error tuples; bridge close exposes known cleanup failures. See the [adapter subprocess contract](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/docs/ADAPTER_EXTENSION_API.md) for exact signatures and migration details.
 
 Native child stdio also uses an owned shared handle. Temporary readers retain child lifetime, and filtered reads preserve the original deadline/cutoff. Direct subscribers use generation-tagged RPC events and explicit ACK. The built-in client keeps its bounded pull handoff; transport close and client disconnect expose known cleanup failures.
 
@@ -75,3 +122,6 @@ ExDoc is a dev-only dependency and does not run in consumer applications. Source
 links use `arbor_acp-v<version>` and the `packages/arbor_acp/` source prefix.
 Version tags are created only for a reviewed release; this unpublished prerelease
 snapshot does not imply that those prospective tags already exist.
+
+See the [contributor guide](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/CONTRIBUTING.md)
+for package checks, optional interoperability suites and source-archive validation.

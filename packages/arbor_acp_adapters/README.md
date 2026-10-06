@@ -16,7 +16,66 @@ built target helper and need no runtime compiler. Windows native subprocess
 operations are unsupported. See the [RPC source-install policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates)
 for framing availability and the qualified platform/architecture boundary.
 
-Example adapter selection: `adapter: Arbor.ACP.Adapters.Codex` with the generic ACP adapter transport/bridge. Vendor CLI executables are separate prerequisites; package tests use captured golden fixtures by default. Live external CLI tests are explicitly tagged and excluded from ordinary tests.
+## Installation
+
+Use Elixir `~> 1.17` and reviewed local checkouts while RC1 is unpublished. In a
+consumer project next to the ACP workspace and separate ArborRPC repository:
+
+```elixir
+defp deps do
+  [
+    {:arbor_rpc, path: "../arbor_rpc", override: true},
+    {:arbor_acp, path: "../arbor_acp/packages/arbor_acp", override: true},
+    {:arbor_acp_adapters, path: "../arbor_acp/packages/arbor_acp_adapters"}
+  ]
+end
+```
+
+Adjust paths, then run `mix deps.get`. Both overrides replace unpublished
+transitive Hex dependencies. After publication the planned dependency is
+`{:arbor_acp_adapters, "~> 2.0.0-rc.1"}`; it is not available from Hex yet.
+
+## First adapted session
+
+Install and authenticate the selected CLI separately. This example uses an
+already authenticated Codex CLI on the child PATH and its default model:
+
+```elixir
+alias Arbor.ACP.Client
+
+cwd = File.cwd!()
+{:ok, client} = Arbor.ACP.start_client(
+  transport_mod: Arbor.ACP.AdapterTransport,
+  adapter: Arbor.ACP.Adapters.Codex,
+  adapter_opts: [cwd: cwd, workspace_roots: [cwd]]
+)
+
+try do
+  {:ok, %{"sessionId" => session_id}} = Client.new_session(client, cwd)
+  {:ok, result} = Client.prompt(client, session_id, "Reply with a short greeting.")
+  IO.inspect(result)
+after
+  case Client.disconnect(client) do
+    :ok -> :ok
+    {:error, reason} -> IO.warn("ACP cleanup failed: #{inspect(reason)}")
+  end
+end
+```
+
+The default client handler rejects permission requests and file access, and
+declines elicitation. A host that supports those operations must provide its own
+handler and advertise the corresponding capabilities. Vendor authentication and
+network access are prerequisites for this example; the core's
+[echo example](https://github.com/trust-arbor/arbor_acp/tree/codex/shared-subprocess/packages/arbor_acp/examples/acp)
+is the credential-free starting point.
+
+The [adapter guide](docs/ADAPTER_GUIDE.md) covers executable selection, environment
+and authentication, workspace/MCP configuration, per-vendor differences, custom
+adapters and troubleshooting. See the [changelog](CHANGELOG.md) for RC changes.
+Package tests use captured golden fixtures by default. Live external CLI tests
+are explicitly tagged and excluded from ordinary tests.
+
+## Runtime and compatibility
 
 Legacy `_meta.ex_mcp` wire extensions, generated native request IDs, and Pi's session-map location are preserved. The accepted module namespace is `Arbor.ACP.Adapters.*`; full v2 runtime qualification remains pending.
 
@@ -55,3 +114,6 @@ ExDoc is a dev-only dependency and does not run in consumer applications. Source
 links use `arbor_acp_adapters-v<version>` and the `packages/arbor_acp_adapters/` source prefix.
 Version tags are created only for a reviewed release; this unpublished prerelease
 snapshot does not imply that those prospective tags already exist.
+
+See the [contributor guide](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/CONTRIBUTING.md)
+for fixture tests, optional real CLI smoke tests and source-archive validation.

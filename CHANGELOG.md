@@ -15,8 +15,20 @@ Stable 2.0.0 promotion remains gated on the unfinished 48-hour qualification.
   after ownership is claimed, preserving the original deadline, producer checks
   and bounded credit accounting.
 - Add the [v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md).
+- Move ArborRPC to its own `trust-arbor/arbor_rpc` repository, with the package at
+  its root. Development uses explicit `ARBOR_RPC_PATH`; ACP keeps only the core
+  and adapter packages, with unchanged Hex dependency names and module namespaces.
+- Add package installation/quickstarts, the ACP and adapter guides, contributor
+  commands and troubleshooting. Ship guides in ExDoc and source archives, plus
+  the core echo examples in the core archive.
+- Use `[:arbor_acp | _]` telemetry names in the v2 implementation; preserve
+  `_meta.ex_mcp` wire extensions and existing vendor storage identifiers.
 
-## [Unreleased]
+## Historical initial extraction (unreleased)
+
+The entries below describe the earlier ExACP extraction, not the current v2
+package names, namespaces or telemetry. See the RC1 entries and package guides
+for the current ArborACP surface.
 
 ### Added
 - Initial extraction of the Agent Client Protocol layer from ExMCP

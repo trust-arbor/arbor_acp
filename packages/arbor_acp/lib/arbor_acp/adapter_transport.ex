@@ -1,17 +1,20 @@
 defmodule Arbor.ACP.AdapterTransport do
   @moduledoc """
-  `Arbor.ACP.Transport` implementation that delegates to an `AdapterBridge`.
+  `Arbor.ACP.Transport` implementation that delegates to an `Arbor.ACP.AdapterBridge`.
 
-  This lets `ACP.Client` use adapted (non-native) agents identically to
+  This lets `Arbor.ACP.Client` use adapted (non-native) agents identically to
   native ACP agents:
 
-      {:ok, client} = ACP.Client.start_link(
-        transport_mod: AdapterTransport,
-        adapter: Adapters.ClaudeSDK,
+      {:ok, client} = Arbor.ACP.Client.start_link(
+        transport_mod: Arbor.ACP.AdapterTransport,
+        adapter: Arbor.ACP.Adapters.ClaudeSDK,
         adapter_opts: [model: "sonnet"]
       )
 
-  The transport starts an `AdapterBridge` on connect, which in turn launches
+  This example requires the optional `arbor_acp_adapters` package and an
+  installed, authenticated Claude Code CLI.
+
+  The transport starts an `Arbor.ACP.AdapterBridge` on connect, which in turn launches
   the agent subprocess and handles protocol translation.
 
   ## Native event metadata

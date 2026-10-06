@@ -1,5 +1,8 @@
 # ACP Examples
 
+See the [core quickstart](../../README.md#first-session) for installation and the
+[ACP guide](../../docs/ACP_GUIDE.md) for the client and handler APIs.
+
 These examples show both sides of the Agent Client Protocol:
 
 - `echo_agent.exs` exposes a native Elixir ACP agent over stdio.
@@ -16,6 +19,13 @@ mix deps.get
 mix compile
 mix run examples/acp/controller.exs
 ```
+
+The controller prints `session/update` notifications containing the echoed
+greeting, followed by a final result with `"stopReason" => "end_turn"`. It then
+disconnects the client. This exercises a real child process without vendor CLIs,
+credentials or network calls. Compile first so the child's `--no-compile`
+entrypoint can load the package; the source build requires the C17 compiler
+described in the ArborRPC README.
 
 The naming follows the official ACP SDK roles:
 

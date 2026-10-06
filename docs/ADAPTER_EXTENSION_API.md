@@ -83,9 +83,12 @@ and `~/.ex_mcp/pi/session-map.json` remain unchanged.
 Queued and unacknowledged RPC frames share count/byte caps. These are managed
 delivery bounds, not a hard bound on asynchronous Port driver inboxes or on
 application data retained after ACK. Applications must bound concurrent writers
-and downstream queues. Windows process-tree qualification, broader pressure
-qualification, global stdio logger lifecycle and full runtime convergence remain
-release gates.
+and downstream queues. Windows native subprocess operations are unsupported.
+Host-owned stdio logging is implemented; the library preserves the host's Logger
+policy. Broader platform/pressure qualification and the final 48-hour
+stable-release gate remain pending. See the [workspace README](../README.md) and
+the separate [ArborRPC source-build policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates)
+for current installation requirements and qualification limits.
 
 ## Native child stdio and client close
 
