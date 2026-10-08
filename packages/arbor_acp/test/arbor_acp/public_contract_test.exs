@@ -21,6 +21,22 @@ defmodule Arbor.ACP.PublicContractTest do
     end
   end
 
+  defmodule StoppingPeer do
+    use GenServer
+    def start_link(reason), do: GenServer.start_link(__MODULE__, reason)
+    @impl true
+    def init(reason), do: {:ok, reason}
+    @impl true
+    def handle_call(:status, _from, reason), do: {:stop, reason, reason}
+  end
+
+  test "status reports normal shutdown racing a query as unavailable" do
+    for reason <- [:normal, :shutdown, {:shutdown, :finished}] do
+      client = start_supervised!({StoppingPeer, reason}, id: make_ref())
+      assert {:error, :client_not_alive} = Client.status(client)
+    end
+  end
+
   test "status is tagged and bang inspection is explicit" do
     client = start_supervised!({Client, _skip_connect: true})
     assert {:ok, :ready} = Client.status(client)

@@ -17,6 +17,8 @@ defmodule Arbor.ACP.Internal.Call do
   catch
     :exit, {:timeout, _call} -> {:error, :timeout}
     :exit, {:noproc, _call} -> {:error, :client_not_alive}
+    :exit, {reason, _call} when reason in [:normal, :shutdown] -> {:error, :client_not_alive}
+    :exit, {{:shutdown, _reason}, _call} -> {:error, :client_not_alive}
   end
 
   def status(server, opts) do
