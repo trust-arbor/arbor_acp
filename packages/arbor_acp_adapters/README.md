@@ -47,7 +47,7 @@ already authenticated Codex CLI on the child PATH and its default model:
 alias Arbor.ACP.Client
 
 cwd = File.cwd!()
-{:ok, client} = Arbor.ACP.start_client(
+{:ok, client} = Arbor.ACP.Client.start_link(
   transport_mod: Arbor.ACP.AdapterTransport,
   adapter: Arbor.ACP.Adapters.Codex,
   adapter_opts: [cwd: cwd, workspace_roots: [cwd]]

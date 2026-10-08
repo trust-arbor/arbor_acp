@@ -9,11 +9,14 @@ defmodule Arbor.ACP do
 
   ## Quick Start
 
-      {:ok, client} = Arbor.ACP.start_client(command: ["gemini", "--acp"])
+      {:ok, client} = Arbor.ACP.Client.start_link(command: ["gemini", "--acp"])
       {:ok, %{"sessionId" => sid}} = Arbor.ACP.Client.new_session(client, "/my/project")
       {:ok, %{"stopReason" => _}} = Arbor.ACP.Client.prompt(client, sid, "Fix the bug")
 
-      {:ok, agent} = Arbor.ACP.start_agent(handler: MyApp.AgentHandler)
+      {:ok, agent} = Arbor.ACP.Agent.start_link(handler: MyApp.AgentHandler)
+
+  Use the Client and Agent role modules as the canonical entrypoints. This
+  module retains thin startup shorthand; it does not own session workflows.
 
   ## Options
 

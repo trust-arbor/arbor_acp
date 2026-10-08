@@ -15,7 +15,7 @@ options.
   `Arbor.ACP.Adapters.ZCode`. Vendor executables and authentication are separate
   prerequisites; installing this Hex package does not install or authenticate
   those CLIs.
-- Use `Arbor.ACP.start_client/1` with `transport_mod: Arbor.ACP.AdapterTransport`,
+- Use `Arbor.ACP.Client.start_link/1` with `transport_mod: Arbor.ACP.AdapterTransport`,
   `adapter: chosen_module` and `adapter_opts: [...]`. Put vendor options such as
   executable path, cwd and environment in `adapter_opts`, not top-level options.
 - Use `Arbor.ACP.Client` for session operations, prompts and cleanup. Core

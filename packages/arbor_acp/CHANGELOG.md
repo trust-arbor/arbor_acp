@@ -2,6 +2,8 @@
 
 ## 1.0.0-rc.1 (unreleased)
 
+- Document Client/Agent as canonical entrypoints; root startup remains shorthand.
+  Add Agent.stop/3 with a reason and finite timeout, preserving options-only stop.
 - Ship agent usage rules in Hex archives and ExDoc, with downstream UsageRules
   setup guidance and API-reference validation through the existing docs gate.
 - Return tagged operational Client/Agent status, with explicit `status!`

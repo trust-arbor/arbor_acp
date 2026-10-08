@@ -94,10 +94,14 @@ defmodule Arbor.ACP.Internal.Call do
 
   defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
-  def stop_agent(agent, opts) do
+  def stop_agent(agent, reason, opts) do
     timeout = opts |> Keyword.validate!([:timeout]) |> timeout!()
     if timeout == :infinity, do: raise(ArgumentError, "stop requires a finite timeout")
-    GenServer.stop(agent, :normal, timeout)
+
+    if :erlang.external_size(reason) > 4_096,
+      do: raise(ArgumentError, "stop reason exceeds 4096 bytes")
+
+    GenServer.stop(agent, reason, timeout)
   catch
     :exit, {:timeout, _call} -> {:error, :timeout}
     :exit, {:noproc, _call} -> :ok

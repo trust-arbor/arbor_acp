@@ -9,7 +9,7 @@ candidate availability, callback signatures and complete examples.
 
 ## Select native ACP or an adapter
 
-- Start a controller with `Arbor.ACP.start_client/1`. Its default stdio command
+- Start a controller with `Arbor.ACP.Client.start_link/1`. Its default stdio command
   must speak ACP; an ordinary interactive CLI is not necessarily an ACP agent.
   Initialization completes before startup succeeds. ACP protocol version `1`
   is separate from MCP wire revisions and the package's version.
@@ -18,7 +18,7 @@ candidate availability, callback signatures and complete examples.
   `Arbor.ACP.AdapterTransport` for adapted clients. Core consumers do not need
   the vendor bundle.
 - Native agents implement `Arbor.ACP.Agent.Handler` and run through
-  `Arbor.ACP.run_agent/1` or `Arbor.ACP.start_agent/1`. Custom adapters implement
+  `Arbor.ACP.Agent.run/1` or `Arbor.ACP.Agent.start_link/1`. Custom adapters implement
   `Arbor.ACP.Adapter` and use the generic bridge and documented
   `Arbor.ACP.AdapterSupport` helpers. `Internal` modules are not extension APIs.
 - Declare each package whose APIs your application calls. Shared subprocess
@@ -51,8 +51,10 @@ candidate availability, callback signatures and complete examples.
 - `Arbor.ACP.Client.disconnect/1` closes the transport and retains the client
   process. `Arbor.ACP.Client.stop/3` closes owned transport resources and waits
   for termination within one finite caller budget (default five seconds).
-  Handle cleanup errors even if the process exits. `Arbor.ACP.Agent.stop/2`
-  also accepts a finite timeout.
+  Handle cleanup errors even if the process exits. `Arbor.ACP.Agent.stop/3`
+  accepts a reason and finite timeout, matching Client; its options-only
+  `Agent.stop/2` form remains supported. Root ACP startup functions are shorthand
+  for the role modules.
 - Set `event_listener: listener_pid` to receive
   `{:acp_session_update, session_id, update}`. Prompt calls block their caller;
   use an application-owned task or handler when a UI must receive updates

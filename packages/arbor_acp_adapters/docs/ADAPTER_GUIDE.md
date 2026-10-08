@@ -23,7 +23,7 @@ vendor, change the module and its options. For example, with an already installe
 and authenticated Claude Code CLI:
 
 ```elixir
-{:ok, client} = Arbor.ACP.start_client(
+{:ok, client} = Arbor.ACP.Client.start_link(
   transport_mod: Arbor.ACP.AdapterTransport,
   adapter: Arbor.ACP.Adapters.ClaudeSDK,
   adapter_opts: [cli_path: "claude", cwd: File.cwd!()]

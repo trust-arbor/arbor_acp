@@ -65,7 +65,7 @@ defmodule EchoAgent do
 end
 
 if System.get_env("MCP_ENV") != "test" do
-  Arbor.ACP.run_agent(
+  Arbor.ACP.Agent.run(
     handler: EchoAgent,
     agent_info: %{"name" => "ex-mcp-echo-agent", "version" => "1.0.0"},
     capabilities: %{"sessionCapabilities" => %{"close" => true}}

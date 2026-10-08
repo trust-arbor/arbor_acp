@@ -19,7 +19,7 @@ necessarily an ACP server.
 ```elixir
 alias Arbor.ACP.Client
 
-{:ok, client} = Arbor.ACP.start_client(
+{:ok, client} = Arbor.ACP.Client.start_link(
   command: ["your-acp-agent", "--acp"],
   client_info: %{"name" => "my-controller", "version" => "0.1.0"}
 )
@@ -36,7 +36,7 @@ after
 end
 ```
 
-`start_client/1` completes initialization before returning. A failed launch or
+`Arbor.ACP.Client.start_link/1` completes initialization before returning. A failed launch or
 handshake returns an error. `new_session/3` requires an absolute working
 directory. A prompt accepts text or a list of content maps and returns the
 agent's result, including `stopReason`; updates arrive separately while it runs.
@@ -86,7 +86,7 @@ Boolean configuration controls require an explicit UI capability:
 
 ```elixir
 capabilities = Arbor.ACP.Capabilities.put(%{}, :boolean_config_options, true)
-# Pass capabilities: capabilities to start_client/1 only if the UI supports them.
+# Pass capabilities: capabilities to Client.start_link/1 only if the UI supports them.
 ```
 
 ## Streaming and host handlers
@@ -216,13 +216,13 @@ defmodule MyApp.HelloAgent do
 end
 
 # In the agent's stdio entrypoint, after configuring logging:
-Arbor.ACP.run_agent(
+Arbor.ACP.Agent.run(
   handler: MyApp.HelloAgent,
   agent_info: %{"name" => "hello-agent", "version" => "0.1.0"}
 )
 ```
 
-`run_agent/1` blocks until the agent exits; `start_agent/1` returns a linked PID
+`Arbor.ACP.Agent.run/1` blocks until the agent exits; `Agent.start_link/1` returns a linked PID
 for a host that manages its lifecycle. Optional handler callbacks provide
 load/resume/list/fork/close/delete, cancellation, authentication and configuration.
 For asynchronous work return `{:noreply, state}` and eventually call

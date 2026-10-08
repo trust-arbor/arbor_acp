@@ -121,9 +121,15 @@ defmodule Arbor.ACP.Agent do
     end
   end
 
-  @doc "Stops the agent within a finite caller timeout (default 5_000 ms)."
-  @spec stop(GenServer.server(), keyword()) :: :ok | {:error, term()}
-  def stop(agent, opts \\ []), do: Arbor.ACP.Internal.Call.stop_agent(agent, opts)
+  @doc "Stops the agent with options or a reason; use stop/3 for a reason and finite options."
+  @spec stop(GenServer.server(), term()) :: :ok | {:error, term()}
+  def stop(agent, opts \\ [])
+  def stop(agent, opts) when is_list(opts), do: stop(agent, :normal, opts)
+  def stop(agent, reason), do: stop(agent, reason, [])
+
+  @doc "Stops the agent with a reason and finite caller timeout, matching Client.stop/3."
+  @spec stop(GenServer.server(), term(), keyword()) :: :ok | {:error, term()}
+  def stop(agent, reason, opts), do: Arbor.ACP.Internal.Call.stop_agent(agent, reason, opts)
 
   @doc "Returns the runtime status or an explicit timeout/unavailable error."
   @spec status(GenServer.server(), keyword()) :: {:ok, atom()} | {:error, term()}

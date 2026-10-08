@@ -8,7 +8,7 @@ defmodule ACPExampleController do
     cwd = File.cwd!()
 
     {:ok, client} =
-      Arbor.ACP.start_client(
+      Arbor.ACP.Client.start_link(
         command: [mix_path, "run", "--no-compile", "--no-start", agent_script],
         cd: repo_root,
         env: local_workspace_env(),
