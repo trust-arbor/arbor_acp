@@ -1,7 +1,8 @@
 defmodule Arbor.ACP.Adapters.MixProject do
   use Mix.Project
-  @version "2.0.0-rc.1"
-  @internal_requirement "~> 2.0.0-rc.1"
+  @version "1.0.0-rc.1"
+  @rpc_requirement "~> 1.0.0-rc.1"
+  @acp_requirement "~> 1.0.0-rc.1"
   def project do
     [
       app: :arbor_acp_adapters,
@@ -58,14 +59,14 @@ defmodule Arbor.ACP.Adapters.MixProject do
 
   defp internal_dep(:arbor_rpc) do
     case System.get_env("ARBOR_RPC_PATH") do
-      nil -> {:arbor_rpc, @internal_requirement}
+      nil -> {:arbor_rpc, @rpc_requirement}
       path -> {:arbor_rpc, path: Path.expand(path)}
     end
   end
 
-  defp internal_dep(app) do
+  defp internal_dep(:arbor_acp) do
     if System.get_env("ARBOR_V2_LOCAL") == "1",
-      do: {app, path: Path.expand("../#{app}", __DIR__)},
-      else: {app, @internal_requirement}
+      do: {:arbor_acp, path: Path.expand("../arbor_acp", __DIR__)},
+      else: {:arbor_acp, @acp_requirement}
   end
 end

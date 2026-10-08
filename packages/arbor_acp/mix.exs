@@ -1,7 +1,7 @@
 defmodule Arbor.ACP.MixProject do
   use Mix.Project
-  @version "2.0.0-rc.1"
-  @internal_requirement "~> 2.0.0-rc.1"
+  @version "1.0.0-rc.1"
+  @rpc_requirement "~> 1.0.0-rc.1"
   def project do
     [
       app: :arbor_acp,
@@ -63,7 +63,7 @@ defmodule Arbor.ACP.MixProject do
 
   defp internal_dep(:arbor_rpc) do
     case System.get_env("ARBOR_RPC_PATH") do
-      nil -> {:arbor_rpc, @internal_requirement}
+      nil -> {:arbor_rpc, @rpc_requirement}
       path -> {:arbor_rpc, path: Path.expand(path)}
     end
   end

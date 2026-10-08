@@ -2,7 +2,10 @@
 
 Optional adapters for Claude Code, Codex, Pi, and ZCode, under `Arbor.ACP.Adapters.*`. This package depends on the generic `arbor_acp` core and `arbor_rpc`; consumers of the native ACP core do not need it.
 
-Version `2.0.0-rc.1` is an unpublished implementation snapshot. Vendor translation, session storage, prompt queues, MCP configuration, tool mapping, and credential/session environment policy belong here. Shared isolation, JSON-RPC validation, and workspace/name validation remain in their owning dependencies.
+The original `2.0.0-rc.1` is published on Hex. This checkout corrects the
+new package to its independent 1.x line; existing releases and tags are preserved.
+
+Version `1.0.0-rc.1` is an unpublished implementation snapshot. Vendor translation, session storage, prompt queues, MCP configuration, tool mapping, and credential/session environment policy belong here. Shared isolation, JSON-RPC validation, and workspace/name validation remain in their owning dependencies.
 
 The planned prerelease is for downstream migration testing. See the
 [v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)
@@ -18,7 +21,7 @@ for framing availability and the qualified platform/architecture boundary.
 
 ## Installation
 
-Use Elixir `~> 1.17` and reviewed local checkouts while RC1 is unpublished. In a
+Use Elixir `~> 1.17` and reviewed local checkouts while the replacement 1.0 RC is unpublished. In a
 consumer project next to the ACP workspace and separate ArborRPC repository:
 
 ```elixir
@@ -33,7 +36,7 @@ end
 
 Adjust paths, then run `mix deps.get`. Both overrides replace unpublished
 transitive Hex dependencies. After publication the planned dependency is
-`{:arbor_acp_adapters, "~> 2.0.0-rc.1"}`; it is not available from Hex yet.
+`{:arbor_acp_adapters, "~> 1.0.0-rc.1"}`; it is not available from Hex yet.
 
 ## First adapted session
 

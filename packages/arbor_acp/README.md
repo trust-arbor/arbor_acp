@@ -2,7 +2,10 @@
 
 ACP controller/client, native agent, and generic adapter runtime. This core package depends on `arbor_rpc` and contains no vendor adapter runtime modules. Add the optional `arbor_acp_adapters` package to use built-in Claude, Codex, Pi, or ZCode integrations.
 
-Version `2.0.0-rc.1` is an unpublished implementation snapshot. ArborACP is the library name; its Hex package and OTP application are `arbor_acp`, and its module namespace is `Arbor.ACP.*`.
+The original `2.0.0-rc.1` is published on Hex. This checkout corrects the
+new package to its independent 1.x line; existing releases and tags are preserved.
+
+Version `1.0.0-rc.1` is an unpublished implementation snapshot. ArborACP is the library name; its Hex package and OTP application are `arbor_acp`, and its module namespace is `Arbor.ACP.*`.
 
 The planned prerelease is for downstream migration testing. See the
 [v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)
@@ -17,7 +20,7 @@ operations are unsupported; framing is separate. See the [RPC source-install pol
 
 ## Installation
 
-Use Elixir `~> 1.17` with a compatible OTP release. While RC1 is unpublished,
+Use Elixir `~> 1.17` with a compatible OTP release. While the replacement 1.0 RC is unpublished,
 use reviewed local checkouts of the ACP workspace and the separate ArborRPC
 repository. In a consumer project next to those checkouts:
 
@@ -32,8 +35,8 @@ end
 
 Adjust the paths to your checkout layout, then run `mix deps.get`. The explicit
 RPC override replaces the unpublished transitive Hex dependency. Package
-development instead uses `ARBOR_RPC_PATH`, as shown below. Once RC1 is actually
-published, the planned Hex dependency is `{:arbor_acp, "~> 2.0.0-rc.1"}`; that
+development instead uses `ARBOR_RPC_PATH`, as shown below. Once the replacement 1.0 RC is actually
+published, the planned Hex dependency is `{:arbor_acp, "~> 1.0.0-rc.1"}`; that
 command is not an available installation route yet.
 
 ## First session

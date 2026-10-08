@@ -1,5 +1,10 @@
 # Extraction verification
 
+Current version preparation: ACP and Adapters `1.0.0-rc.1`, consuming RPC
+`1.0.0-rc.1`. The original four 2.0.0-rc.1 packages are published. Replacements
+are unpublished and require fresh metadata/archive qualification. The dated
+extraction checks below retain their original versions and source identities.
+
 Source snapshot: `1808c56bd4fc7b000043c2775f61ecced6ed059f` from current main ExMCP. The local sibling extraction's initial Git history is preserved; its stale source copies were replaced. Original sibling and dirty cutover spike were untouched.
 
 Each project is independently publishable as version `2.0.0-dev`. `arbor_acp` has no vendor runtime modules; `arbor_acp_adapters` is optional. Pure JSON-RPC, byte framing, environment isolation, stdio byte handling, log summaries, and line buffering live only in `arbor_rpc`. Core adapter support owns name/value validation, workspace authorization, and adapter policy over shared subprocess handles. Vendor session and credential policy belongs to the bundle via the optional generic `Adapter.environment_defaults/1` callback, layered before `env/1` and caller overrides.

@@ -1,8 +1,19 @@
 # Changelog
 
-## 2.0.0-rc.1 (planned)
+## 1.0.0-rc.1 (unreleased)
 
-Release candidate for downstream migration testing; publication is pending.
+- Require ArborRPC `~> 1.0.0-rc.1` and ArborACP `~> 1.0.0-rc.1`.
+
+- Start independent 1.x versioning for this newly extracted package.
+- Preserve the published `2.0.0-rc.1` archive and tag; retire the superseded
+  candidate after the replacement is published and its installation verified.
+- Update installation, migration and release tooling for independent versions.
+
+## 2.0.0-rc.1 — 2026-10-06
+
+Published initial extraction candidate. Its 2.x version was a coordinated
+versioning mistake; this new library now starts its independent 1.x line.
+The existing release and tag remain available.
 
 - Extract Claude Code, Codex, Pi and ZCode adapters into an optional vendor bundle
   under `Arbor.ACP.Adapters.*`; native ACP core consumers do not need this package.

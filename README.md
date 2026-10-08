@@ -9,7 +9,8 @@ Shared JSON-RPC, framing, environment isolation, and subprocess mechanics live i
 [ArborRPC](https://github.com/trust-arbor/arbor_rpc). Both protocol libraries and
 the optional adapters depend on that separate `arbor_rpc` package.
 
-These are unpublished `2.0.0-rc.1` implementation snapshots. The ACP namespace remains `Arbor.ACP.*`; package and directory names remain `arbor_acp` and `arbor_acp_adapters`. The shared `arbor_rpc` dependency retains `Arbor.RPC.*`. Git history begins with the original local ACP extraction and the current main source snapshot is recorded in `SOURCE_SNAPSHOT`.
+The original `2.0.0-rc.1` packages are published. This checkout prepares the
+unpublished `1.0.0-rc.1` replacements for both newly extracted packages. The ACP namespace remains `Arbor.ACP.*`; package and directory names remain `arbor_acp` and `arbor_acp_adapters`. The shared `arbor_rpc` dependency retains `Arbor.RPC.*`. Git history begins with the original local ACP extraction and the current main source snapshot is recorded in `SOURCE_SNAPSHOT`.
 
 The planned prerelease is for downstream migration testing. Follow the
 [v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)
@@ -44,7 +45,7 @@ changes:
 
 ```sh
 git clone --branch codex/shared-subprocess https://github.com/trust-arbor/arbor_acp.git
-git clone https://github.com/trust-arbor/arbor_rpc.git
+git clone --branch codex/independent-package-versions https://github.com/trust-arbor/arbor_rpc.git
 cd arbor_acp
 export ARBOR_RPC_PATH="$(cd ../arbor_rpc && pwd)"
 export ARBOR_V2_LOCAL=1
@@ -77,8 +78,8 @@ The historical isolated native-backend draft was based on `b46cbfe8ced0d29519462
 
 Each project can generate its own documentation; see its README for the exact
 `MIX_ENV=dev mix docs --warnings-as-errors` commands. ExDoc is dev-only.
-Development/RC dependencies use explicit prerelease floors. Stable 2.0.0 uses
-`~> 2.0` for internal dependencies. The two package-qualified release tags
+Development/RC dependencies use explicit prerelease floors. Stable 1.0.0 uses
+`~> 1.0` for RPC and ACP dependencies. Package versions are independent. The two package-qualified release tags
 (`arbor_acp-v<version>` and `arbor_acp_adapters-v<version>`) refer to the ACP
 workspace commit. ArborRPC and ArborMCP each use `v<version>` in their own
 repositories. Publish RPC, ACP, MCP and then the optional adapter bundle. The

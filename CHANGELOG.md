@@ -1,9 +1,16 @@
 # Changelog
 
-## 2.0.0-rc.1 (planned)
+## ArborACP / Adapters 1.0.0-rc.1 (unreleased)
 
-Release candidate for downstream migration testing; publication is pending.
-Stable 2.0.0 promotion remains gated on the unfinished 48-hour qualification.
+- Correct both extracted packages to independent 1.x versions and use 1.x RPC
+  and ACP requirements. Existing 2.0.0-rc.1 releases/tags remain preserved.
+- Update package metadata, installed-version checks and release documentation.
+
+## 2.0.0-rc.1 — 2026-10-06
+
+Published initial extraction candidate; the coordinated 2.x version is corrected
+by the new 1.x release line.
+Stable 1.0.0 promotion remains gated on the unfinished 48-hour qualification.
 
 - Split ACP into the independent `arbor_acp` core and optional
   `arbor_acp_adapters` vendor bundle, under `Arbor.ACP.*`.

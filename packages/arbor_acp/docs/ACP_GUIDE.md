@@ -7,8 +7,8 @@ terminal, or user-input operations from the host. ACP uses a stateful initialize
 handshake and protocol version `1`. MCP protocol revision settings do not apply.
 
 Start with the [installation and local echo quickstart](../README.md). These
-guides describe the unpublished `2.0.0-rc.1` source tree; they do not imply that
-the Hex packages or prospective release tags are available.
+guides describe the prepared replacement `1.0.0-rc.1` source tree; the original 2.0.0-rc.1 is published, while the replacement
+Hex packages and tags are not yet available.
 
 ## Connect to a native ACP agent
 
