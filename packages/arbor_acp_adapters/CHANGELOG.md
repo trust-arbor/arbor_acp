@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.0.0-rc.1 (unreleased)
+## Unreleased
+
+## 1.0.0-rc.1 — 2026-10-08
 
 - Document core Client's explicit `prompt_text/4` collection contract and
   truncation reporting for adapted connections.

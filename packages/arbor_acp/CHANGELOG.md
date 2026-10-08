@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.0.0-rc.1 (unreleased)
+## Unreleased
+
+## 1.0.0-rc.1 — 2026-10-08
 
 - Preserve the peer result unchanged in `Client.prompt/4`. Add explicit
   `prompt_text/4` with a separate result/text envelope, a finite UTF-8 byte cap,
