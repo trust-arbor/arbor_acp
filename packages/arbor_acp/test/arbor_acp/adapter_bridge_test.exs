@@ -1775,14 +1775,14 @@ defmodule Arbor.ACP.AdapterBridgeTest do
     test "a deferred setter timeout cancels its correlation and cannot settle the next request" do
       alias Arbor.ACP.{AdapterTransport, Client}
 
-      {:ok, client} =
-        Client.start_link(
-          transport_mod: AdapterTransport,
-          adapter: DeferredSetterAdapter,
-          adapter_opts: [test_pid: self()]
+      client =
+        start_supervised!(
+          {Client,
+           transport_mod: AdapterTransport,
+           adapter: DeferredSetterAdapter,
+           adapter_opts: [test_pid: self()]}
         )
 
-      on_exit(fn -> if Process.alive?(client), do: Client.disconnect(client) end)
       bridge = :sys.get_state(client).transport_state.bridge
       first = Task.async(fn -> Client.set_model(client, "session", "first") end)
       assert_receive {:native_setter_received, first_id}, 1_000
