@@ -15,13 +15,15 @@ defmodule Arbor.ACP.MixProject do
       package: [
         licenses: ["MIT"],
         links: %{"GitHub" => "https://github.com/trust-arbor/arbor_acp"},
-        files: ~w(lib docs examples mix.exs .formatter.exs README.md LICENSE CHANGELOG.md)
+        files:
+          ~w(lib docs examples mix.exs .formatter.exs README.md usage-rules.md LICENSE CHANGELOG.md)
       ],
       source_url: "https://github.com/trust-arbor/arbor_acp",
       docs: [
         main: "readme",
         extras: [
           "README.md",
+          {"usage-rules.md", title: "Agent usage rules"},
           "docs/ACP_GUIDE.md",
           "CHANGELOG.md",
           {"examples/acp/README.md", [filename: "echo-example", title: "Echo agent example"]}

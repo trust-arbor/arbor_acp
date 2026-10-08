@@ -15,12 +15,17 @@ defmodule Arbor.ACP.Adapters.MixProject do
       package: [
         licenses: ["MIT"],
         links: %{"GitHub" => "https://github.com/trust-arbor/arbor_acp"},
-        files: ~w(lib docs mix.exs .formatter.exs README.md LICENSE CHANGELOG.md)
+        files: ~w(lib docs mix.exs .formatter.exs README.md usage-rules.md LICENSE CHANGELOG.md)
       ],
       source_url: "https://github.com/trust-arbor/arbor_acp",
       docs: [
         main: "readme",
-        extras: ["README.md", "docs/ADAPTER_GUIDE.md", "CHANGELOG.md"],
+        extras: [
+          "README.md",
+          {"usage-rules.md", title: "Agent usage rules"},
+          "docs/ADAPTER_GUIDE.md",
+          "CHANGELOG.md"
+        ],
         source_ref: "arbor_acp_adapters-v#{@version}",
         source_url_pattern:
           "https://github.com/trust-arbor/arbor_acp/blob/arbor_acp_adapters-v#{@version}/packages/arbor_acp_adapters/%{path}#L%{line}"

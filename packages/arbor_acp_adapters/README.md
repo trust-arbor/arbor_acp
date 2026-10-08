@@ -78,6 +78,22 @@ adapters and troubleshooting. See the [changelog](CHANGELOG.md) for RC changes.
 Package tests use captured golden fixtures by default. Live external CLI tests
 are explicitly tagged and excluded from ordinary tests.
 
+## AI agent guidance
+
+The package ships [usage rules](usage-rules.md) for adapter selection, vendor
+prerequisites, environment/workspace policy and core lifecycle APIs. They are
+also an ExDoc guide. Downstream projects with
+[UsageRules](https://usage-rules.hexdocs.pm/readme.html) installed as optional
+development tooling can add this to their `mix.exs` project configuration:
+
+```elixir
+usage_rules: [file: "AGENTS.md", usage_rules: [:arbor_acp, :arbor_acp_adapters]]
+```
+
+Then run `mix usage_rules.sync`. Add `:arbor_rpc` when your code uses it directly.
+UsageRules 1.2 requires Elixir 1.18 or newer; shipping these rules adds no
+dependency and preserves this package's Elixir 1.17 minimum.
+
 ## Runtime and compatibility
 
 Legacy `_meta.ex_mcp` wire extensions, generated native request IDs, and Pi's session-map location are preserved. The accepted module namespace is `Arbor.ACP.Adapters.*`; full v2 runtime qualification remains pending.

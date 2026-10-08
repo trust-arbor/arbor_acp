@@ -2,6 +2,8 @@
 
 ## 1.0.0-rc.1 (unreleased)
 
+- Ship agent usage rules in Hex archives and ExDoc, with downstream UsageRules
+  setup guidance and API-reference validation through the existing docs gate.
 - Update lifecycle examples and tests for core ACP tagged status and bounded stop.
 
 - Require ArborRPC `~> 1.0.0-rc.1` and ArborACP `~> 1.0.0-rc.1`.

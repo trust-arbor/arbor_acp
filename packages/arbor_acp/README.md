@@ -63,6 +63,22 @@ an agent. For vendor CLIs, use the optional
 [adapter package](https://github.com/trust-arbor/arbor_acp/tree/codex/shared-subprocess/packages/arbor_acp_adapters).
 See the [changelog](CHANGELOG.md) for the planned RC changes.
 
+## AI agent guidance
+
+The package ships [usage rules](usage-rules.md) for supported APIs, sessions,
+host handlers, timeouts and lifecycle. They are also an ExDoc guide.
+Downstream projects with [UsageRules](https://usage-rules.hexdocs.pm/readme.html)
+installed as optional development tooling can add this to their `mix.exs`
+project configuration:
+
+```elixir
+usage_rules: [file: "AGENTS.md", usage_rules: [:arbor_acp]]
+```
+
+Then run `mix usage_rules.sync`. Add `:arbor_acp_adapters` or `:arbor_rpc` when
+your project uses them. UsageRules 1.2 requires Elixir 1.18 or newer; shipping
+these rules adds no dependency and preserves ArborACP's Elixir 1.17 minimum.
+
 ## Runtime and custom adapters
 
 Native agents implement `Arbor.ACP.Agent.Handler` and run with `Arbor.ACP.run_agent/1`. Controllers start with `Arbor.ACP.start_client/1`. Custom adapters implement `Arbor.ACP.Adapter` and use the generic bridge. Public `Arbor.ACP.AdapterSupport` helpers own name/value validation, workspace authorization, and adapter policy over shared RPC subprocess handles; adapter packages must not call core `Internal` modules.

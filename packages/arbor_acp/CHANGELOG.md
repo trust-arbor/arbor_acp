@@ -2,6 +2,8 @@
 
 ## 1.0.0-rc.1 (unreleased)
 
+- Ship agent usage rules in Hex archives and ExDoc, with downstream UsageRules
+  setup guidance and API-reference validation through the existing docs gate.
 - Return tagged operational Client/Agent status, with explicit `status!`
   variants. Add setter timeout options (30-second caller default); caller
   timeout and unavailable client become stable error tuples.

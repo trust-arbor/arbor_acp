@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: trust-arbor/arbor_rpc
-          ref: 40a4d1d8ddf3cae4fb2cc20afa7da8fc572e8d6d
+          ref: 1db60551a666b9afc38adb0dd015a28d58d230f3
           path: .arbor-v2/rpc
           persist-credentials: false
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
@@ -76,7 +76,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: trust-arbor/arbor_rpc
-          ref: 40a4d1d8ddf3cae4fb2cc20afa7da8fc572e8d6d
+          ref: 1db60551a666b9afc38adb0dd015a28d58d230f3
           path: .arbor-v2/rpc
           persist-credentials: false
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
@@ -112,7 +112,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: trust-arbor/arbor_rpc
-          ref: 40a4d1d8ddf3cae4fb2cc20afa7da8fc572e8d6d
+          ref: 1db60551a666b9afc38adb0dd015a28d58d230f3
           path: .arbor-v2/rpc
           persist-credentials: false
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
