@@ -53,6 +53,7 @@ defmodule Arbor.ACP.Client do
   alias Arbor.ACP.Maps
   alias Arbor.ACP.PendingRequests
   alias Arbor.ACP.RequestValidation
+  alias Arbor.ACP.Client.ConnectionScope
   alias Arbor.ACP.Client.DefaultHandler
   alias Arbor.ACP.Client.HandlerRunner
   alias Arbor.ACP.Protocol
@@ -73,6 +74,8 @@ defmodule Arbor.ACP.Client do
   @supported_protocol_versions [1]
 
   defstruct [
+    :connection_scope,
+    :scope_monitor,
     :transport_mod,
     :transport_state,
     :receiver_pid,
@@ -96,9 +99,7 @@ defmodule Arbor.ACP.Client do
     pending_caller_monitors: %{},
     pending_agent_requests: %{},
     sessions: %{},
-    # Accumulates streamed agent_message_chunk text per session so a synchronous
-    # prompt/3 can return it — agents that stream the answer via session/update
-    # otherwise leave the prompt result with no text.
+    # Only explicit prompt_text calls retain bounded streamed message text.
     prompt_text: %{},
     cleanup_result: :ok,
     status: :connecting
@@ -112,6 +113,39 @@ defmodule Arbor.ACP.Client do
     {gen_opts, client_opts} = Keyword.split(opts, [:name])
     GenServer.start_link(__MODULE__, client_opts, gen_opts)
   end
+
+  @doc """
+  Opens an initialized client for the callback and closes its owned resources.
+
+  Accepts the same connection options as `start_link/1`. The callback runs in
+  the calling process. Success returns `{:ok, value}` after cleanup; failure
+  returns `{:error, {:cleanup_failed, reason, value}}`, retaining its value.
+  Callback exceptions/exits/throws are raised again after bounded cleanup.
+  A private guardian also closes the client if the calling process exits.
+
+  `with_connection/3` accepts positive finite `:establish_timeout` (30_000 ms)
+  and `:cleanup_timeout` (5_000 ms). Startup has one cutoff covering handler
+  initialization, transport construction and protocol negotiation. Cleanup has
+  its own single cutoff; timeouts remain errors and do not prove physical IO
+  cleanup. Client, handler and receiver processes register before their work.
+  Native stdio cleanup uses ArborRPC receipts. Custom transport `close/1`
+  controls external cleanup; unregistered custom effects are outside the scope.
+  Names must be local atoms; existing clients cannot be adopted into this scope.
+
+      Client.with_connection([command: ["my-agent", "--acp"]], fn client ->
+        Client.new_session(client, "/path/to/project")
+      end)
+  """
+  @spec with_connection(keyword(), (GenServer.server() -> value)) ::
+          {:ok, value} | {:error, term()}
+        when value: term()
+  def with_connection(client_opts, callback), do: with_connection(client_opts, [], callback)
+
+  @spec with_connection(keyword(), keyword(), (GenServer.server() -> value)) ::
+          {:ok, value} | {:error, term()}
+        when value: term()
+  def with_connection(client_opts, scope_opts, callback),
+    do: ConnectionScope.run(client_opts, scope_opts, callback)
 
   @doc """
   Authenticates with the agent.
@@ -204,12 +238,42 @@ defmodule Arbor.ACP.Client do
   Streaming `session/update` notifications are delivered to the handler and
   event listener as they arrive. The caller is unblocked when the agent sends
   the JSON-RPC result for the prompt request.
+
+  Returns the agent's result unchanged, including completion metadata and
+  extensions. Use `prompt_text/4` to explicitly collect streamed message text.
   """
   @spec prompt(GenServer.server(), String.t(), String.t() | [map()], keyword()) ::
-          {:ok, map()} | {:error, any()}
+          {:ok, Arbor.ACP.Types.json_value()} | {:error, term()}
   def prompt(client, session_id, content, opts \\ []) do
     timeout = Call.timeout!(opts, 300_000)
     Call.call(client, {:prompt, session_id, content}, timeout)
+  end
+
+  @doc """
+  Sends a prompt and collects streamed agent message text within a byte limit.
+
+  Returns `{:ok, %{result: result, text: text, truncated?: boolean}}`. `result`
+  is the unchanged peer result; `text` is a UTF-8 prefix of text blocks from
+  `agent_message_chunk` updates only. Thought chunks, nontext content and peer
+  extension fields are not folded into it. Streaming callbacks still run.
+
+  `:timeout` defaults to 300_000 ms. `:max_text_bytes` may lower the client's
+  `:max_prompt_text_bytes` limit (default 1 MiB); it must be positive. Collection
+  stops at the first truncated chunk and reports `truncated?: true`.
+  A collecting prompt cannot overlap another prompt in the same session;
+  conflicting calls return `{:error, :prompt_in_progress}` before sending.
+  Protocol/transport failures retain the ordinary `{:error, reason}` result.
+  """
+  @spec prompt_text(GenServer.server(), String.t(), String.t() | [map()], keyword()) ::
+          {:ok, %{result: map(), text: String.t(), truncated?: boolean()}} | {:error, term()}
+  def prompt_text(client, session_id, content, opts \\ []) do
+    opts = Keyword.validate!(opts, [:timeout, :max_text_bytes])
+    limit = Keyword.get(opts, :max_text_bytes)
+
+    unless is_nil(limit) or (is_integer(limit) and limit > 0),
+      do: raise(ArgumentError, "max_text_bytes must be a positive byte count")
+
+    Call.call(client, {:prompt_text, session_id, content, limit}, Call.timeout!(opts, 300_000))
   end
 
   @doc "Lists available sessions from the agent. Stabilized in ACP spec March 9, 2026."
@@ -327,57 +391,11 @@ defmodule Arbor.ACP.Client do
   def init(opts) do
     Process.flag(:trap_exit, true)
 
-    handler_mod = Keyword.get(opts, :handler, DefaultHandler)
-    handler_opts = Keyword.get(opts, :handler_opts, [])
+    scope = Keyword.get(opts, :_connection_scope)
 
-    case HandlerRunner.start_link(handler_mod, handler_opts, self()) do
-      {:ok, handler_pid} ->
-        state = %__MODULE__{
-          transport_mod: Keyword.get(opts, :transport_mod, Stdio),
-          handler_mod: handler_mod,
-          handler_pid: handler_pid,
-          event_listener: Keyword.get(opts, :event_listener),
-          protocol_version: Keyword.get(opts, :protocol_version, 1),
-          max_frame_bytes:
-            Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
-          max_pending_requests:
-            Options.positive_integer(opts, :max_pending_requests, @default_max_pending_requests),
-          max_prompt_text_bytes:
-            Options.positive_integer(opts, :max_prompt_text_bytes, @default_max_prompt_text_bytes),
-          pending_request_timeout:
-            Options.positive_integer(
-              opts,
-              :pending_request_timeout,
-              @default_pending_request_timeout
-            ),
-          handler_request_timeout:
-            Options.positive_integer(
-              opts,
-              :handler_request_timeout,
-              @default_handler_request_timeout
-            ),
-          max_update_queue:
-            Options.positive_integer(opts, :max_update_queue, @default_max_update_queue),
-          max_update_queue_bytes:
-            Options.positive_integer(
-              opts,
-              :max_update_queue_bytes,
-              @default_max_update_queue_bytes
-            )
-        }
-
-        # Allow skipping connection for tests
-        if Keyword.get(opts, :_skip_connect) do
-          {:ok, %{state | status: :ready}}
-        else
-          case connect_and_initialize(opts, state) do
-            {:ok, state} -> {:ok, state}
-            {:error, reason} -> {:stop, reason}
-          end
-        end
-
-      {:error, reason} ->
-        {:stop, {:handler_init_failed, reason}}
+    case ConnectionScope.register(scope, :client) do
+      :ok -> init_client(opts, scope, ConnectionScope.monitor(scope))
+      {:error, reason} -> {:stop, reason}
     end
   end
 
@@ -492,21 +510,11 @@ defmodule Arbor.ACP.Client do
   end
 
   def handle_call({:prompt, session_id, content}, from, %{status: :ready} = state) do
-    with {:ok, blocks} <- prompt_blocks(content),
-         :ok <- validate_prompt_blocks(state, blocks) do
-      :telemetry.execute(
-        [:arbor_acp, :prompt, :sent],
-        %{system_time: System.system_time()},
-        %{session_id_hash: session_id_hash(session_id)}
-      )
+    start_prompt(session_id, content, :raw, from, state)
+  end
 
-      msg = Protocol.encode_session_prompt(session_id, blocks)
-      state = %{state | prompt_text: Map.delete(state.prompt_text, session_id)}
-      send_request(msg, from, state, {:prompt, session_id})
-    else
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
+  def handle_call({:prompt_text, session_id, content, limit}, from, %{status: :ready} = state) do
+    start_prompt(session_id, content, {:collect, limit}, from, state)
   end
 
   def handle_call({:set_mode, session_id, mode_id}, from, %{status: :ready} = state) do
@@ -674,6 +682,10 @@ defmodule Arbor.ACP.Client do
     end
   end
 
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{scope_monitor: ref} = state)
+      when is_reference(ref),
+      do: {:stop, :normal, do_disconnect(state)}
+
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{transport_actor_monitor: ref} = state)
       when is_reference(ref) do
     state = %{state | transport_actor_monitor: nil}
@@ -822,11 +834,103 @@ defmodule Arbor.ACP.Client do
 
   # Private helpers
 
+  defp init_client(opts, scope, scope_monitor) do
+    handler_mod = Keyword.get(opts, :handler, DefaultHandler)
+    handler_opts = Keyword.get(opts, :handler_opts, [])
+
+    case HandlerRunner.start_link(handler_mod, handler_opts, self(), scope) do
+      {:ok, handler_pid} ->
+        state = %__MODULE__{
+          connection_scope: scope,
+          scope_monitor: scope_monitor,
+          transport_mod: Keyword.get(opts, :transport_mod, Stdio),
+          handler_mod: handler_mod,
+          handler_pid: handler_pid,
+          event_listener: Keyword.get(opts, :event_listener),
+          protocol_version: Keyword.get(opts, :protocol_version, 1),
+          max_frame_bytes:
+            Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
+          max_pending_requests:
+            Options.positive_integer(opts, :max_pending_requests, @default_max_pending_requests),
+          max_prompt_text_bytes:
+            Options.positive_integer(opts, :max_prompt_text_bytes, @default_max_prompt_text_bytes),
+          pending_request_timeout:
+            Options.positive_integer(
+              opts,
+              :pending_request_timeout,
+              @default_pending_request_timeout
+            ),
+          handler_request_timeout:
+            Options.positive_integer(
+              opts,
+              :handler_request_timeout,
+              @default_handler_request_timeout
+            ),
+          max_update_queue:
+            Options.positive_integer(opts, :max_update_queue, @default_max_update_queue),
+          max_update_queue_bytes:
+            Options.positive_integer(
+              opts,
+              :max_update_queue_bytes,
+              @default_max_update_queue_bytes
+            )
+        }
+
+        # Allow skipping connection for tests
+        if Keyword.get(opts, :_skip_connect) do
+          {:ok, %{state | status: :ready}}
+        else
+          case connect_and_initialize(opts, state) do
+            {:ok, state} -> {:ok, state}
+            {:error, reason} -> {:stop, reason}
+          end
+        end
+
+      {:error, reason} ->
+        {:stop, {:handler_init_failed, reason}}
+    end
+  end
+
+  defp start_prompt(session_id, content, mode, from, state) do
+    with {:ok, blocks} <- prompt_blocks(content),
+         :ok <- validate_prompt_blocks(state, blocks),
+         :ok <- admit_prompt(state, session_id, mode) do
+      :telemetry.execute(
+        [:arbor_acp, :prompt, :sent],
+        %{system_time: System.system_time()},
+        %{session_id_hash: session_id_hash(session_id)}
+      )
+
+      msg = Protocol.encode_session_prompt(session_id, blocks)
+      state = begin_prompt_collection(state, session_id, mode)
+
+      case send_request(msg, from, state, {:prompt, session_id}) do
+        {:reply, reply, state} ->
+          {:reply, reply, %{state | prompt_text: Map.delete(state.prompt_text, session_id)}}
+
+        deferred ->
+          deferred
+      end
+    else
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
   defp connect_and_initialize(opts, state) do
     transport_opts = build_transport_opts(opts)
 
     with {:ok, initialize_timeout} <- initialize_timeout(opts),
          {:ok, transport_state} <- state.transport_mod.connect(transport_opts) do
+      case ConnectionScope.transport(state.connection_scope, state.transport_mod, transport_state) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          state.transport_mod.close(transport_state)
+          exit(reason)
+      end
+
       state = start_initialization_receiver(state, transport_state)
 
       case initialize_connection(opts, state, initialize_timeout) do
@@ -858,7 +962,8 @@ defmodule Arbor.ACP.Client do
         end
       end
 
-    receiver_pid = start_receiver(self(), state.transport_mod, transport_state)
+    receiver_pid =
+      start_receiver(self(), state.transport_mod, transport_state, state.connection_scope)
 
     %{
       state
@@ -945,7 +1050,8 @@ defmodule Arbor.ACP.Client do
     :max_update_queue,
     :max_update_queue_bytes,
     :transport_mod,
-    :_skip_connect
+    :_skip_connect,
+    :_connection_scope
   ]
 
   defp build_transport_opts(opts) do
@@ -953,8 +1059,23 @@ defmodule Arbor.ACP.Client do
     Keyword.drop(opts, @client_keys)
   end
 
-  defp start_receiver(parent, transport_mod, transport_state) do
-    spawn_link(fn -> receiver_loop(parent, transport_mod, transport_state) end)
+  defp start_receiver(parent, transport_mod, transport_state, scope) do
+    pid =
+      spawn_link(fn ->
+        receive do
+          :start -> receiver_loop(parent, transport_mod, transport_state)
+        end
+      end)
+
+    case ConnectionScope.register(scope, :receiver, pid) do
+      :ok ->
+        send(pid, :start)
+        pid
+
+      {:error, reason} ->
+        Process.exit(pid, :kill)
+        exit(reason)
+    end
   end
 
   defp receiver_loop(parent, transport_mod, transport_state) do
@@ -1108,9 +1229,9 @@ defmodule Arbor.ACP.Client do
       {{from, telemetry_tag, monitor_ref, timer_ref}, pending} ->
         cancel_timer(timer_ref)
         Process.demonitor(monitor_ref, [:flush])
-        {reply, state} = maybe_merge_prompt_text(telemetry_tag, reply, state)
         state = apply_session_resolution(telemetry_tag, reply, state)
         emit_resolve_telemetry(telemetry_tag, reply)
+        {reply, state} = finish_prompt_collection(telemetry_tag, reply, state)
         GenServer.reply(from, reply)
 
         %{
@@ -1120,8 +1241,8 @@ defmodule Arbor.ACP.Client do
         }
 
       {{from, telemetry_tag}, pending} ->
-        {reply, state} = maybe_merge_prompt_text(telemetry_tag, reply, state)
         emit_resolve_telemetry(telemetry_tag, reply)
+        {reply, state} = finish_prompt_collection(telemetry_tag, reply, state)
         GenServer.reply(from, reply)
         %{state | pending_requests: pending}
 
@@ -1131,37 +1252,30 @@ defmodule Arbor.ACP.Client do
     end
   end
 
-  # Fold any streamed agent_message_chunk text into the prompt result and clear the
-  # buffer. Agents that return text inline keep theirs; others get the streamed text.
-  defp maybe_merge_prompt_text({:prompt, session_id}, {:ok, result}, state) when is_map(result) do
+  defp finish_prompt_collection({:prompt, session_id}, {:ok, result}, state) do
     {buffered, prompt_text} = Map.pop(state.prompt_text, session_id)
-    meta_text = get_in(result, ["_meta", "ex_mcp", "text"])
 
-    result =
+    reply =
       case buffered do
-        text when is_binary(text) and text != "" ->
-          case result["text"] do
-            existing when is_binary(existing) and existing != "" -> result
-            _ -> Map.put(result, "text", text)
-          end
+        nil ->
+          {:ok, result}
 
-        _ ->
-          if is_binary(meta_text) and meta_text != "" do
-            Map.put_new(result, "text", meta_text)
-          else
-            result
-          end
+        %{text: text, truncated?: truncated?} when is_map(result) ->
+          {:ok, %{result: result, text: text, truncated?: truncated?}}
+
+        _invalid_result ->
+          {:error, :invalid_prompt_response}
       end
 
-    {{:ok, result}, %{state | prompt_text: prompt_text}}
+    {reply, %{state | prompt_text: prompt_text}}
   end
 
-  defp maybe_merge_prompt_text({:prompt, session_id}, reply, state) do
+  defp finish_prompt_collection({:prompt, session_id}, reply, state) do
     {_, prompt_text} = Map.pop(state.prompt_text, session_id)
     {reply, %{state | prompt_text: prompt_text}}
   end
 
-  defp maybe_merge_prompt_text(_tag, reply, state), do: {reply, state}
+  defp finish_prompt_collection(_tag, reply, state), do: {reply, state}
 
   defp emit_resolve_telemetry({:new_session, _roots}, {:ok, result}) do
     session_id = result["sessionId"]
@@ -1173,7 +1287,7 @@ defmodule Arbor.ACP.Client do
     )
   end
 
-  defp emit_resolve_telemetry({:prompt, session_id}, {:ok, result}) do
+  defp emit_resolve_telemetry({:prompt, session_id}, {:ok, result}) when is_map(result) do
     stop_reason = result["stopReason"]
 
     :telemetry.execute(
@@ -1362,7 +1476,7 @@ defmodule Arbor.ACP.Client do
     update = params["update"]
     update_bytes = :erlang.external_size(update)
 
-    # Buffer streamed answer text so prompt/3 can return it (see prompt_text).
+    # Retain text only for an explicitly collecting prompt.
     state = accumulate_prompt_text(state, session_id, update)
 
     # Notify event listener from the client process so a slow handler cannot
@@ -1392,32 +1506,44 @@ defmodule Arbor.ACP.Client do
     state
   end
 
-  # Append agent_message_chunk text to the per-session buffer. Only the assistant's
-  # message text is buffered — thought chunks and other update types are ignored.
+  defp admit_prompt(state, session_id, mode) do
+    if Map.has_key?(state.prompt_text, session_id) or
+         (mode != :raw and prompt_pending?(state, session_id)),
+       do: {:error, :prompt_in_progress},
+       else: :ok
+  end
+
+  defp begin_prompt_collection(state, _session_id, :raw), do: state
+
+  defp begin_prompt_collection(state, session_id, {:collect, limit}) do
+    limit = min(limit || state.max_prompt_text_bytes, state.max_prompt_text_bytes)
+    buffer = %{text: "", limit: limit, truncated?: false}
+    %{state | prompt_text: Map.put(state.prompt_text, session_id, buffer)}
+  end
+
   defp accumulate_prompt_text(
          state,
          session_id,
-         %{"sessionUpdate" => "agent_message_chunk"} = update
+         %{
+           "sessionUpdate" => "agent_message_chunk",
+           "content" => %{"type" => "text", "text" => text}
+         }
        )
-       when is_binary(session_id) do
-    if prompt_pending?(state, session_id) do
-      case get_in(update, ["content", "text"]) do
-        text when is_binary(text) and text != "" ->
-          buffered = Map.get(state.prompt_text, session_id, "")
-          remaining = max(state.max_prompt_text_bytes - byte_size(buffered), 0)
-          text = valid_utf8_prefix(text, remaining)
+       when is_binary(text) do
+    case Map.get(state.prompt_text, session_id) do
+      %{text: buffered, limit: limit, truncated?: false} = buffer ->
+        prefix = valid_utf8_prefix(text, max(limit - byte_size(buffered), 0))
 
-          if text == "" do
-            state
-          else
-            %{state | prompt_text: Map.put(state.prompt_text, session_id, buffered <> text)}
-          end
+        buffer = %{
+          buffer
+          | text: buffered <> prefix,
+            truncated?: byte_size(prefix) < byte_size(text)
+        }
 
-        _ ->
-          state
-      end
-    else
-      state
+        %{state | prompt_text: Map.put(state.prompt_text, session_id, buffer)}
+
+      _not_collecting ->
+        state
     end
   end
 
@@ -1927,6 +2053,11 @@ defmodule Arbor.ACP.Client do
     end
 
     cleanup = if state.transport_state, do: close_transport(state), else: :ok
+
+    ConnectionScope.closed(
+      state.connection_scope,
+      remember_cleanup(state.cleanup_result, cleanup)
+    )
 
     reply_all_pending({:error, :disconnected}, state)
     |> Map.merge(%{

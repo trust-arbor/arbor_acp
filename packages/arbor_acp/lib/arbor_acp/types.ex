@@ -2,8 +2,11 @@ defmodule Arbor.ACP.Types do
   @moduledoc """
   Type specifications and builder functions for the Agent Client Protocol (ACP).
 
-  ACP uses JSON-RPC 2.0 as its wire format (same as MCP). All types are plain maps
-  matching the ex_mcp convention — no structs for protocol types.
+  ACP uses JSON-RPC 2.0 as its wire format (same as MCP). Protocol objects are plain maps with string keys and string discriminators,
+  such as `%{"type" => "text", "text" => "Hello"}`. Builders produce those
+  wire shapes. Elixir typespecs cannot express individual literal binary keys
+  or string enum values. Named object types describe JSON maps; the field shapes
+  below document protocol requirements and allow additional extension fields.
 
   ## Content Blocks
 
@@ -22,151 +25,293 @@ defmodule Arbor.ACP.Types do
   alias Arbor.ACP.Maps
   alias Arbor.ACP.NameValue
 
+  @typedoc "A JSON-compatible value; protocol maps have binary keys."
+  @type json_value :: nil | boolean() | number() | String.t() | [json_value()] | json_object()
+
+  @typedoc "A protocol JSON object with string keys, including extension fields."
+  @type json_object :: %{optional(String.t()) => json_value()}
+
   # Content blocks
 
-  @type content_block ::
-          text_block()
-          | image_block()
-          | audio_block()
-          | resource_link_block()
-          | resource_block()
+  @typedoc """
+  String-keyed JSON object for content block. Wire field/variant shape:
 
-  @type text_block :: %{
-          required(:type) => :text,
-          required(:text) => String.t()
-        }
+  ```text
+  text_block()
+  | image_block()
+  | audio_block()
+  | resource_link_block()
+  | resource_block()
+  ```
+  """
+  @type content_block :: json_object()
 
-  @type image_block :: %{
-          required(:type) => :image,
-          required(:mimeType) => String.t(),
-          required(:data) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for text block. Wire field/variant shape:
 
-  @type audio_block :: %{
-          required(:type) => :audio,
-          required(:mimeType) => String.t(),
-          required(:data) => String.t()
-        }
+  ```text
+  %{
+  required "type" => "text",
+  required "text" => String.t()
+  }
+  ```
+  """
+  @type text_block :: json_object()
 
-  @type resource_link_block :: %{
-          required(:type) => :resource_link,
-          required(:uri) => String.t(),
-          required(:name) => String.t(),
-          optional(:mimeType) => String.t(),
-          optional(:title) => String.t(),
-          optional(:description) => String.t(),
-          optional(:size) => non_neg_integer()
-        }
+  @typedoc """
+  String-keyed JSON object for image block. Wire field/variant shape:
 
-  @type resource_block :: %{
-          required(:type) => :resource,
-          required(:resource) => embedded_resource()
-        }
+  ```text
+  %{
+  required "type" => "image",
+  required "mimeType" => String.t(),
+  required "data" => String.t()
+  }
+  ```
+  """
+  @type image_block :: json_object()
 
-  @type embedded_resource ::
-          %{
-            required(:uri) => String.t(),
-            required(:text) => String.t(),
-            optional(:mimeType) => String.t()
-          }
-          | %{
-              required(:uri) => String.t(),
-              required(:blob) => String.t(),
-              optional(:mimeType) => String.t()
-            }
+  @typedoc """
+  String-keyed JSON object for audio block. Wire field/variant shape:
+
+  ```text
+  %{
+  required "type" => "audio",
+  required "mimeType" => String.t(),
+  required "data" => String.t()
+  }
+  ```
+  """
+  @type audio_block :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for resource link block. Wire field/variant shape:
+
+  ```text
+  %{
+  required "type" => "resource_link",
+  required "uri" => String.t(),
+  required "name" => String.t(),
+  optional "mimeType" => String.t(),
+  optional "title" => String.t(),
+  optional "description" => String.t(),
+  optional "size" => non_neg_integer()
+  }
+  ```
+  """
+  @type resource_link_block :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for resource block. Wire field/variant shape:
+
+  ```text
+  %{
+  required "type" => "resource",
+  required "resource" => embedded_resource()
+  }
+  ```
+  """
+  @type resource_block :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for embedded resource. Wire field/variant shape:
+
+  ```text
+  %{
+  required "uri" => String.t(),
+  required "text" => String.t(),
+  optional "mimeType" => String.t()
+  }
+  | %{
+  required "uri" => String.t(),
+  required "blob" => String.t(),
+  optional "mimeType" => String.t()
+  }
+  ```
+  """
+  @type embedded_resource :: json_object()
 
   # Capabilities
 
-  @type client_capabilities :: %{
-          optional(:fs) => %{
-            optional(:readTextFile) => boolean(),
-            optional(:writeTextFile) => boolean()
-          },
-          optional(:terminal) => boolean(),
-          optional(:elicitation) => %{
-            optional(:form) => map() | nil,
-            optional(:url) => map() | nil
-          }
-        }
+  @typedoc """
+  String-keyed JSON object for client capabilities. Wire field/variant shape:
 
-  @type form_elicitation_request ::
-          %{
-            required(:mode) => :form,
-            required(:message) => String.t(),
-            required(:requestedSchema) => map(),
-            optional(:sessionId) => String.t(),
-            optional(:toolCallId) => String.t() | nil,
-            optional(:requestId) => integer() | String.t(),
-            optional(:_meta) => map() | nil
-          }
+  ```text
+  %{
+  optional "fs" => %{
+  optional "readTextFile" => boolean(),
+  optional "writeTextFile" => boolean()
+  },
+  optional "terminal" => boolean(),
+  optional "elicitation" => %{
+  optional "form" => map() | nil,
+  optional "url" => map() | nil
+  }
+  }
+  ```
+  """
+  @type client_capabilities :: json_object()
 
-  @type url_elicitation_request ::
-          %{
-            required(:mode) => :url,
-            required(:message) => String.t(),
-            required(:elicitationId) => String.t(),
-            required(:url) => String.t(),
-            optional(:sessionId) => String.t(),
-            optional(:toolCallId) => String.t() | nil,
-            optional(:requestId) => integer() | String.t(),
-            optional(:_meta) => map() | nil
-          }
+  @typedoc """
+  String-keyed JSON object for form elicitation request. Wire field/variant shape:
 
-  @type elicitation_request :: form_elicitation_request() | url_elicitation_request()
+  ```text
+  %{
+  required "mode" => "form",
+  required "message" => String.t(),
+  required "requestedSchema" => map(),
+  optional "sessionId" => String.t(),
+  optional "toolCallId" => String.t() | nil,
+  optional "requestId" => integer() | String.t(),
+  optional "_meta" => map() | nil
+  }
+  ```
+  """
+  @type form_elicitation_request :: json_object()
 
-  @type elicitation_response :: %{
-          required(:action) => :accept | :decline | :cancel,
-          optional(:content) => map() | nil,
-          optional(:_meta) => map() | nil
-        }
+  @typedoc """
+  String-keyed JSON object for url elicitation request. Wire field/variant shape:
 
-  @type agent_capabilities :: %{
-          optional(:auth) => %{
-            optional(:logout) => map() | nil
-          },
-          optional(:loadSession) => boolean(),
-          optional(:promptCapabilities) => %{
-            optional(:image) => boolean(),
-            optional(:audio) => boolean(),
-            optional(:embeddedContext) => boolean()
-          },
-          optional(:mcpCapabilities) => %{
-            optional(:acp) => boolean(),
-            optional(:http) => boolean(),
-            optional(:sse) => boolean(),
-            optional(:_meta) => map()
-          },
-          optional(:sessionCapabilities) => %{
-            optional(:list) => session_list_capabilities() | nil,
-            optional(:resume) => session_resume_capabilities() | nil,
-            optional(:close) => session_close_capabilities() | nil,
-            optional(:delete) => session_delete_capabilities() | nil,
-            optional(:fork) => session_fork_capabilities() | nil,
-            optional(:additionalDirectories) => map() | nil
-          }
-        }
+  ```text
+  %{
+  required "mode" => "url",
+  required "message" => String.t(),
+  required "elicitationId" => String.t(),
+  required "url" => String.t(),
+  optional "sessionId" => String.t(),
+  optional "toolCallId" => String.t() | nil,
+  optional "requestId" => integer() | String.t(),
+  optional "_meta" => map() | nil
+  }
+  ```
+  """
+  @type url_elicitation_request :: json_object()
 
-  @type session_list_capabilities :: map()
-  @type session_resume_capabilities :: map()
-  @type session_close_capabilities :: map()
-  @type session_delete_capabilities :: map()
-  @type session_fork_capabilities :: map()
+  @typedoc """
+  String-keyed JSON object for elicitation request. Wire field/variant shape:
 
-  @type mode :: %{
-          required(:id) => String.t(),
-          required(:name) => String.t(),
-          optional(:description) => String.t()
-        }
+  ```text
+  form_elicitation_request() | url_elicitation_request()
+  ```
+  """
+  @type elicitation_request :: json_object()
 
-  @type config_option :: %{
-          required(:id) => String.t(),
-          required(:name) => String.t(),
-          required(:type) => String.t(),
-          required(:currentValue) => String.t(),
-          required(:options) => list(),
-          optional(:description) => String.t(),
-          optional(:category) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for elicitation response. Wire field/variant shape:
+
+  ```text
+  %{
+  required "action" => "accept" | "decline" | "cancel",
+  optional "content" => map() | nil,
+  optional "_meta" => map() | nil
+  }
+  ```
+  """
+  @type elicitation_response :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for agent capabilities. Wire field/variant shape:
+
+  ```text
+  %{
+  optional "auth" => %{
+  optional "logout" => map() | nil
+  },
+  optional "loadSession" => boolean(),
+  optional "promptCapabilities" => %{
+  optional "image" => boolean(),
+  optional "audio" => boolean(),
+  optional "embeddedContext" => boolean()
+  },
+  optional "mcpCapabilities" => %{
+  optional "acp" => boolean(),
+  optional "http" => boolean(),
+  optional "sse" => boolean(),
+  optional "_meta" => map()
+  },
+  optional "sessionCapabilities" => %{
+  optional "list" => session_list_capabilities() | nil,
+  optional "resume" => session_resume_capabilities() | nil,
+  optional "close" => session_close_capabilities() | nil,
+  optional "delete" => session_delete_capabilities() | nil,
+  optional "fork" => session_fork_capabilities() | nil,
+  optional "additionalDirectories" => map() | nil
+  }
+  }
+  ```
+  """
+  @type agent_capabilities :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for session list capabilities. Wire field/variant shape:
+
+  ```text
+  map()
+  ```
+  """
+  @type session_list_capabilities :: json_object()
+  @typedoc """
+  String-keyed JSON object for session resume capabilities. Wire field/variant shape:
+
+  ```text
+  map()
+  ```
+  """
+  @type session_resume_capabilities :: json_object()
+  @typedoc """
+  String-keyed JSON object for session close capabilities. Wire field/variant shape:
+
+  ```text
+  map()
+  ```
+  """
+  @type session_close_capabilities :: json_object()
+  @typedoc """
+  String-keyed JSON object for session delete capabilities. Wire field/variant shape:
+
+  ```text
+  map()
+  ```
+  """
+  @type session_delete_capabilities :: json_object()
+  @typedoc """
+  String-keyed JSON object for session fork capabilities. Wire field/variant shape:
+
+  ```text
+  map()
+  ```
+  """
+  @type session_fork_capabilities :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for mode. Wire field/variant shape:
+
+  ```text
+  %{
+  required "id" => String.t(),
+  required "name" => String.t(),
+  optional "description" => String.t()
+  }
+  ```
+  """
+  @type mode :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for config option. Wire field/variant shape:
+
+  ```text
+  %{
+  required "id" => String.t(),
+  required "name" => String.t(),
+  required "type" => String.t(),
+  required "currentValue" => String.t(),
+  required "options" => list(),
+  optional "description" => String.t(),
+  optional "category" => String.t()
+  }
+  ```
+  """
+  @type config_option :: json_object()
 
   # ACP Error Codes
   # Standard JSON-RPC: -32700 (parse), -32600 (invalid request), -32601 (method not found),
@@ -190,145 +335,313 @@ defmodule Arbor.ACP.Types do
 
   # Initialize
 
-  @type client_info :: %{
-          required(:name) => String.t(),
-          required(:version) => String.t(),
-          optional(:title) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for client info. Wire field/variant shape:
 
-  @type agent_info :: %{
-          required(:name) => String.t(),
-          required(:version) => String.t(),
-          optional(:title) => String.t()
-        }
+  ```text
+  %{
+  required "name" => String.t(),
+  required "version" => String.t(),
+  optional "title" => String.t()
+  }
+  ```
+  """
+  @type client_info :: json_object()
 
-  @type initialize_request :: %{
-          required(:clientInfo) => client_info(),
-          optional(:clientCapabilities) => client_capabilities(),
-          optional(:protocolVersion) => pos_integer()
-        }
+  @typedoc """
+  String-keyed JSON object for agent info. Wire field/variant shape:
 
-  @type initialize_response :: %{
-          required(:agentInfo) => agent_info(),
-          optional(:agentCapabilities) => agent_capabilities(),
-          optional(:authMethods) => [auth_method()],
-          optional(:protocolVersion) => pos_integer()
-        }
+  ```text
+  %{
+  required "name" => String.t(),
+  required "version" => String.t(),
+  optional "title" => String.t()
+  }
+  ```
+  """
+  @type agent_info :: json_object()
 
-  @type auth_method :: %{
-          required(:id) => String.t(),
-          required(:name) => String.t(),
-          optional(:description) => String.t(),
-          optional(:type) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for initialize request. Wire field/variant shape:
+
+  ```text
+  %{
+  required "clientInfo" => client_info(),
+  optional "clientCapabilities" => client_capabilities(),
+  optional "protocolVersion" => pos_integer()
+  }
+  ```
+  """
+  @type initialize_request :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for initialize response. Wire field/variant shape:
+
+  ```text
+  %{
+  required "agentInfo" => agent_info(),
+  optional "agentCapabilities" => agent_capabilities(),
+  optional "authMethods" => [auth_method()],
+  optional "protocolVersion" => pos_integer()
+  }
+  ```
+  """
+  @type initialize_response :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for auth method. Wire field/variant shape:
+
+  ```text
+  %{
+  required "id" => String.t(),
+  required "name" => String.t(),
+  optional "description" => String.t(),
+  optional "type" => String.t()
+  }
+  ```
+  """
+  @type auth_method :: json_object()
 
   # Sessions
 
-  @type mcp_server :: stdio_mcp_server() | http_mcp_server() | sse_mcp_server()
+  @typedoc """
+  String-keyed JSON object for mcp server. Wire field/variant shape:
 
-  @type stdio_mcp_server :: %{
-          required(:type) => :stdio,
-          required(:name) => String.t(),
-          required(:command) => String.t(),
-          required(:args) => [String.t()],
-          required(:env) => [env_variable()]
-        }
+  ```text
+  stdio_mcp_server() | http_mcp_server() | sse_mcp_server()
+  ```
+  """
+  @type mcp_server :: json_object()
 
-  @type http_mcp_server :: %{
-          required(:type) => :http,
-          required(:name) => String.t(),
-          required(:url) => String.t(),
-          required(:headers) => [http_header()]
-        }
+  @typedoc """
+  String-keyed JSON object for stdio mcp server. Wire field/variant shape:
 
-  @type sse_mcp_server :: %{
-          required(:type) => :sse,
-          required(:name) => String.t(),
-          required(:url) => String.t(),
-          required(:headers) => [http_header()]
-        }
+  ```text
+  %{
+  required "type" => "stdio",
+  required "name" => String.t(),
+  required "command" => String.t(),
+  required "args" => [String.t()],
+  required "env" => [env_variable()]
+  }
+  ```
+  """
+  @type stdio_mcp_server :: json_object()
 
-  @type env_variable :: %{
-          required(:name) => String.t(),
-          required(:value) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for http mcp server. Wire field/variant shape:
 
-  @type http_header :: %{
-          required(:name) => String.t(),
-          required(:value) => String.t()
-        }
+  ```text
+  %{
+  required "type" => "http",
+  required "name" => String.t(),
+  required "url" => String.t(),
+  required "headers" => [http_header()]
+  }
+  ```
+  """
+  @type http_mcp_server :: json_object()
 
-  @type new_session_request :: %{
-          required(:cwd) => String.t(),
-          required(:mcpServers) => [mcp_server()],
-          optional(:additionalDirectories) => [String.t()]
-        }
+  @typedoc """
+  String-keyed JSON object for sse mcp server. Wire field/variant shape:
 
-  @type new_session_response :: %{
-          required(:sessionId) => String.t()
-        }
+  ```text
+  %{
+  required "type" => "sse",
+  required "name" => String.t(),
+  required "url" => String.t(),
+  required "headers" => [http_header()]
+  }
+  ```
+  """
+  @type sse_mcp_server :: json_object()
 
-  @type list_sessions_request :: %{
-          optional(:cursor) => String.t(),
-          optional(:cwd) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for env variable. Wire field/variant shape:
 
-  @type list_sessions_response :: %{
-          required(:sessions) => [session_info()],
-          optional(:nextCursor) => String.t()
-        }
+  ```text
+  %{
+  required "name" => String.t(),
+  required "value" => String.t()
+  }
+  ```
+  """
+  @type env_variable :: json_object()
 
-  @type session_info :: %{
-          required(:sessionId) => String.t(),
-          required(:cwd) => String.t(),
-          optional(:title) => String.t(),
-          optional(:updatedAt) => String.t(),
-          optional(:additionalDirectories) => [String.t()]
-        }
+  @typedoc """
+  String-keyed JSON object for http header. Wire field/variant shape:
 
-  @type load_session_request :: %{
-          required(:sessionId) => String.t(),
-          required(:cwd) => String.t(),
-          required(:mcpServers) => [mcp_server()],
-          optional(:additionalDirectories) => [String.t()]
-        }
+  ```text
+  %{
+  required "name" => String.t(),
+  required "value" => String.t()
+  }
+  ```
+  """
+  @type http_header :: json_object()
 
-  @type resume_session_request :: %{
-          required(:sessionId) => String.t(),
-          required(:cwd) => String.t(),
-          optional(:mcpServers) => [mcp_server()],
-          optional(:additionalDirectories) => [String.t()]
-        }
+  @typedoc """
+  String-keyed JSON object for new session request. Wire field/variant shape:
 
-  @type close_session_request :: %{
-          required(:sessionId) => String.t()
-        }
+  ```text
+  %{
+  required "cwd" => String.t(),
+  required "mcpServers" => [mcp_server()],
+  optional "additionalDirectories" => [String.t()]
+  }
+  ```
+  """
+  @type new_session_request :: json_object()
 
-  @type delete_session_request :: %{
-          required(:sessionId) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for new session response. Wire field/variant shape:
 
-  @type fork_session_request :: %{
-          required(:sessionId) => String.t(),
-          required(:cwd) => String.t(),
-          optional(:mcpServers) => [mcp_server()],
-          optional(:additionalDirectories) => [String.t()]
-        }
+  ```text
+  %{
+  required "sessionId" => String.t()
+  }
+  ```
+  """
+  @type new_session_response :: json_object()
 
-  @type fork_session_response :: %{
-          required(:sessionId) => String.t(),
-          optional(:modes) => map() | nil,
-          optional(:configOptions) => [config_option()] | nil
-        }
+  @typedoc """
+  String-keyed JSON object for list sessions request. Wire field/variant shape:
 
-  @type prompt_request :: %{
-          required(:sessionId) => String.t(),
-          required(:prompt) => [content_block()]
-        }
+  ```text
+  %{
+  optional "cursor" => String.t(),
+  optional "cwd" => String.t()
+  }
+  ```
+  """
+  @type list_sessions_request :: json_object()
 
-  @type prompt_response :: %{
-          required(:stopReason) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for list sessions response. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessions" => [session_info()],
+  optional "nextCursor" => String.t()
+  }
+  ```
+  """
+  @type list_sessions_response :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for session info. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  required "cwd" => String.t(),
+  optional "title" => String.t(),
+  optional "updatedAt" => String.t(),
+  optional "additionalDirectories" => [String.t()]
+  }
+  ```
+  """
+  @type session_info :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for load session request. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  required "cwd" => String.t(),
+  required "mcpServers" => [mcp_server()],
+  optional "additionalDirectories" => [String.t()]
+  }
+  ```
+  """
+  @type load_session_request :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for resume session request. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  required "cwd" => String.t(),
+  optional "mcpServers" => [mcp_server()],
+  optional "additionalDirectories" => [String.t()]
+  }
+  ```
+  """
+  @type resume_session_request :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for close session request. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t()
+  }
+  ```
+  """
+  @type close_session_request :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for delete session request. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t()
+  }
+  ```
+  """
+  @type delete_session_request :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for fork session request. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  required "cwd" => String.t(),
+  optional "mcpServers" => [mcp_server()],
+  optional "additionalDirectories" => [String.t()]
+  }
+  ```
+  """
+  @type fork_session_request :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for fork session response. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  optional "modes" => map() | nil,
+  optional "configOptions" => [config_option()] | nil
+  }
+  ```
+  """
+  @type fork_session_response :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for prompt request. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  required "prompt" => [content_block()]
+  }
+  ```
+  """
+  @type prompt_request :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for prompt response. Wire field/variant shape:
+
+  ```text
+  %{
+  required "stopReason" => String.t()
+  }
+  ```
+  """
+  @type prompt_response :: json_object()
 
   # Session updates — nested under "update" with "sessionUpdate" discriminator
   #
@@ -337,141 +650,280 @@ defmodule Arbor.ACP.Types do
   #   available_commands_update, config_option_update, current_mode_update,
   #   session_info_update, usage_update, agent_thought_chunk
 
-  @type session_update_params :: %{
-          required(:sessionId) => String.t(),
-          required(:update) => session_update()
-        }
+  @typedoc """
+  String-keyed JSON object for session update params. Wire field/variant shape:
 
-  @type session_update ::
-          user_message_chunk_update()
-          | agent_message_chunk_update()
-          | agent_thought_chunk_update()
-          | tool_call()
-          | tool_call_update()
-          | plan()
-          | available_commands_update()
-          | config_option_update()
-          | current_mode_update()
-          | session_info_update()
-          | usage_update()
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  required "update" => session_update()
+  }
+  ```
+  """
+  @type session_update_params :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for session update. Wire field/variant shape:
+
+  ```text
+  user_message_chunk_update()
+  | agent_message_chunk_update()
+  | agent_thought_chunk_update()
+  | tool_call()
+  | tool_call_update()
+  | plan()
+  | available_commands_update()
+  | config_option_update()
+  | current_mode_update()
+  | session_info_update()
+  | usage_update()
+  ```
+  """
+  @type session_update :: json_object()
 
   # ── Spec-defined session update types ──────────────────────────
 
-  @type user_message_chunk_update :: %{
-          required(:sessionUpdate) => :user_message_chunk,
-          required(:content) => content_block()
-        }
+  @typedoc """
+  String-keyed JSON object for user message chunk update. Wire field/variant shape:
 
-  @type agent_message_chunk_update :: %{
-          required(:sessionUpdate) => :agent_message_chunk,
-          required(:content) => content_block()
-        }
+  ```text
+  %{
+  required "sessionUpdate" => "user_message_chunk",
+  required "content" => content_block()
+  }
+  ```
+  """
+  @type user_message_chunk_update :: json_object()
 
-  @type agent_thought_chunk_update :: %{
-          required(:sessionUpdate) => :agent_thought_chunk,
-          required(:content) => content_block()
-        }
+  @typedoc """
+  String-keyed JSON object for agent message chunk update. Wire field/variant shape:
 
-  @type tool_call :: %{
-          required(:sessionUpdate) => :tool_call,
-          required(:toolCallId) => String.t(),
-          required(:title) => String.t(),
-          optional(:status) => String.t(),
-          optional(:content) => [map()]
-        }
+  ```text
+  %{
+  required "sessionUpdate" => "agent_message_chunk",
+  required "content" => content_block()
+  }
+  ```
+  """
+  @type agent_message_chunk_update :: json_object()
 
-  @type tool_call_update :: %{
-          required(:sessionUpdate) => :tool_call_update,
-          required(:toolCallId) => String.t(),
-          optional(:title) => String.t(),
-          optional(:status) => String.t(),
-          optional(:content) => [map()]
-        }
+  @typedoc """
+  String-keyed JSON object for agent thought chunk update. Wire field/variant shape:
 
-  @type plan :: %{
-          required(:sessionUpdate) => :plan,
-          required(:entries) => [plan_entry()]
-        }
+  ```text
+  %{
+  required "sessionUpdate" => "agent_thought_chunk",
+  required "content" => content_block()
+  }
+  ```
+  """
+  @type agent_thought_chunk_update :: json_object()
 
-  @type plan_entry :: %{
-          required(:content) => String.t(),
-          required(:priority) => :high | :medium | :low,
-          required(:status) => :pending | :in_progress | :completed
-        }
+  @typedoc """
+  String-keyed JSON object for tool call. Wire field/variant shape:
 
-  @type available_commands_update :: %{
-          required(:sessionUpdate) => :available_commands_update,
-          required(:availableCommands) => [map()]
-        }
+  ```text
+  %{
+  required "sessionUpdate" => "tool_call",
+  required "toolCallId" => String.t(),
+  required "title" => String.t(),
+  optional "status" => String.t(),
+  optional "content" => [map()]
+  }
+  ```
+  """
+  @type tool_call :: json_object()
 
-  @type config_option_update :: %{
-          required(:sessionUpdate) => :config_option_update,
-          required(:configOptions) => [config_option()]
-        }
+  @typedoc """
+  String-keyed JSON object for tool call update. Wire field/variant shape:
 
-  @type current_mode_update :: %{
-          required(:sessionUpdate) => :current_mode_update,
-          required(:currentModeId) => String.t()
-        }
+  ```text
+  %{
+  required "sessionUpdate" => "tool_call_update",
+  required "toolCallId" => String.t(),
+  optional "title" => String.t(),
+  optional "status" => String.t(),
+  optional "content" => [map()]
+  }
+  ```
+  """
+  @type tool_call_update :: json_object()
 
-  @type session_info_update :: %{
-          required(:sessionUpdate) => :session_info_update,
-          optional(:title) => String.t(),
-          optional(:updatedAt) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for plan. Wire field/variant shape:
 
-  @type usage_update :: %{
-          required(:sessionUpdate) => :usage_update,
-          required(:used) => non_neg_integer(),
-          required(:size) => non_neg_integer(),
-          optional(:cost) => map()
-        }
+  ```text
+  %{
+  required "sessionUpdate" => "plan",
+  required "entries" => [plan_entry()]
+  }
+  ```
+  """
+  @type plan :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for plan entry. Wire field/variant shape:
+
+  ```text
+  %{
+  required "content" => String.t(),
+  required "priority" => "high" | "medium" | "low",
+  required "status" => "pending" | "in_progress" | "completed"
+  }
+  ```
+  """
+  @type plan_entry :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for available commands update. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionUpdate" => "available_commands_update",
+  required "availableCommands" => [map()]
+  }
+  ```
+  """
+  @type available_commands_update :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for config option update. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionUpdate" => "config_option_update",
+  required "configOptions" => [config_option()]
+  }
+  ```
+  """
+  @type config_option_update :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for current mode update. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionUpdate" => "current_mode_update",
+  required "currentModeId" => String.t()
+  }
+  ```
+  """
+  @type current_mode_update :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for session info update. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionUpdate" => "session_info_update",
+  optional "title" => String.t(),
+  optional "updatedAt" => String.t()
+  }
+  ```
+  """
+  @type session_info_update :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for usage update. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionUpdate" => "usage_update",
+  required "used" => non_neg_integer(),
+  required "size" => non_neg_integer(),
+  optional "cost" => map()
+  }
+  ```
+  """
+  @type usage_update :: json_object()
 
   # Permission handling
 
-  @type permission_option :: %{
-          required(:optionId) => String.t(),
-          required(:name) => String.t(),
-          required(:kind) => String.t(),
-          optional(:description) => String.t()
-        }
+  @typedoc """
+  String-keyed JSON object for permission option. Wire field/variant shape:
 
-  @type permission_outcome :: %{
-          required(:outcome) => String.t(),
-          optional(:optionId) => String.t()
-        }
+  ```text
+  %{
+  required "optionId" => String.t(),
+  required "name" => String.t(),
+  required "kind" => String.t(),
+  optional "description" => String.t()
+  }
+  ```
+  """
+  @type permission_option :: json_object()
 
-  @type permission_request :: %{
-          required(:sessionId) => String.t(),
-          required(:toolCall) => tool_call_info(),
-          required(:options) => [permission_option()]
-        }
+  @typedoc """
+  String-keyed JSON object for permission outcome. Wire field/variant shape:
 
-  @type tool_call_info :: %{
-          required(:toolName) => String.t(),
-          optional(:toolCallId) => String.t(),
-          optional(:arguments) => map()
-        }
+  ```text
+  %{
+  required "outcome" => String.t(),
+  optional "optionId" => String.t()
+  }
+  ```
+  """
+  @type permission_outcome :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for permission request. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  required "toolCall" => tool_call_info(),
+  required "options" => [permission_option()]
+  }
+  ```
+  """
+  @type permission_request :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for tool call info. Wire field/variant shape:
+
+  ```text
+  %{
+  required "toolName" => String.t(),
+  optional "toolCallId" => String.t(),
+  optional "arguments" => map()
+  }
+  ```
+  """
+  @type tool_call_info :: json_object()
 
   # File operations
 
-  @type file_read_request :: %{
-          required(:sessionId) => String.t(),
-          required(:path) => String.t(),
-          optional(:line) => non_neg_integer(),
-          optional(:limit) => non_neg_integer()
-        }
+  @typedoc """
+  String-keyed JSON object for file read request. Wire field/variant shape:
 
-  @type file_write_request :: %{
-          required(:sessionId) => String.t(),
-          required(:path) => String.t(),
-          required(:content) => String.t()
-        }
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  required "path" => String.t(),
+  optional "line" => non_neg_integer(),
+  optional "limit" => non_neg_integer()
+  }
+  ```
+  """
+  @type file_read_request :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for file write request. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionId" => String.t(),
+  required "path" => String.t(),
+  required "content" => String.t()
+  }
+  ```
+  """
+  @type file_write_request :: json_object()
 
   # Builder functions
 
   @doc "Creates a text content block."
-  @spec text_block(String.t(), keyword()) :: map()
+  @spec text_block(String.t(), keyword()) :: text_block()
   def text_block(text, opts \\ []) when is_binary(text) do
     %{"type" => "text", "text" => text}
     |> maybe_put_kw("annotations", opts)
@@ -479,7 +931,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates an image content block."
-  @spec image_block(String.t(), String.t(), keyword()) :: map()
+  @spec image_block(String.t(), String.t(), keyword()) :: image_block()
   def image_block(mime_type, data, opts \\ []) when is_binary(mime_type) and is_binary(data) do
     %{"type" => "image", "mimeType" => mime_type, "data" => data}
     |> maybe_put_kw("uri", opts)
@@ -488,7 +940,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates an audio content block."
-  @spec audio_block(String.t(), String.t(), keyword()) :: map()
+  @spec audio_block(String.t(), String.t(), keyword()) :: audio_block()
   def audio_block(mime_type, data, opts \\ []) when is_binary(mime_type) and is_binary(data) do
     %{"type" => "audio", "mimeType" => mime_type, "data" => data}
     |> maybe_put_kw("annotations", opts)
@@ -496,7 +948,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a resource link content block."
-  @spec resource_link_block(String.t(), keyword()) :: map()
+  @spec resource_link_block(String.t(), keyword()) :: resource_link_block()
   def resource_link_block(uri, opts \\ []) when is_binary(uri) do
     name = Keyword.get(opts, :name, Path.basename(uri))
 
@@ -510,7 +962,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a resource content block."
-  @spec resource_block(String.t(), keyword()) :: map()
+  @spec resource_block(String.t(), keyword()) :: resource_block()
   def resource_block(uri, opts \\ []) when is_binary(uri) do
     resource =
       %{"uri" => uri}
@@ -529,7 +981,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates client info for the initialize handshake."
-  @spec client_info(String.t(), String.t(), keyword()) :: map()
+  @spec client_info(String.t(), String.t(), keyword()) :: client_info()
   def client_info(name, version, opts \\ []) when is_binary(name) and is_binary(version) do
     %{"name" => name, "version" => version}
     |> maybe_put_kw("title", opts)
@@ -537,7 +989,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates an authentication method advertised by an agent."
-  @spec auth_method(String.t(), String.t(), keyword()) :: map()
+  @spec auth_method(String.t(), String.t(), keyword()) :: auth_method()
   def auth_method(id, name, opts \\ []) when is_binary(id) and is_binary(name) do
     %{"id" => id, "name" => name}
     |> maybe_put_kw("description", opts)
@@ -552,7 +1004,7 @@ defmodule Arbor.ACP.Types do
   `:session_list`, `:session_resume`, `:session_close`, `:session_delete`,
   `:session_fork`, `:additional_directories`, and `:logout`.
   """
-  @spec agent_capabilities(keyword()) :: map()
+  @spec agent_capabilities(keyword()) :: agent_capabilities()
   def agent_capabilities(opts \\ []) do
     %{}
     |> maybe_put_bool("loadSession", opts, :load_session)
@@ -563,7 +1015,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates session capability metadata."
-  @spec session_capabilities(keyword()) :: map()
+  @spec session_capabilities(keyword()) :: json_object()
   def session_capabilities(opts \\ []) do
     %{}
     |> maybe_put_capability("list", Keyword.get(opts, :list, Keyword.get(opts, :session_list)))
@@ -588,13 +1040,13 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a plan entry."
-  @spec plan_entry(String.t(), String.t(), String.t()) :: map()
+  @spec plan_entry(String.t(), String.t(), String.t()) :: plan_entry()
   def plan_entry(content, priority \\ "medium", status \\ "pending") do
     %{"content" => content, "priority" => priority, "status" => status}
   end
 
   @doc "Creates a stable ACP `plan` session update notification."
-  @spec plan(String.t(), [map()]) :: map()
+  @spec plan(String.t(), [map()]) :: plan()
   def plan(session_id, entries) when is_list(entries) do
     session_update(session_id, %{
       "sessionUpdate" => "plan",
@@ -603,13 +1055,13 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a stable ACP `plan` session update notification."
-  @spec plan_update(String.t(), [map()]) :: map()
+  @spec plan_update(String.t(), [map()]) :: json_object()
   def plan_update(session_id, entries) when is_list(entries) do
     plan(session_id, entries)
   end
 
   @doc "Creates an available_commands_update session update notification."
-  @spec available_commands_update(String.t(), [map()]) :: map()
+  @spec available_commands_update(String.t(), [map()]) :: available_commands_update()
   def available_commands_update(session_id, commands) when is_list(commands) do
     session_update(session_id, %{
       "sessionUpdate" => "available_commands_update",
@@ -618,7 +1070,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a config_option_update session update notification."
-  @spec config_option_update(String.t(), [map()]) :: map()
+  @spec config_option_update(String.t(), [map()]) :: config_option_update()
   def config_option_update(session_id, config_options) when is_list(config_options) do
     session_update(session_id, %{
       "sessionUpdate" => "config_option_update",
@@ -627,7 +1079,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a current_mode_update session update notification."
-  @spec current_mode_update(String.t(), String.t()) :: map()
+  @spec current_mode_update(String.t(), String.t()) :: current_mode_update()
   def current_mode_update(session_id, current_mode_id) do
     session_update(session_id, %{
       "sessionUpdate" => "current_mode_update",
@@ -636,7 +1088,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a session_info_update session update notification."
-  @spec session_info_update(String.t(), keyword()) :: map()
+  @spec session_info_update(String.t(), keyword()) :: session_info_update()
   def session_info_update(session_id, opts \\ []) do
     update =
       %{"sessionUpdate" => "session_info_update"}
@@ -647,7 +1099,8 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a usage_update session update notification."
-  @spec usage_update(String.t(), non_neg_integer(), non_neg_integer(), keyword()) :: map()
+  @spec usage_update(String.t(), non_neg_integer(), non_neg_integer(), keyword()) ::
+          usage_update()
   def usage_update(session_id, used, size, opts \\ []) do
     update =
       %{"sessionUpdate" => "usage_update", "used" => used, "size" => size}
@@ -657,14 +1110,15 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a config option value for select-style session config."
-  @spec config_option_value(String.t(), String.t(), keyword()) :: map()
+  @spec config_option_value(String.t(), String.t(), keyword()) :: json_object()
   def config_option_value(value, name, opts \\ []) do
     %{"value" => value, "name" => name}
     |> maybe_put_kw("description", opts)
   end
 
   @doc "Creates a select-style session config option."
-  @spec select_config_option(String.t(), String.t(), String.t(), [map()], keyword()) :: map()
+  @spec select_config_option(String.t(), String.t(), String.t(), [map()], keyword()) ::
+          json_object()
   def select_config_option(id, name, current_value, options, opts \\ []) do
     %{
       "id" => id,
@@ -678,7 +1132,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates a session info entry returned by session/list."
-  @spec session_info(String.t(), String.t(), keyword()) :: map()
+  @spec session_info(String.t(), String.t(), keyword()) :: session_info()
   def session_info(session_id, cwd, opts \\ []) do
     %{"sessionId" => session_id, "cwd" => cwd}
     |> maybe_put_kw("title", opts)
@@ -687,15 +1141,15 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates an environment variable entry for a stdio MCP server."
-  @spec env_variable(String.t(), String.t()) :: map()
+  @spec env_variable(String.t(), String.t()) :: env_variable()
   def env_variable(name, value), do: %{"name" => name, "value" => value}
 
   @doc "Creates an HTTP header entry for a Streamable HTTP MCP server."
-  @spec http_header(String.t(), String.t()) :: map()
+  @spec http_header(String.t(), String.t()) :: http_header()
   def http_header(name, value), do: %{"name" => name, "value" => value}
 
   @doc "Creates a stdio MCP server config for ACP session setup."
-  @spec stdio_mcp_server(String.t(), String.t(), keyword()) :: map()
+  @spec stdio_mcp_server(String.t(), String.t(), keyword()) :: stdio_mcp_server()
   def stdio_mcp_server(name, command, opts \\ []) do
     %{
       "type" => "stdio",
@@ -707,7 +1161,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates an HTTP MCP server config for ACP session setup."
-  @spec http_mcp_server(String.t(), String.t(), keyword()) :: map()
+  @spec http_mcp_server(String.t(), String.t(), keyword()) :: http_mcp_server()
   def http_mcp_server(name, url, opts \\ []) do
     %{
       "type" => "http",
@@ -718,7 +1172,7 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc "Creates an SSE MCP server config for ACP session setup."
-  @spec sse_mcp_server(String.t(), String.t(), keyword()) :: map()
+  @spec sse_mcp_server(String.t(), String.t(), keyword()) :: sse_mcp_server()
   def sse_mcp_server(name, url, opts \\ []) do
     %{
       "type" => "sse",
@@ -737,7 +1191,7 @@ defmodule Arbor.ACP.Types do
     `stdio_mcp_server/3`, `http_mcp_server/3`, or `sse_mcp_server/3`
   - `:additional_directories` - extra absolute workspace root paths
   """
-  @spec new_session_params(String.t(), keyword()) :: map()
+  @spec new_session_params(String.t(), keyword()) :: json_object()
   def new_session_params(cwd, opts \\ []) when is_binary(cwd) do
     %{"cwd" => cwd}
     |> then(fn params ->
@@ -754,7 +1208,7 @@ defmodule Arbor.ACP.Types do
 
   Content can be a string (auto-wrapped as text block) or a list of content block maps.
   """
-  @spec prompt_params(String.t(), String.t() | [map()]) :: map()
+  @spec prompt_params(String.t(), String.t() | [map()]) :: json_object()
   def prompt_params(session_id, content) when is_binary(session_id) do
     blocks =
       case content do

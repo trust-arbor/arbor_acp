@@ -28,8 +28,14 @@ and authenticated Claude Code CLI:
   adapter: Arbor.ACP.Adapters.ClaudeSDK,
   adapter_opts: [cli_path: "claude", cwd: File.cwd!()]
 )
-# Use Arbor.ACP.Client.new_session/3 and prompt/4, then disconnect/1 in an after block.
+# Use Arbor.ACP.Client.new_session/3 and prompt/4, then stop/1 in an after block.
 ```
+
+For temporary adapted connections, `Arbor.ACP.Client.with_connection/2,3`
+accepts those same client options and closes the owned connection after its
+callback. `Client.prompt/4` preserves the peer result. To collect streamed
+message text, use `Client.prompt_text/4` and check the separate `text` and
+`truncated?` fields; see the core ACP guide for its bounds and RC migration.
 
 Models, modes and supported configuration controls differ by vendor and may be
 loaded during session setup. Use the agent/session capabilities and returned

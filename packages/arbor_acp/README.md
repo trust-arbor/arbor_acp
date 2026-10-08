@@ -63,6 +63,11 @@ an agent. For vendor CLIs, use the optional
 [adapter package](https://github.com/trust-arbor/arbor_acp/tree/codex/shared-subprocess/packages/arbor_acp_adapters).
 See the [changelog](CHANGELOG.md) for the planned RC changes.
 
+Temporary controllers can use `Arbor.ACP.Client.with_connection/2,3` with finite
+startup and cleanup budgets. `Client.prompt/4` returns the unchanged peer result;
+`Client.prompt_text/4` explicitly collects bounded streamed text and reports
+truncation. See the [client guide and RC migration notes](docs/ACP_GUIDE.md).
+
 ## AI agent guidance
 
 The package ships [usage rules](usage-rules.md) for supported APIs, sessions,

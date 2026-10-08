@@ -13,6 +13,10 @@ candidate availability, callback signatures and complete examples.
   must speak ACP; an ordinary interactive CLI is not necessarily an ACP agent.
   Initialization completes before startup succeeds. ACP protocol version `1`
   is separate from MCP wire revisions and the package's version.
+- Use `Arbor.ACP.Client.with_connection/2,3` for temporary connections. Its
+  callback runs in the caller; finite startup/cleanup budgets and a guardian
+  cover caller death. Success wraps the callback value in `{:ok, value}`;
+  cleanup failures retain that value in an error. Supervise long-lived clients.
 - Built-in Claude, Codex, Pi and ZCode integrations belong to the optional
   `arbor_acp_adapters` package under `Arbor.ACP.Adapters.*`. Use
   `Arbor.ACP.AdapterTransport` for adapted clients. Core consumers do not need
@@ -30,6 +34,13 @@ candidate availability, callback signatures and complete examples.
 - Create sessions with `Arbor.ACP.Client.new_session/3`, using an absolute cwd.
   `Arbor.ACP.Client.prompt/4` accepts text or content maps and returns the final
   agent result, including `stopReason`. Streamed updates arrive separately.
+- `prompt/4` preserves the peer result and does not add streamed text. Use
+  `Arbor.ACP.Client.prompt_text/4` to collect it explicitly: the result is
+  `{:ok, %{result: peer_result, text: text, truncated?: boolean}}`. Check the
+  truncation flag before treating text as complete. The byte cap is finite,
+  thoughts are excluded, and collection cannot overlap a prompt in that session.
+- Content builders in `Arbor.ACP.Types` emit string-keyed JSON objects with
+  string discriminators. Use `Types.text_block/2` rather than atom-keyed maps.
 - Read advertised capabilities, authentication methods and session model/mode
   catalogs before invoking optional operations. Close and delete have different
   meanings; loading, resuming, forking and listing depend on agent support.

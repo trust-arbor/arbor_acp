@@ -259,8 +259,9 @@ defmodule Arbor.ACP.AgentTest do
       assert {:ok, %{"sessionId" => "sess_echo"}} = Client.new_session(client, "/tmp/project")
       assert_receive {:new_session, %{"cwd" => "/tmp/project"}}
 
-      assert {:ok, %{"stopReason" => "end_turn", "text" => "echo: hello"}} =
-               Client.prompt(client, "sess_echo", "hello")
+      assert {:ok,
+              %{result: %{"stopReason" => "end_turn"}, text: "echo: hello", truncated?: false}} =
+               Client.prompt_text(client, "sess_echo", "hello")
 
       assert_receive {:acp_session_update, "sess_echo",
                       %{"sessionUpdate" => "agent_message_chunk"}}
@@ -281,8 +282,8 @@ defmodule Arbor.ACP.AgentTest do
 
       {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp/project")
 
-      assert {:ok, %{"stopReason" => "end_turn", "text" => "streamed"}} =
-               Client.prompt(client, session_id, "work")
+      assert {:ok, %{result: %{"stopReason" => "end_turn"}, text: "streamed", truncated?: false}} =
+               Client.prompt_text(client, session_id, "work")
 
       assert_receive {:prompt_started, _prompt_id}
     end
@@ -361,7 +362,8 @@ defmodule Arbor.ACP.AgentTest do
 
       {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp/project")
 
-      assert {:ok, %{"stopReason" => "end_turn", "text" => "file body"}} =
+      assert {:ok,
+              %{"stopReason" => "end_turn", "_meta" => %{"ex_mcp" => %{"text" => "file body"}}}} =
                Client.prompt(client, session_id, "use client")
 
       assert_receive {:permission_request, ^session_id, %{"toolName" => "read"}, [_]}

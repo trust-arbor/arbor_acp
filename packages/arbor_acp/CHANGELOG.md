@@ -2,6 +2,17 @@
 
 ## 1.0.0-rc.1 (unreleased)
 
+- Preserve the peer result unchanged in `Client.prompt/4`. Add explicit
+  `prompt_text/4` with a separate result/text envelope, a finite UTF-8 byte cap,
+  truncation reporting and same-session overlap admission. Only collecting calls
+  retain streamed text; existing callers using synthesized `result["text"]`
+  must migrate to the convenience helper.
+- Add `Client.with_connection/2,3` with finite startup/cleanup budgets,
+  pre-work process registration, caller-death cleanup and retained callback
+  outcomes when cleanup fails.
+- Correct public protocol types to describe string-keyed JSON objects and give
+  builders named return types; document typespec limitations for literal binary keys.
+
 - Document Client/Agent as canonical entrypoints; root startup remains shorthand.
   Add Agent.stop/3 with a reason and finite timeout, preserving options-only stop.
 - Ship agent usage rules in Hex archives and ExDoc, with downstream UsageRules

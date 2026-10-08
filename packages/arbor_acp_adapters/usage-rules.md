@@ -74,3 +74,8 @@ options.
 
 See the adapter guide for per-vendor executable selection, authentication,
 MCP/workspace configuration, session persistence and troubleshooting.
+
+Core Client response semantics apply to adapted connections: `Client.prompt/4`
+preserves the adapter's peer result. Use `Client.prompt_text/4` for explicit
+streamed text collection and check `truncated?` before treating it as complete.
+See the installed `arbor_acp/docs/ACP_GUIDE.md` for RC migration guidance.

@@ -19,21 +19,15 @@ necessarily an ACP server.
 ```elixir
 alias Arbor.ACP.Client
 
-{:ok, client} = Arbor.ACP.Client.start_link(
+{:ok, result} = Client.with_connection([
   command: ["your-acp-agent", "--acp"],
   client_info: %{"name" => "my-controller", "version" => "0.1.0"}
-)
-
-try do
+], fn client ->
   {:ok, %{"sessionId" => session_id}} = Client.new_session(client, File.cwd!())
   {:ok, result} = Client.prompt(client, session_id, "Hello")
-  IO.inspect(result)
-after
-  case Client.stop(client) do
-    :ok -> :ok
-    {:error, reason} -> IO.warn("ACP cleanup failed: #{inspect(reason)}")
-  end
-end
+  result
+end)
+IO.inspect(result)
 ```
 
 `Arbor.ACP.Client.start_link/1` completes initialization before returning. A failed launch or
@@ -45,6 +39,16 @@ pattern matches. `stop/1,2,3` closes owned transport resources, reports cleanup 
 waits for client termination within one finite caller timeout (default 5 seconds).
 `disconnect/1` closes the transport while keeping the client process alive.
 Start functions return linked processes; supervise long-lived clients.
+
+For temporary connections, `with_connection/2,3` wraps the callback value after
+cleanup. The three-argument form takes `establish_timeout: 30_000` and
+`cleanup_timeout: 5_000` by default. Startup shares one cutoff across handler,
+transport and negotiation; cleanup has a separate cutoff. A guardian handles
+abrupt caller exit. Cleanup failure returns
+`{:error, {:cleanup_failed, reason, callback_value}}`; callback exceptions are
+raised again after cleanup. An existing registered client is never adopted.
+Custom transport `close/1` determines external cleanup; arbitrary unregistered
+custom effects are outside the helper's ownership contract.
 
 Agents that do not speak ACP need `Arbor.ACP.AdapterTransport` and an adapter.
 The optional vendor bundle supplies Claude Code, Codex, Pi and ZCode adapters;
@@ -102,6 +106,22 @@ the `"sessionUpdate"` discriminator. Common values include
 prompt call in an application-owned task if the same UI process must receive
 updates immediately, or handle updates in a client handler. Do not leave a
 listener mailbox undrained: delivery is bounded and excess updates are dropped.
+
+For synchronous text collection, call `Client.prompt_text/4` instead:
+
+```elixir
+{:ok, %{result: peer_result, text: text, truncated?: truncated?}} =
+  Client.prompt_text(client, session_id, "Summarize the project", max_text_bytes: 65_536)
+IO.inspect({peer_result["stopReason"], text, truncated?})
+```
+
+The peer result is preserved, including extensions. Collected text is a UTF-8
+prefix of `agent_message_chunk` text blocks, bounded by the client's
+`max_prompt_text_bytes` and any smaller per-call limit. It excludes thoughts,
+nontext blocks and inline peer extension text. Check `truncated?`; callbacks
+still receive updates independently of the collection cap. A collecting prompt
+cannot overlap another prompt in its session; conflicts return
+`{:error, :prompt_in_progress}` before sending.
 
 Here is a complete minimal handler that forwards updates and declines permission
 requests. It does not grant filesystem or terminal access:
@@ -247,7 +267,7 @@ These are client startup options unless specified otherwise:
 | `max_pending_requests` | 1,024 | Concurrent requests in either direction |
 | `pending_request_timeout` | 30,000 ms | Runtime lifetime of outbound requests |
 | `handler_request_timeout` | 30,000 ms | Inbound host callback lifetime |
-| `max_prompt_text_bytes` | 1 MiB | Retained streamed answer per session |
+| `max_prompt_text_bytes` | 1 MiB | Explicitly collected streamed answer per session |
 | `max_update_queue` | 32 | Handler/listener queue cutoff |
 | `max_update_queue_bytes` | 8 MiB | Aggregate queued update size cutoff |
 
@@ -286,3 +306,19 @@ are not extension APIs. See the [changelog](../CHANGELOG.md) and the
 [v1 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)
 for namespace, dependency and host-ownership changes. Legacy `_meta.ex_mcp`
 wire metadata remains unchanged in v2.
+
+## Migrating from the original release candidate
+
+The original `arbor_acp 2.0.0-rc.1` client added buffered streamed text to
+`Client.prompt/4` results. Independent `1.0.0-rc.1` candidates preserve those
+results unchanged. Replace code reading synthesized `result["text"]` with
+`Client.prompt_text/4` and read its separate `text` and `truncated?` fields.
+A peer's own `"text"` extension stays in `result`; streamed text does not replace it.
+Raw prompts no longer allocate a collected-text buffer. Native ACP protocol
+version remains 1.
+
+`Arbor.ACP.Types` builders and protocol objects use string keys and string
+content discriminators, such as `%{"type" => "text", "text" => "Hello"}`.
+Earlier atom-keyed typespecs did not match accepted wire objects. Elixir typespecs
+cannot name individual literal binary keys or enumerate literal strings, so
+object aliases now describe JSON maps and document the required wire fields.
