@@ -3,7 +3,7 @@ defmodule Arbor.ACP.Registry do
   Helpers for the public ACP agent registry.
 
   The registry is distributed as JSON and lists ACP-compatible agents plus
-  their distribution metadata. These helpers keep ExMCP clients from having to
+  their distribution metadata. These helpers keep ArborACP clients from having to
   hard-code the CDN URL or common lookup details.
   """
 

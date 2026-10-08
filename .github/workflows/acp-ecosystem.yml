@@ -12,6 +12,7 @@ permissions:
 env:
   MIX_ENV: test
   ARBOR_V2_LOCAL: '1'
+  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/rpc
   CI_OTP_VERSION: '27.0'
   CI_ELIXIR_VERSION: '1.17.3'
 
@@ -49,6 +50,14 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
+        persist-credentials: false
+
+    - name: Check out shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
         persist-credentials: false
 
     - name: Set up Elixir
@@ -107,6 +116,14 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
+        persist-credentials: false
+
+    - name: Check out shared RPC
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: trust-arbor/arbor_rpc
+        ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+        path: .arbor-v2/rpc
         persist-credentials: false
 
     - name: Set up Elixir

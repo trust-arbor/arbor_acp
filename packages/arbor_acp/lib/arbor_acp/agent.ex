@@ -121,13 +121,23 @@ defmodule Arbor.ACP.Agent do
     end
   end
 
-  @doc "Stops an ACP agent runtime."
-  @spec stop(GenServer.server()) :: :ok
-  def stop(agent), do: GenServer.stop(agent)
+  @doc "Stops the agent with options or a reason; use stop/3 for a reason and finite options."
+  @spec stop(GenServer.server(), term()) :: :ok | {:error, term()}
+  def stop(agent, opts \\ [])
+  def stop(agent, opts) when is_list(opts), do: stop(agent, :normal, opts)
+  def stop(agent, reason), do: stop(agent, reason, [])
 
-  @doc "Returns the runtime status."
-  @spec status(GenServer.server()) :: atom()
-  def status(agent), do: GenServer.call(agent, :status)
+  @doc "Stops the agent with a reason and finite caller timeout, matching Client.stop/3."
+  @spec stop(GenServer.server(), term(), keyword()) :: :ok | {:error, term()}
+  def stop(agent, reason, opts), do: Arbor.ACP.Internal.Call.stop_agent(agent, reason, opts)
+
+  @doc "Returns the runtime status or an explicit timeout/unavailable error."
+  @spec status(GenServer.server(), keyword()) :: {:ok, atom()} | {:error, term()}
+  def status(agent, opts \\ []), do: Arbor.ACP.Internal.Call.status(agent, opts)
+
+  @doc "Returns runtime status, raising if the agent is unavailable."
+  @spec status!(GenServer.server(), keyword()) :: atom()
+  def status!(agent, opts \\ []), do: agent |> status(opts) |> Arbor.ACP.Internal.Call.unwrap!()
 
   @doc "Sends a raw `session/update` notification."
   @spec session_update(GenServer.server(), String.t(), map(), keyword()) ::

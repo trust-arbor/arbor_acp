@@ -8,7 +8,7 @@ defmodule ACPExampleController do
     cwd = File.cwd!()
 
     {:ok, client} =
-      Arbor.ACP.start_client(
+      Arbor.ACP.Client.start_link(
         command: [mix_path, "run", "--no-compile", "--no-start", agent_script],
         cd: repo_root,
         env: local_workspace_env(),
@@ -47,7 +47,7 @@ defmodule ACPExampleController do
   # in the otherwise isolated child environment.
   defp local_workspace_env do
     if System.get_env("ARBOR_V2_LOCAL") == "1" do
-      for key <- ~w(ARBOR_V2_LOCAL ARBOR_V2_DEPS MIX_ARCHIVES),
+      for key <- ~w(ARBOR_V2_LOCAL ARBOR_V2_DEPS ARBOR_RPC_PATH MIX_ARCHIVES),
           value = System.get_env(key),
           is_binary(value),
           do: {key, value}

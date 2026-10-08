@@ -3,21 +3,25 @@ on:
   pull_request:
   push:
     branches: [main, master, 'codex/**']
+  workflow_dispatch:
 permissions:
   contents: read
 env:
   ARBOR_V2_LOCAL: '1'
+  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/rpc
 jobs:
   package:
-    name: ${{ matrix.package }} / Elixir ${{ matrix.toolchain.elixir }}
+    name: ${{ matrix.package }} / Elixir ${{ matrix.toolchain.elixir }} / OTP ${{ matrix.toolchain.otp }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        package: [arbor_rpc, arbor_acp, arbor_acp_adapters]
+        package: [arbor_acp, arbor_acp_adapters]
         toolchain:
           - {elixir: '1.17.3', otp: '27.0'}
-          - {elixir: '1.19.5', otp: '28.3.1'}
+          - {elixir: '1.18.5', otp: '27.3.4.18'}
+          - {elixir: '1.19.6', otp: '28.5.0.7'}
+          - {elixir: '1.20.4', otp: '29.1.1'}
     defaults:
       run:
         working-directory: packages/${{ matrix.package }}
@@ -25,17 +29,36 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Check out shared RPC
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: trust-arbor/arbor_rpc
+          ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+          path: .arbor-v2/rpc
+          persist-credentials: false
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
         with:
           otp-version: ${{ matrix.toolchain.otp }}
           elixir-version: ${{ matrix.toolchain.elixir }}
+          version-type: strict
       - run: mix deps.get
+      - name: Audit owning-package dependencies
+        if: matrix.toolchain.elixir == '1.17.3'
+        run: mix hex.audit
       - run: mix format --check-formatted
-      - run: mix compile --warnings-as-errors
-      - run: mix test --warnings-as-errors
+        if: matrix.toolchain.elixir == '1.17.3'
+      # Compile dependencies separately so new OTP dependency warnings do not
+      # weaken the warnings-as-errors gate for this package in dev or test.
+      - run: mix deps.compile
+      - run: mix compile --warnings-as-errors --no-deps-check
+      - name: Generate owning-package documentation without warnings
+        if: matrix.toolchain.elixir == '1.17.3'
+        run: MIX_ENV=dev mix docs --warnings-as-errors
+      - run: MIX_ENV=test mix deps.compile
+      - run: mix test --warnings-as-errors --no-deps-check
       - run: elixir ../../scripts/check_boundaries.exs
       - name: Build the publishable manifest without workspace overrides
-        run: ARBOR_V2_LOCAL=0 mix hex.build
+        run: env -u ARBOR_RPC_PATH ARBOR_V2_LOCAL=0 mix hex.build
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ${{ matrix.package }}-${{ matrix.toolchain.elixir }}
@@ -49,10 +72,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Check out shared RPC
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: trust-arbor/arbor_rpc
+          ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+          path: .arbor-v2/rpc
+          persist-credentials: false
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
         with:
           otp-version: '28.3.1'
           elixir-version: '1.19.5'
+          version-type: strict
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '22'
@@ -60,3 +91,43 @@ jobs:
       - run: npm ci --ignore-scripts
         working-directory: packages/arbor_acp/test/interop
       - run: mix test --only interop_acp
+  archive_consumer:
+    name: Archive consumer / Elixir ${{ matrix.toolchain.elixir }} / OTP ${{ matrix.toolchain.otp }}
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - {elixir: '1.17.3', otp: '27.0'}
+          - {elixir: '1.18.5', otp: '27.3.4.18'}
+          - {elixir: '1.19.6', otp: '28.5.0.7'}
+          - {elixir: '1.20.4', otp: '29.1.1'}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check out shared RPC
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: trust-arbor/arbor_rpc
+          ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+          path: .arbor-v2/rpc
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: ${{ matrix.toolchain.otp }}
+          elixir-version: ${{ matrix.toolchain.elixir }}
+          version-type: strict
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: arbor_*-${{ matrix.toolchain.elixir }}
+          path: archive-consumer-input
+          merge-multiple: true
+      - name: Build the independent RPC source archive
+        working-directory: .arbor-v2/rpc
+        run: |
+          MIX_ENV=prod mix deps.get --only prod
+          MIX_ENV=prod mix hex.build --output "$GITHUB_WORKSPACE/archive-consumer-input/arbor_rpc-source.tar"
+      - run: python3 scripts/check_archive_consumer.py archive-consumer-input

@@ -8,9 +8,9 @@ defmodule Arbor.ACP.Capabilities do
   ACP v1 clients that can present boolean session configuration options must
   opt in explicitly:
 
-      Capabilities.put(%{}, :boolean_config_options, true)
+      Arbor.ACP.Capabilities.put(%{}, :boolean_config_options, true)
 
-  ExMCP does not infer that UI capability from a generic session-update
+  ArborACP does not infer that UI capability from a generic session-update
   callback.
   """
 

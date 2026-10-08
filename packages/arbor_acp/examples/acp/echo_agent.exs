@@ -1,8 +1,24 @@
 #!/usr/bin/env elixir
 
-Application.put_env(:arbor_acp, :stdio_mode, true)
-Logger.configure(level: :emergency)
-:logger.set_primary_config(:level, :emergency)
+# This standalone host routes its own default logger to stderr before loading
+# the library; preserve normal levels, formatter and filters.
+{:ok, %{module: :logger_std_h} = stdio_logger} = :logger.get_handler_config(:default)
+
+stdio_logger_config =
+  stdio_logger
+  |> Map.drop([:id, :module])
+  |> Map.update!(:config, &Map.put(&1, :type, :standard_error))
+
+# Mix.install may restart Logger; carry the same host routing into that boot.
+stdio_logger_boot =
+  stdio_logger_config
+  |> Map.put(:module, :logger_std_h)
+  |> Map.update!(:config, &Map.to_list/1)
+  |> Map.to_list()
+
+Application.put_env(:logger, :default_handler, stdio_logger_boot)
+:ok = :logger.remove_handler(:default)
+:ok = :logger.add_handler(:default, :logger_std_h, stdio_logger_config)
 
 unless Code.ensure_loaded?(Arbor.ACP) do
   Mix.install(
@@ -49,7 +65,7 @@ defmodule EchoAgent do
 end
 
 if System.get_env("MCP_ENV") != "test" do
-  Arbor.ACP.run_agent(
+  Arbor.ACP.Agent.run(
     handler: EchoAgent,
     agent_info: %{"name" => "ex-mcp-echo-agent", "version" => "1.0.0"},
     capabilities: %{"sessionCapabilities" => %{"close" => true}}

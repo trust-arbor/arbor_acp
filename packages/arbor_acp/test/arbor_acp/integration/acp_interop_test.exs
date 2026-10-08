@@ -1,13 +1,13 @@
 defmodule Arbor.ACP.Integration.ACPInteropTest do
   @moduledoc """
-  Cross-language ACP interop tests between ExMCP and the official TypeScript ACP SDK.
+  Cross-language ACP interop tests between ArborACP and the official TypeScript ACP SDK.
 
   These tests verify both protocol roles over real stdio transport:
 
-  1. ExMCP ACP Client -> TypeScript ACP Agent
-  2. TypeScript ACP Client -> ExMCP ACP Agent
+  1. ArborACP Client -> TypeScript ACP Agent
+  2. TypeScript ACP Client -> ArborACP Agent
 
-  Run with: mix test test/ex_mcp/integration/acp_interop_test.exs --include interop
+  Run with: mix test test/arbor_acp/integration/acp_interop_test.exs --only interop_acp
   """
 
   use ExUnit.Case, async: false
@@ -104,8 +104,9 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
     end
   end
 
-  describe "ExMCP ACP Client -> TypeScript ACP Agent" do
-    test "connects, prompts, and folds streamed text into the prompt result", context do
+  describe "ArborACP Client -> TypeScript ACP Agent" do
+    test "connects, prompts, and explicitly collects streamed text separately from the result",
+         context do
       skip_without_node(context)
 
       {:ok, client} =
@@ -120,11 +121,11 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
         {:ok, %{"sessionId" => session_id}} =
           Client.new_session(client, File.cwd!(), timeout: 10_000)
 
-        {:ok, result} =
-          Client.prompt(client, session_id, "hello from Elixir client", timeout: 10_000)
+        {:ok, %{result: result, text: text, truncated?: false}} =
+          Client.prompt_text(client, session_id, "hello from Elixir client", timeout: 10_000)
 
         assert result["stopReason"] == "end_turn"
-        assert result["text"] == "Hello from TypeScript ACP agent: hello from Elixir client"
+        assert text == "Hello from TypeScript ACP agent: hello from Elixir client"
 
         assert_receive {:acp_session_update, ^session_id,
                         %{
@@ -152,7 +153,7 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
     end
   end
 
-  describe "TypeScript ACP Client -> ExMCP ACP Agent" do
+  describe "TypeScript ACP Client -> ArborACP Agent" do
     test "connects, prompts, and receives streamed updates", context do
       skip_without_node(context)
 
@@ -240,8 +241,8 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
 
         assert Enum.find(config_options, &(&1["id"] == "auto_retry"))["currentValue"] == true
 
-        {:ok, result} =
-          Client.prompt(
+        {:ok, %{result: result, text: text, truncated?: false}} =
+          Client.prompt_text(
             client,
             session_id,
             [
@@ -262,7 +263,7 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
           )
 
         assert result["stopReason"] == "end_turn"
-        assert result["text"] == "Hello from TypeScript everything agent"
+        assert text == "Hello from TypeScript everything agent"
 
         request_methods = collect_everything_client_requests(session_id, 8)
 
@@ -411,8 +412,8 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
         assert {:ok, %{"sessionId" => session_id}} =
                  Client.new_session(client, File.cwd!(), timeout: 10_000)
 
-        assert {:ok, %{"stopReason" => "end_turn", "text" => text}} =
-                 Client.prompt(client, session_id, "route me to v1", timeout: 10_000)
+        assert {:ok, %{result: %{"stopReason" => "end_turn"}, text: text, truncated?: false}} =
+                 Client.prompt_text(client, session_id, "route me to v1", timeout: 10_000)
 
         assert text == "Hello from the v1 implementation."
       after

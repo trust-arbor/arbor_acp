@@ -5,6 +5,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
   alias Arbor.ACP.Adapters.Pi.Settings
   alias Arbor.ACP.Adapters.Pi.SlashCommands
   alias Arbor.ACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner
 
   setup do
     tmp_dir = Path.join(System.tmp_dir!(), "pi_test_#{System.unique_integer([:positive])}")
@@ -681,16 +682,9 @@ defmodule Arbor.ACP.Adapters.PiTest do
       # Keep both stdio pipes attached: redirecting stdout to /dev/null lets
       # the port observe EOF before the managed write on Linux. Read the echo
       # before closing so the fixture also verifies the native RPC command.
-      port =
-        Port.open({:spawn_executable, System.find_executable("cat")}, [
-          :binary,
-          :exit_status,
-          :use_stdio
-        ])
+      {:ok, port} = PortRunner.open("cat", [], [], Pi)
 
-      on_exit(fn ->
-        if Port.info(port), do: Port.close(port)
-      end)
+      on_exit(fn -> PortRunner.close(port) end)
 
       available_models =
         Enum.map(1..300, fn index ->
@@ -718,7 +712,9 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert {:messages_and_reply, [update], %{"configOptions" => confirmation}, new_state} =
                Pi.translate_outbound(msg, state)
 
-      assert_receive {^port, {:data, rpc_line}}, 1_000
+      generation = PortRunner.identity(port)
+      assert_receive {:arbor_rpc, ^generation, {:frame, token, rpc_line}}, 1_000
+      assert :ok = PortRunner.ack(port, token)
 
       assert Jason.decode!(rpc_line) == %{
                "type" => "set_model",
@@ -739,14 +735,8 @@ defmodule Arbor.ACP.Adapters.PiTest do
     end
 
     test "managed model confirmation reports missing and closed ports", %{state: state} do
-      port =
-        Port.open({:spawn_executable, System.find_executable("cat")}, [
-          :binary,
-          :exit_status,
-          :use_stdio
-        ])
-
-      Port.close(port)
+      {:ok, port} = PortRunner.open("cat", [], [], Pi)
+      PortRunner.close(port)
 
       msg = %{
         "method" => "session/set_config_option",

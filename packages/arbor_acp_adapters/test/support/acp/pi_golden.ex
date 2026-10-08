@@ -143,6 +143,8 @@ defmodule Arbor.ACP.Test.PiGolden do
   import ExUnit.Assertions, only: [flunk: 1, assert: 1]
 
   alias Arbor.ACP.Adapters.Pi
+  alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner
+  alias Arbor.RPC.{Framing, Subprocess}
 
   defmodule Entry do
     @moduledoc "One transcript entry: the step as executed and the adapter's normalized result."
@@ -431,25 +433,39 @@ defmodule Arbor.ACP.Test.PiGolden do
   end
 
   defp execute({:port_data, data}, state, _transcript, _ctx) when is_binary(data) do
-    {result, state} =
-      {state.port, {:data, data}} |> Pi.handle_adapter_message(state) |> after_step(state)
+    {result, state} = model_port_data(data, state) |> after_step(state)
 
     {%{kind: :port_data, data: data}, result, state}
   end
 
   defp execute({:port_exit, code}, state, _transcript, _ctx) when is_integer(code) do
     port = state.port
-    if is_port(port) and Port.info(port), do: exit_fake_pi(port, code)
+
+    message =
+      if match?(%Subprocess{}, port),
+        do: exit_fake_pi(port, code),
+        else: {port, {:exit_status, code}}
+
+    message = with_model_remainder(message, state.buffer)
 
     {result, state} =
-      {port, {:exit_status, code}} |> Pi.handle_adapter_message(state) |> after_step(state)
+      message |> Pi.handle_adapter_message(state) |> after_step(state)
 
     {%{kind: :port_exit, code: code}, result, state}
   end
 
   defp execute(:port_closed, state, _transcript, _ctx) do
+    message =
+      if match?(%Subprocess{}, state.port) do
+        generation = PortRunner.identity(state.port)
+        PortRunner.close(state.port)
+        {:arbor_rpc, generation, {:closed, :closed, state.buffer}}
+      else
+        {state.port, :closed}
+      end
+
     {result, state} =
-      {state.port, :closed} |> Pi.handle_adapter_message(state) |> after_step(state)
+      message |> Pi.handle_adapter_message(state) |> after_step(state)
 
     {%{kind: :port_closed}, result, state}
   end
@@ -572,7 +588,7 @@ defmodule Arbor.ACP.Test.PiGolden do
     end
   end
 
-  defp put_port_writes(result, %{port: port}) when is_port(port) do
+  defp put_port_writes(result, %{port: %Subprocess{} = port}) do
     case collect_port_writes(port) do
       [] -> result
       port_writes -> Map.put(result, :port_writes, port_writes)
@@ -584,24 +600,24 @@ defmodule Arbor.ACP.Test.PiGolden do
   # -- fake pi I/O ----------------------------------------------------------
 
   defp collect_port_writes(port) do
-    if Port.info(port) do
-      sentinel = "__pi_golden_sentinel_#{System.unique_integer([:positive])}\n"
-      Port.command(port, sentinel)
-      collect_until(port, sentinel, "")
+    if PortRunner.connected?(port) do
+      sentinel = "__pi_golden_sentinel_#{System.unique_integer([:positive])}"
+      :ok = PortRunner.command(port, sentinel <> "\n")
+      collect_until(port, PortRunner.identity(port), sentinel, "")
     else
       []
     end
   end
 
-  defp collect_until(port, sentinel, acc) do
+  defp collect_until(port, generation, sentinel, acc) do
     receive do
-      {^port, {:data, data}} ->
-        acc = acc <> data
+      {:arbor_rpc, ^generation, {:frame, token, data}} ->
+        :ok = PortRunner.ack(port, token)
 
-        case String.split(acc, sentinel, parts: 2) do
-          [before, ""] -> decode_writes(before)
-          [before, rest] -> flunk("fake pi echoed #{inspect(rest)} after the sentinel: #{before}")
-          [_] -> collect_until(port, sentinel, acc)
+        if data == sentinel do
+          decode_writes(acc)
+        else
+          collect_until(port, generation, sentinel, acc <> data <> "\n")
         end
     after
       @port_timeout ->
@@ -610,14 +626,45 @@ defmodule Arbor.ACP.Test.PiGolden do
   end
 
   defp exit_fake_pi(port, code) do
-    Port.command(port, "__exit__ #{code}\n")
+    generation = PortRunner.identity(port)
+    :ok = PortRunner.command(port, "__exit__ #{code}\n")
 
     receive do
-      {^port, {:exit_status, ^code}} -> :ok
+      {:arbor_rpc, ^generation, {:closed, {:exit_status, ^code}, _remainder}} = event -> event
     after
       @port_timeout -> flunk("fake pi did not exit with #{code} within #{@port_timeout}ms")
     end
   end
+
+  # Model native input separately from the fake CLI's echoed outbound writes.
+  # Shared framing retains chunk boundaries; only observable messages/writes
+  # enter the golden transcript. Runtime pressure/EOF tests use actual actors.
+  defp model_port_data(data, %{port: %Subprocess{} = port} = state) do
+    decoder = state.framing || Framing.new()
+    {:ok, lines, decoder} = Framing.push(decoder, data)
+    state = %{state | framing: decoder, buffer: Framing.remainder(decoder)}
+    generation = PortRunner.identity(port)
+
+    {messages, state} =
+      Enum.reduce(lines, {[], state}, fn line, {messages, state} ->
+        event = {:arbor_rpc, generation, {:frame, make_ref(), line}}
+
+        case Pi.handle_adapter_message(event, state) do
+          {:messages, emitted, state} -> {messages ++ emitted, state}
+          {:skip, state} -> {messages, state}
+        end
+      end)
+
+    if messages == [], do: {:skip, state}, else: {:messages, messages, state}
+  end
+
+  defp model_port_data(data, state),
+    do: Pi.handle_adapter_message({state.port, {:data, data}}, state)
+
+  defp with_model_remainder({:arbor_rpc, generation, {:closed, reason, _actual}}, model),
+    do: {:arbor_rpc, generation, {:closed, reason, model}}
+
+  defp with_model_remainder(message, _model), do: message
 
   # Decodes an NDJSON batch while enforcing its framing: every object,
   # including the last, must be terminated by exactly one "\n".

@@ -11,3 +11,6 @@ _verification/
 
 /packages/*/doc/
 **/tmp/
+
+
+/.arbor-v2/

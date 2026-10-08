@@ -167,6 +167,7 @@ defmodule Arbor.ACP.ClientTest do
           to_client: to_client_relay,
           to_agent: to_agent_relay,
           updates: updates,
+          prompt_result: Keyword.get(opts, :prompt_result, %{"stopReason" => "end_turn"}),
           load_updates: load_updates,
           permission_request: permission_request,
           cancel_permission_request: cancel_permission_request,
@@ -397,7 +398,7 @@ defmodule Arbor.ACP.ClientTest do
       response =
         Jason.encode!(%{
           "jsonrpc" => "2.0",
-          "result" => %{"stopReason" => "end_turn"},
+          "result" => state.prompt_result,
           "id" => id
         })
 
@@ -589,6 +590,36 @@ defmodule Arbor.ACP.ClientTest do
     })
   end
 
+  test "scoped custom transport confirms close and retires client processes" do
+    {:ok, to_client_relay} = MessageRelay.start_link()
+    {:ok, to_agent_relay} = MessageRelay.start_link()
+    agent = MockACPAgent.start(to_client_relay, to_agent_relay)
+    owner = self()
+
+    assert {:ok, :retained} =
+             Client.with_connection(
+               [
+                 transport_mod: MockACPTransport,
+                 command: ["mock"],
+                 agent_pid: agent,
+                 to_client_relay: to_client_relay,
+                 to_agent_relay: to_agent_relay,
+                 close_listener: owner
+               ],
+               fn client ->
+                 state = :sys.get_state(client)
+                 send(owner, {:scoped_processes, [client, state.handler_pid, state.receiver_pid]})
+                 :retained
+               end
+             )
+
+    assert_receive :mock_acp_transport_closed
+    refute_receive :mock_acp_transport_closed
+    assert_receive {:scoped_processes, pids}
+    assert Enum.all?(pids, &(not Process.alive?(&1)))
+    assert Process.alive?(agent)
+  end
+
   describe "initialize handshake" do
     test "stores agent capabilities" do
       {client, _agent} = start_client()
@@ -600,7 +631,7 @@ defmodule Arbor.ACP.ClientTest do
       assert {:ok, auth_methods} = Client.auth_methods(client)
       assert [%{"id" => "api-key"}] = auth_methods
 
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
     end
 
     test "honors a configurable total initialize timeout and closes the transport" do
@@ -657,7 +688,7 @@ defmodule Arbor.ACP.ClientTest do
       {client, _agent} =
         start_client([initialize_delay_ms: 40], initialize_timeout: 200)
 
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
     end
 
     test "rejects initialize responses with a missing protocolVersion" do
@@ -1222,7 +1253,7 @@ defmodule Arbor.ACP.ClientTest do
       {:ok, _} = Client.new_session(client, "/tmp")
       {:ok, _} = Client.prompt(client, "sess_mock_001", "Do something")
 
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
     end
 
     test "slow session update handlers do not block prompt completion or event listener" do
@@ -1252,7 +1283,7 @@ defmodule Arbor.ACP.ClientTest do
       assert update["sessionUpdate"] == "agent_message_chunk"
       assert_receive {:blocking_update_handler_started, handler_pid, ^update}, 500
 
-      assert {:ok, %{"text" => "streamed"}} = Task.await(task, 1_000)
+      assert {:ok, %{"stopReason" => "end_turn"}} = Task.await(task, 1_000)
       send(handler_pid, :release_update_handler)
     end
 
@@ -1291,10 +1322,8 @@ defmodule Arbor.ACP.ClientTest do
                ])
     end
 
-    test "merges streamed agent_message_chunk text into the prompt result" do
-      # Agents like grok stream the answer via session/update agent_message_chunk
-      # rather than returning it in the prompt result. The client must accumulate
-      # that text and surface it as result["text"]; thought chunks are excluded.
+    test "explicitly collects streamed message text separately from the result" do
+      # The convenience retains the result and excludes thought chunks.
       updates = [
         %{
           "sessionUpdate" => "agent_thought_chunk",
@@ -1313,8 +1342,9 @@ defmodule Arbor.ACP.ClientTest do
       {client, _agent} = start_client(updates: updates)
       {:ok, _} = Client.new_session(client, "/tmp")
 
-      assert {:ok, result} = Client.prompt(client, "sess_mock_001", "hi")
-      assert result["text"] == "Hello world."
+      assert {:ok,
+              %{result: %{"stopReason" => "end_turn"}, text: "Hello world.", truncated?: false}} =
+               Client.prompt_text(client, "sess_mock_001", "hi")
     end
 
     test "ignores agent_message_chunk text when no prompt is pending" do
@@ -1337,10 +1367,107 @@ defmodule Arbor.ACP.ClientTest do
       assert {:ok, %{"sessionId" => "sess_loaded_001"}} =
                Client.load_session(client, "sess_mock_001", "/tmp/project")
 
-      assert {:ok, %{"stopReason" => "end_turn", "text" => "fresh"}} =
-               Client.prompt(client, "sess_mock_001", "hello")
+      assert {:ok, %{result: %{"stopReason" => "end_turn"}, text: "fresh", truncated?: false}} =
+               Client.prompt_text(client, "sess_mock_001", "hello")
     end
   end
+
+  describe "prompt result fidelity and bounded text" do
+    test "raw prompt preserves extensions and does not retain streamed text" do
+      peer = %{
+        "stopReason" => "end_turn",
+        "text" => "peer extension",
+        "usage" => nil,
+        "_meta" => %{"ex_mcp" => %{"text" => "metadata"}},
+        "vendor" => 42
+      }
+
+      {client, _} = start_client(updates: [chunk("stream")], prompt_result: peer)
+      {:ok, _} = Client.new_session(client, "/tmp")
+      assert {:ok, ^peer} = Client.prompt(client, "sess_mock_001", "hello")
+      assert :sys.get_state(client).prompt_text == %{}
+    end
+
+    test "UTF-8 truncation retains a prefix and cannot append later chunks" do
+      {client, _} =
+        start_client([updates: [chunk("a😀"), chunk("later")]], max_prompt_text_bytes: 4)
+
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      assert {:ok, %{text: "a", truncated?: true, result: %{"stopReason" => "end_turn"}}} =
+               Client.prompt_text(client, "sess_mock_001", "hello", max_text_bytes: 100)
+
+      assert :sys.get_state(client).prompt_text == %{}
+    end
+
+    test "malformed peer completion cannot impersonate a collected result" do
+      for peer <- [nil, 42, "bad", true, []] do
+        {client, _} = start_client(prompt_result: peer)
+        {:ok, _} = Client.new_session(client, "/tmp")
+        assert {:ok, ^peer} = Client.prompt(client, "sess_mock_001", "hello")
+
+        assert {:error, :invalid_prompt_response} =
+                 Client.prompt_text(client, "sess_mock_001", "hello")
+
+        assert :sys.get_state(client).prompt_text == %{}
+      end
+    end
+
+    test "per-call collection limit can lower the configured limit" do
+      {client, _} = start_client(updates: [chunk("abc"), chunk("d")])
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      assert {:ok, %{text: "abc", truncated?: true}} =
+               Client.prompt_text(client, "sess_mock_001", "hello", max_text_bytes: 3)
+    end
+
+    test "empty streams and inline peer text remain separate" do
+      peer = %{"stopReason" => "end_turn", "text" => "inline"}
+      {client, _} = start_client(prompt_result: peer)
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      assert {:ok, %{text: "", result: ^peer, truncated?: false}} =
+               Client.prompt_text(client, "sess_mock_001", "hello")
+    end
+
+    test "capacity rejection does not leave a collecting prompt behind" do
+      {client, _} = start_client([ignore_method: "session/prompt"], max_pending_requests: 1)
+      {:ok, _} = Client.new_session(client, "/tmp")
+      task = Task.async(fn -> Client.prompt(client, "sess_mock_001", "wait", timeout: 150) end)
+      assert_receive {:ignored_request, "session/prompt"}, 500
+
+      assert {:error, :too_many_pending_requests} =
+               Client.prompt_text(client, "another-session", "hello")
+
+      assert :sys.get_state(client).prompt_text == %{}
+      assert {:error, :timeout} = Task.await(task, 500)
+    end
+
+    test "overlap is rejected before sending and timeout clears collection" do
+      {client, _} = start_client(ignore_method: "session/prompt")
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      task =
+        Task.async(fn -> Client.prompt_text(client, "sess_mock_001", "wait", timeout: 150) end)
+
+      assert_receive {:ignored_request, "session/prompt"}, 500
+      assert {:error, :prompt_in_progress} = Client.prompt(client, "sess_mock_001", "overlap")
+
+      assert {:error, :prompt_in_progress} =
+               Client.prompt_text(client, "sess_mock_001", "overlap")
+
+      assert {:error, :timeout} = Task.await(task, 500)
+      # The call's process terminates; its DOWN retires the abandoned buffer.
+      assert {:ok, :ready} = Client.status(client)
+      assert :sys.get_state(client).prompt_text == %{}
+    end
+  end
+
+  defp chunk(text),
+    do: %{
+      "sessionUpdate" => "agent_message_chunk",
+      "content" => %{"type" => "text", "text" => text}
+    }
 
   describe "cancel/2" do
     test "sends notification without blocking" do
@@ -1839,11 +1966,11 @@ defmodule Arbor.ACP.ClientTest do
       {client, _agent} = start_client()
 
       # Verify we start ready
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
 
       # Disconnect and verify
       :ok = Client.disconnect(client)
-      assert Client.status(client) == :disconnected
+      assert Client.status!(client) == :disconnected
     end
   end
 
@@ -1852,7 +1979,7 @@ defmodule Arbor.ACP.ClientTest do
       {client, _agent} = start_client()
 
       assert :ok = Client.disconnect(client)
-      assert Client.status(client) == :disconnected
+      assert Client.status!(client) == :disconnected
     end
   end
 end

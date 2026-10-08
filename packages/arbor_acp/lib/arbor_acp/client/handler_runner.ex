@@ -7,8 +7,8 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
   defstruct [:handler_mod, :handler_state, :owner]
 
-  def start_link(handler_mod, handler_opts, owner) do
-    GenServer.start_link(__MODULE__, {handler_mod, handler_opts, owner})
+  def start_link(handler_mod, handler_opts, owner, scope \\ nil) do
+    GenServer.start_link(__MODULE__, {handler_mod, handler_opts, owner, scope})
   end
 
   # rc.6 compatibility: unbounded enqueue used Client defaults after security harden.
@@ -105,8 +105,13 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   @callback_pairs [handle_session_update: [3, 4], handle_permission_request: [4, 5]]
 
   @impl true
-  def init({handler_mod, handler_opts, owner}) do
+  def init({handler_mod, handler_opts, owner, scope}) do
     Process.flag(:trap_exit, true)
+
+    case Arbor.ACP.Client.ConnectionScope.register(scope, :handler) do
+      :ok -> :ok
+      {:error, reason} -> exit(reason)
+    end
 
     case missing_callback(handler_mod) do
       nil -> init_handler(handler_mod, handler_opts, owner)

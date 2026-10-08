@@ -44,7 +44,7 @@ defmodule Arbor.ACP.ProtocolTest do
     # other ACP agents would reject.
     test "spec regression: raises when cwd is nil — cwd is required per spec" do
       assert_raise FunctionClauseError, fn ->
-        Protocol.encode_session_new(nil)
+        apply(Protocol, :encode_session_new, [nil])
       end
     end
 
@@ -98,7 +98,7 @@ defmodule Arbor.ACP.ProtocolTest do
     # https://agentclientprotocol.com/protocol/session-setup
     test "spec regression: raises when cwd is nil — cwd is required per spec" do
       assert_raise FunctionClauseError, fn ->
-        Protocol.encode_session_load("sess_abc", nil)
+        apply(Protocol, :encode_session_load, ["sess_abc", nil])
       end
     end
   end
@@ -133,7 +133,7 @@ defmodule Arbor.ACP.ProtocolTest do
     # has the same param shape as session/load — cwd is required.
     test "spec regression: raises when cwd is nil — cwd is required per spec" do
       assert_raise FunctionClauseError, fn ->
-        Protocol.encode_session_resume("sess_abc", nil)
+        apply(Protocol, :encode_session_resume, ["sess_abc", nil])
       end
     end
   end
@@ -159,7 +159,7 @@ defmodule Arbor.ACP.ProtocolTest do
 
     test "raises when cwd is nil because cwd is required per ACP lifecycle shape" do
       assert_raise FunctionClauseError, fn ->
-        Protocol.encode_session_fork("sess_abc", nil)
+        apply(Protocol, :encode_session_fork, ["sess_abc", nil])
       end
     end
   end
