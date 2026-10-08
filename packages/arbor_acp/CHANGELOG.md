@@ -2,6 +2,14 @@
 
 ## 1.0.0-rc.1 (unreleased)
 
+- Return tagged operational Client/Agent status, with explicit `status!`
+  variants. Add setter timeout options (30-second caller default); caller
+  timeout and unavailable client become stable error tuples.
+- Add `Client.stop/1,2,3` with one finite caller budget for cleanup and process
+  termination. Preserve cleanup errors; disconnect retains the client process.
+  Agent stop also accepts a finite timeout. Document linked startup and queued
+  cancellation semantics.
+
 - Require ArborRPC `~> 1.0.0-rc.1`.
 
 - Start independent 1.x versioning for this newly extracted package.

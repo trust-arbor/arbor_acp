@@ -29,7 +29,7 @@ try do
   {:ok, result} = Client.prompt(client, session_id, "Hello")
   IO.inspect(result)
 after
-  case Client.disconnect(client) do
+  case Client.stop(client) do
     :ok -> :ok
     {:error, reason} -> IO.warn("ACP cleanup failed: #{inspect(reason)}")
   end
@@ -41,8 +41,10 @@ handshake returns an error. `new_session/3` requires an absolute working
 directory. A prompt accepts text or a list of content maps and returns the
 agent's result, including `stopReason`; updates arrive separately while it runs.
 Handle error tuples in an application rather than relying on the quickstart's
-pattern matches. `disconnect/1` closes owned transport resources and reports a
-known cleanup failure instead of claiming success.
+pattern matches. `stop/1,2,3` closes owned transport resources, reports cleanup failure and
+waits for client termination within one finite caller timeout (default 5 seconds).
+`disconnect/1` closes the transport while keeping the client process alive.
+Start functions return linked processes; supervise long-lived clients.
 
 Agents that do not speak ACP need `Arbor.ACP.AdapterTransport` and an adapter.
 The optional vendor bundle supplies Claude Code, Codex, Pi and ZCode adapters;
@@ -72,7 +74,13 @@ Use `authenticate/3` with an advertised method ID or a method-specific params
 map. `logout/2` requires the logout capability. Available models, modes and
 configuration selectors come from session responses and updates; do not assume
 every agent supports the same values. Apply them with `set_mode/3`,
-`set_model/3`, or `set_config_option/4`.
+`set_model/3`, or `set_config_option/4`. Each accepts a final keyword list
+(`set_mode/4`, `set_model/4`, `set_config_option/5`) with a caller `:timeout`,
+defaulting to 30 seconds. Caller expiry returns `{:error, :timeout}` without
+confirming remote cancellation or extending the pending-request lifetime.
+`Client.status/1,2` and `Agent.status/1,2` return `{:ok, status}` or an error;
+use their `status!` variants for explicit value-or-raise inspection.
+Cancellation returns `:ok` when queued, without confirming remote action.
 
 Boolean configuration controls require an explicit UI capability:
 

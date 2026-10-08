@@ -57,7 +57,7 @@ defmodule Arbor.ACP.Client do
   alias Arbor.ACP.Client.HandlerRunner
   alias Arbor.ACP.Protocol
   alias Arbor.RPC.LogSummary
-  alias Arbor.ACP.Internal.Options
+  alias Arbor.ACP.Internal.{Call, Options}
   alias Arbor.ACP.AdapterSupport.WorkspacePath
   alias Arbor.ACP.Transport.Stdio
 
@@ -122,15 +122,15 @@ defmodule Arbor.ACP.Client do
   @spec authenticate(GenServer.server(), String.t() | map(), keyword()) ::
           {:ok, map() | nil} | {:error, any()}
   def authenticate(client, method_id_or_params \\ %{}, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
-    GenServer.call(client, {:authenticate, method_id_or_params}, timeout)
+    timeout = Call.timeout!(opts, 30_000)
+    Call.call(client, {:authenticate, method_id_or_params}, timeout)
   end
 
   @doc "Logs out of the current authenticated state if the agent supports `auth.logout`."
   @spec logout(GenServer.server(), keyword()) :: {:ok, map() | nil} | {:error, any()}
   def logout(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
-    GenServer.call(client, :logout, timeout)
+    timeout = Call.timeout!(opts, 30_000)
+    Call.call(client, :logout, timeout)
   end
 
   @doc """
@@ -142,8 +142,8 @@ defmodule Arbor.ACP.Client do
   @spec new_session(GenServer.server(), String.t(), keyword()) ::
           {:ok, map()} | {:error, any()}
   def new_session(client, cwd, opts \\ []) when is_binary(cwd) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
-    GenServer.call(client, {:new_session, cwd, LifecycleParams.client_opts(opts)}, timeout)
+    timeout = Call.timeout!(opts, 30_000)
+    Call.call(client, {:new_session, cwd, LifecycleParams.client_opts(opts)}, timeout)
   end
 
   @doc """
@@ -154,9 +154,9 @@ defmodule Arbor.ACP.Client do
   @spec load_session(GenServer.server(), String.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, any()}
   def load_session(client, session_id, cwd, opts \\ []) when is_binary(cwd) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
+    timeout = Call.timeout!(opts, 30_000)
 
-    GenServer.call(
+    Call.call(
       client,
       {:load_session, session_id, cwd, LifecycleParams.client_opts(opts)},
       timeout
@@ -171,9 +171,9 @@ defmodule Arbor.ACP.Client do
   @spec resume_session(GenServer.server(), String.t(), String.t(), keyword()) ::
           {:ok, map() | nil} | {:error, any()}
   def resume_session(client, session_id, cwd, opts \\ []) when is_binary(cwd) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
+    timeout = Call.timeout!(opts, 30_000)
 
-    GenServer.call(
+    Call.call(
       client,
       {:resume_session, session_id, cwd, LifecycleParams.client_opts(opts)},
       timeout
@@ -189,9 +189,9 @@ defmodule Arbor.ACP.Client do
   @spec fork_session(GenServer.server(), String.t(), String.t(), keyword()) ::
           {:ok, map() | nil} | {:error, any()}
   def fork_session(client, session_id, cwd, opts \\ []) when is_binary(cwd) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
+    timeout = Call.timeout!(opts, 30_000)
 
-    GenServer.call(
+    Call.call(
       client,
       {:fork_session, session_id, cwd, LifecycleParams.client_opts(opts)},
       timeout
@@ -208,24 +208,24 @@ defmodule Arbor.ACP.Client do
   @spec prompt(GenServer.server(), String.t(), String.t() | [map()], keyword()) ::
           {:ok, map()} | {:error, any()}
   def prompt(client, session_id, content, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 300_000)
-    GenServer.call(client, {:prompt, session_id, content}, timeout)
+    timeout = Call.timeout!(opts, 300_000)
+    Call.call(client, {:prompt, session_id, content}, timeout)
   end
 
   @doc "Lists available sessions from the agent. Stabilized in ACP spec March 9, 2026."
   @spec list_sessions(GenServer.server(), keyword()) :: {:ok, map()} | {:error, any()}
   def list_sessions(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
-    GenServer.call(client, {:list_sessions, opts}, timeout)
+    timeout = Call.timeout!(opts, 30_000)
+    Call.call(client, {:list_sessions, opts}, timeout)
   end
 
-  @doc "Cancels the current prompt in a session (fire-and-forget)."
+  @doc "Queues cancellation of the current prompt; :ok does not confirm remote cancellation."
   @spec cancel(GenServer.server(), String.t()) :: :ok
   def cancel(client, session_id) do
     GenServer.cast(client, {:cancel, session_id})
   end
 
-  @doc "Sends a `$/cancel_request` notification for a specific JSON-RPC request."
+  @doc "Queues a `$/cancel_request` notification; :ok does not confirm delivery."
   @spec cancel_request(GenServer.server(), integer() | String.t() | nil) :: :ok
   def cancel_request(client, request_id) do
     GenServer.cast(client, {:cancel_request, request_id})
@@ -235,54 +235,61 @@ defmodule Arbor.ACP.Client do
   @spec close_session(GenServer.server(), String.t(), keyword()) ::
           {:ok, map() | nil} | {:error, any()}
   def close_session(client, session_id, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
-    GenServer.call(client, {:close_session, session_id}, timeout)
+    timeout = Call.timeout!(opts, 30_000)
+    Call.call(client, {:close_session, session_id}, timeout)
   end
 
   @doc "Deletes a session from the agent's session history."
   @spec delete_session(GenServer.server(), String.t(), keyword()) ::
           {:ok, map() | nil} | {:error, any()}
   def delete_session(client, session_id, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
-    GenServer.call(client, {:delete_session, session_id}, timeout)
+    timeout = Call.timeout!(opts, 30_000)
+    Call.call(client, {:delete_session, session_id}, timeout)
   end
 
   @doc "Sets the agent mode for a session."
-  @spec set_mode(GenServer.server(), String.t(), String.t()) :: {:ok, map()} | {:error, any()}
-  def set_mode(client, session_id, mode_id) do
-    GenServer.call(client, {:set_mode, session_id, mode_id})
+  @spec set_mode(GenServer.server(), String.t(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, any()}
+  def set_mode(client, session_id, mode_id, opts \\ []) do
+    timeout = opts |> Keyword.validate!([:timeout]) |> Call.timeout!(30_000)
+    Call.call(client, {:set_mode, session_id, mode_id}, timeout)
   end
 
   @doc "Sets the model for a session."
-  @spec set_model(GenServer.server(), String.t(), String.t()) :: {:ok, map()} | {:error, any()}
-  def set_model(client, session_id, model_id) do
-    GenServer.call(client, {:set_model, session_id, model_id})
+  @spec set_model(GenServer.server(), String.t(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, any()}
+  def set_model(client, session_id, model_id, opts \\ []) do
+    timeout = opts |> Keyword.validate!([:timeout]) |> Call.timeout!(30_000)
+    Call.call(client, {:set_model, session_id, model_id}, timeout)
   end
 
   @doc "Sets a config option for a session."
-  @spec set_config_option(GenServer.server(), String.t(), String.t(), any()) ::
+  @spec set_config_option(GenServer.server(), String.t(), String.t(), any(), keyword()) ::
           {:ok, map()} | {:error, any()}
-  def set_config_option(client, session_id, config_id, value) do
-    GenServer.call(client, {:set_config_option, session_id, config_id, value})
+  def set_config_option(client, session_id, config_id, value, opts \\ []) do
+    timeout = opts |> Keyword.validate!([:timeout]) |> Call.timeout!(30_000)
+    Call.call(client, {:set_config_option, session_id, config_id, value}, timeout)
   end
 
   @doc "Returns the agent's capabilities from the initialize handshake."
-  @spec agent_capabilities(GenServer.server()) :: {:ok, map() | nil}
+  @spec agent_capabilities(GenServer.server()) :: {:ok, map() | nil} | {:error, term()}
   def agent_capabilities(client) do
-    GenServer.call(client, :agent_capabilities)
+    Call.call(client, :agent_capabilities)
   end
 
   @doc "Returns the agent's authentication methods from the initialize handshake."
-  @spec auth_methods(GenServer.server()) :: {:ok, [map()]}
+  @spec auth_methods(GenServer.server()) :: {:ok, [map()]} | {:error, term()}
   def auth_methods(client) do
-    GenServer.call(client, :auth_methods)
+    Call.call(client, :auth_methods)
   end
 
   @doc "Returns the client connection status."
-  @spec status(GenServer.server()) :: atom()
-  def status(client) do
-    GenServer.call(client, :status)
-  end
+  @spec status(GenServer.server(), keyword()) :: {:ok, atom()} | {:error, term()}
+  def status(client, opts \\ []), do: Call.status(client, opts)
+
+  @doc "Returns connection status, raising if the client is unavailable."
+  @spec status!(GenServer.server(), keyword()) :: atom()
+  def status!(client, opts \\ []), do: client |> status(opts) |> Call.unwrap!()
 
   @doc """
   Ends a session.
@@ -293,14 +300,26 @@ defmodule Arbor.ACP.Client do
   @spec end_session(GenServer.server(), String.t()) ::
           :ok | {:ok, map() | nil} | {:error, any()}
   def end_session(client, session_id) do
-    GenServer.call(client, {:end_session, session_id})
+    Call.call(client, {:end_session, session_id})
   end
 
-  @doc "Disconnects from the agent."
+  @doc "Disconnects the transport and settles pending requests, retaining the client process."
   @spec disconnect(GenServer.server()) :: :ok | {:error, term()}
   def disconnect(client) do
-    GenServer.call(client, :disconnect)
+    Call.call(client, :disconnect)
   end
+
+  @doc """
+  Stops this client after transport cleanup and waits for its process to exit.
+
+  One finite `:timeout` (default 5_000 ms) covers cleanup and process termination.
+  Already-stopped clients return `:ok`. Cleanup failure or timeout remains an
+  error; process death does not prove physical IO cleanup. Caller timeout does
+  not kill unrelated processes or extend the transport's own cleanup budget.
+  A supervisor still applies its child restart policy.
+  """
+  @spec stop(GenServer.server(), term(), keyword()) :: :ok | {:error, term()}
+  def stop(client, reason \\ :normal, opts \\ []), do: Call.stop(client, reason, opts)
 
   # GenServer callbacks
 
@@ -553,6 +572,11 @@ defmodule Arbor.ACP.Client do
         emit_session_ended(session_id)
         {:reply, :ok, %{state | sessions: Map.delete(state.sessions, session_id)}}
     end
+  end
+
+  def handle_call({:stop, reason}, _from, state) do
+    state = do_disconnect(state)
+    {:stop, reason, {:stopping, state.cleanup_result, state.handler_pid}, state}
   end
 
   def handle_call(:disconnect, _from, state) do

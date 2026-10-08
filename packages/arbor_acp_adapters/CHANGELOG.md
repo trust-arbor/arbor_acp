@@ -2,6 +2,8 @@
 
 ## 1.0.0-rc.1 (unreleased)
 
+- Update lifecycle examples and tests for core ACP tagged status and bounded stop.
+
 - Require ArborRPC `~> 1.0.0-rc.1` and ArborACP `~> 1.0.0-rc.1`.
 
 - Start independent 1.x versioning for this newly extracted package.

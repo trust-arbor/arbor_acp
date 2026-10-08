@@ -58,7 +58,7 @@ try do
   {:ok, result} = Client.prompt(client, session_id, "Reply with a short greeting.")
   IO.inspect(result)
 after
-  case Client.disconnect(client) do
+  case Client.stop(client) do
     :ok -> :ok
     {:error, reason} -> IO.warn("ACP cleanup failed: #{inspect(reason)}")
   end

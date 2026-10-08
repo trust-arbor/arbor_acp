@@ -600,7 +600,7 @@ defmodule Arbor.ACP.ClientTest do
       assert {:ok, auth_methods} = Client.auth_methods(client)
       assert [%{"id" => "api-key"}] = auth_methods
 
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
     end
 
     test "honors a configurable total initialize timeout and closes the transport" do
@@ -657,7 +657,7 @@ defmodule Arbor.ACP.ClientTest do
       {client, _agent} =
         start_client([initialize_delay_ms: 40], initialize_timeout: 200)
 
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
     end
 
     test "rejects initialize responses with a missing protocolVersion" do
@@ -1222,7 +1222,7 @@ defmodule Arbor.ACP.ClientTest do
       {:ok, _} = Client.new_session(client, "/tmp")
       {:ok, _} = Client.prompt(client, "sess_mock_001", "Do something")
 
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
     end
 
     test "slow session update handlers do not block prompt completion or event listener" do
@@ -1839,11 +1839,11 @@ defmodule Arbor.ACP.ClientTest do
       {client, _agent} = start_client()
 
       # Verify we start ready
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
 
       # Disconnect and verify
       :ok = Client.disconnect(client)
-      assert Client.status(client) == :disconnected
+      assert Client.status!(client) == :disconnected
     end
   end
 
@@ -1852,7 +1852,7 @@ defmodule Arbor.ACP.ClientTest do
       {client, _agent} = start_client()
 
       assert :ok = Client.disconnect(client)
-      assert Client.status(client) == :disconnected
+      assert Client.status!(client) == :disconnected
     end
   end
 end

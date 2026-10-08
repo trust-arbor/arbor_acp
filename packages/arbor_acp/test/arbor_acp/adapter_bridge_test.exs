@@ -661,7 +661,7 @@ defmodule Arbor.ACP.AdapterBridgeTest do
     assert :ok = PortRunner.command(handle, "skip\nnext\n")
     assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
     assert Jason.decode!(raw)["params"] == "next"
-    wait_for_bridge(fn -> SharedSubprocess.stats(handle).inflight == 0 end)
+    wait_for_bridge(fn -> SharedSubprocess.stats!(handle).inflight == 0 end)
     assert :ok = AdapterBridge.close(bridge)
   end
 

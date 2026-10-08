@@ -22,7 +22,7 @@ defmodule Arbor.ACP.Transport.StdioTest do
 
   test "per-frame limit excludes LF and accepts several frames in one native chunk" do
     state = child("printf '{}\\n{}\\n'; sleep 1", max_frame_bytes: 2)
-    eventually(fn -> Subprocess.stats(state.subprocess).frames == 2 end)
+    eventually(fn -> Subprocess.stats!(state.subprocess).frames == 2 end)
     assert {:ok, "{}", state} = Stdio.receive_message(state, 0)
     assert {:ok, "{}", state} = Stdio.receive_message(state, 0)
     assert {:error, :handshake_timeout} = Stdio.receive_message(state, 0)

@@ -81,7 +81,7 @@ defmodule Arbor.ACP.Integration.ACPEcosystemCLIInteropTest do
              )
 
     try do
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
       assert {:ok, capabilities} = Client.agent_capabilities(client)
       assert is_map(capabilities)
       assert {:ok, auth_methods} = Client.auth_methods(client)

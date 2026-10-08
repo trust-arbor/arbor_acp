@@ -26,7 +26,7 @@ defmodule Arbor.ACP do
   @doc """
   Starts an ACP client connected to an agent subprocess.
 
-  Shorthand for `Arbor.ACP.Client.start_link/1`.
+  Starts a process linked to the caller. Shorthand for `Arbor.ACP.Client.start_link/1`.
   """
   @spec start_client(keyword()) :: GenServer.on_start()
   def start_client(opts) do
@@ -36,7 +36,7 @@ defmodule Arbor.ACP do
   @doc """
   Starts an ACP agent runtime.
 
-  Shorthand for `Arbor.ACP.Agent.start_link/1`.
+  Starts a process linked to the caller. Shorthand for `Arbor.ACP.Agent.start_link/1`.
   """
   @spec start_agent(keyword()) :: GenServer.on_start()
   def start_agent(opts) do

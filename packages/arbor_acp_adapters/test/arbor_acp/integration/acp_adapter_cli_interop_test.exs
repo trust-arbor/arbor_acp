@@ -197,7 +197,7 @@ defmodule Arbor.ACP.Integration.ACPAdapterCLIInteropTest do
              )
 
     try do
-      assert Client.status(client) == :ready
+      assert Client.status!(client) == :ready
 
       assert {:ok, %{"sessionCapabilities" => %{"close" => %{}}}} =
                Client.agent_capabilities(client)
