@@ -1,42 +1,28 @@
 # ArborACP adapters
 
-Optional adapters for Claude Code, Codex, Pi, and ZCode, under `Arbor.ACP.Adapters.*`. This package depends on the generic `arbor_acp` core and `arbor_rpc`; consumers of the native ACP core do not need it.
+Optional Claude Code, Codex, Pi and ZCode adapters, under
+`Arbor.ACP.Adapters.*`. This package depends on core ACP and RPC.
 
-The original `2.0.0-rc.1` is published on Hex. This checkout corrects the
-new package to its independent 1.x line; existing releases and tags are preserved.
+Version `1.0.0-rc.1` is published for downstream migration testing. The original
+`2.0.0-rc.1` candidate is retired, with its archive and tag preserved. Stable
+qualification and the continuous 48-hour soak remain incomplete. See the
+[ExMCP migration guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/MIGRATING_V1_TO_V2.md).
 
-Version `1.0.0-rc.1` is an unpublished implementation snapshot. Vendor translation, session storage, prompt queues, MCP configuration, tool mapping, and credential/session environment policy belong here. Shared isolation, JSON-RPC validation, and workspace/name validation remain in their owning dependencies.
-
-The planned prerelease is for downstream migration testing. See the
-[v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)
-for package and namespace changes. Publication is pending; the stable-release
-48-hour gate has not passed, and vendor CLI executables remain separate.
-
-Its shared `arbor_rpc` source dependency requires a C17 compiler when installed
-on macOS/Darwin or Linux. `CC` selects one compiler executable. Source archives
-include C source rather than prebuilt helpers; assembled releases include the
-built target helper and need no runtime compiler. Windows native subprocess
-operations are unsupported. See the [RPC source-install policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates)
-for framing availability and the qualified platform/architecture boundary.
+Use Elixir 1.17 or newer with a compatible OTP release. Installing the transitive
+RPC source package on macOS/Darwin or Linux requires a C17 compiler. Assembled
+releases include the built helper and need no compiler at runtime; Windows native
+subprocess operations are unsupported. See the
+[RPC source-build policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates).
 
 ## Installation
 
-Use Elixir `~> 1.17` and reviewed local checkouts while the replacement 1.0 RC is unpublished. In a
-consumer project next to the ACP workspace and separate ArborRPC repository:
-
 ```elixir
-defp deps do
-  [
-    {:arbor_rpc, path: "../arbor_rpc", override: true},
-    {:arbor_acp, path: "../arbor_acp/packages/arbor_acp", override: true},
-    {:arbor_acp_adapters, path: "../arbor_acp/packages/arbor_acp_adapters"}
-  ]
-end
+{:arbor_acp_adapters, "== 1.0.0-rc.1"}
 ```
 
-Adjust paths, then run `mix deps.get`. Both overrides replace unpublished
-transitive Hex dependencies. After publication the planned dependency is
-`{:arbor_acp_adapters, "~> 1.0.0-rc.1"}`; it is not available from Hex yet.
+Run `mix deps.get`. The declared core/RPC dependencies resolve normally from Hex.
+An explicit prerelease range such as `~> 1.0.0-rc.1` also selects this candidate;
+exact pins and a committed lockfile make downstream reports reproducible.
 
 ## First adapted session
 
@@ -69,7 +55,7 @@ The default client handler rejects permission requests and file access, and
 declines elicitation. A host that supports those operations must provide its own
 handler and advertise the corresponding capabilities. Vendor authentication and
 network access are prerequisites for this example; the core's
-[echo example](https://github.com/trust-arbor/arbor_acp/tree/codex/shared-subprocess/packages/arbor_acp/examples/acp)
+[echo example](https://github.com/trust-arbor/arbor_acp/tree/main/packages/arbor_acp/examples/acp)
 is the credential-free starting point.
 
 The [adapter guide](docs/ADAPTER_GUIDE.md) covers executable selection, environment
@@ -116,23 +102,21 @@ prebuilt helper is promised.
 
 ## Standalone documentation
 
-Clone [ArborRPC](https://github.com/trust-arbor/arbor_rpc) separately while the
-dependency is unpublished. From the ACP workspace root, run:
+From the ACP workspace root, resolve published dependencies and build docs:
 
 ```sh
 cd packages/arbor_acp_adapters
-export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
-ARBOR_V2_LOCAL=1 MIX_ENV=dev mix deps.get
-ARBOR_V2_LOCAL=1 MIX_ENV=dev mix docs --warnings-as-errors
+MIX_ENV=dev mix deps.get
+MIX_ENV=dev mix docs --warnings-as-errors
 ```
 
-`ARBOR_RPC_PATH` selects the independent RPC checkout; `ARBOR_V2_LOCAL=1`
-selects the sibling ACP core package.
+For local dependency development, `ARBOR_RPC_PATH` selects RPC source and
+`ARBOR_V2_LOCAL=1` selects the sibling ACP core package.
 
 ExDoc is a dev-only dependency and does not run in consumer applications. Source
 links use `arbor_acp_adapters-v<version>` and the `packages/arbor_acp_adapters/` source prefix.
-Version tags are created only for a reviewed release; this unpublished prerelease
-snapshot does not imply that those prospective tags already exist.
+The published candidate has its owning package tag. Later versions require
+reviewed source and a fresh package-qualified tag.
 
-See the [contributor guide](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/CONTRIBUTING.md)
+See the [contributor guide](https://github.com/trust-arbor/arbor_acp/blob/main/CONTRIBUTING.md)
 for fixture tests, optional real CLI smoke tests and source-archive validation.

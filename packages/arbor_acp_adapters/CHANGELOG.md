@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Refresh published-RC installation guidance and consolidate current documentation.
+
+
 ## 1.0.0-rc.1 — 2026-10-08
 
 - Document core Client's explicit `prompt_text/4` collection contract and
@@ -32,7 +35,7 @@ The existing release and tag remain available.
   sessions and finite utilities, with explicit ACK, bounded credit and typed
   cleanup. Vendor CLI executables remain separate prerequisites.
 - Retain legacy `_meta.ex_mcp` extensions and Pi session storage identifiers.
-- Document [v1 to v2 migration](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md).
+- Document [v1 to v2 migration](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/MIGRATING_V1_TO_V2.md).
 - Consume the separate ArborRPC checkout through `ARBOR_RPC_PATH`; use
   `ARBOR_V2_LOCAL=1` only for the sibling ACP core during source development.
 - Add complete installation/session examples and a packaged

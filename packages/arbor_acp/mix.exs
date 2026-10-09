@@ -25,6 +25,7 @@ defmodule Arbor.ACP.MixProject do
           "README.md",
           {"usage-rules.md", title: "Agent usage rules"},
           "docs/ACP_GUIDE.md",
+          "docs/ADAPTER_EXTENSION_API.md",
           "CHANGELOG.md",
           {"examples/acp/README.md", [filename: "echo-example", title: "Echo agent example"]}
         ],

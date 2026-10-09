@@ -3,7 +3,7 @@
 The optional `arbor_acp_adapters` package translates vendor CLI protocols into
 ACP. Install it alongside the core as described in the [README](../README.md),
 then use `Arbor.ACP.Client` for sessions and prompts. Vendor executables and
-credentials are separate prerequisites. This unpublished RC describes the
+credentials are separate prerequisites. This published RC describes the
 checked-in implementations; fixture coverage is not a promise that every future
 CLI version or live account configuration works.
 
@@ -254,7 +254,7 @@ Use `Arbor.ACP.AdapterEvents` for ACP message construction and public
 `Arbor.ACP.AdapterSupport` helpers for shared policy and owned subprocess handles.
 For managed frame credit, `subprocess_receipt/2` must be pure: the bridge owns the
 ACK after output admission. The workspace's
-[adapter subprocess contract](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/docs/ADAPTER_EXTENSION_API.md)
+[adapter subprocess contract](https://github.com/trust-arbor/arbor_acp/blob/main/packages/arbor_acp/docs/ADAPTER_EXTENSION_API.md)
 documents result shapes, shutdown errors and v1 handle migration. Do not call
 core `Internal` modules.
 
@@ -271,8 +271,8 @@ core `Internal` modules.
 | Close fails | Retain the cleanup error; do not assume the owned child has been reaped |
 
 Ordinary tests use deterministic transcripts. The
-[contributor guide](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/CONTRIBUTING.md) distinguishes
+[contributor guide](https://github.com/trust-arbor/arbor_acp/blob/main/CONTRIBUTING.md) distinguishes
 official SDK interoperability, credential-free real CLI startup, and live model
 calls; those provide different evidence. See the [changelog](../CHANGELOG.md) and
-the [ACP core guide](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/packages/arbor_acp/docs/ACP_GUIDE.md)
+the [ACP core guide](https://github.com/trust-arbor/arbor_acp/blob/main/packages/arbor_acp/docs/ACP_GUIDE.md)
 for the rest of the controller/agent API.
