@@ -1,43 +1,28 @@
 # ArborACP
 
-ACP controller/client, native agent, and generic adapter runtime. This core package depends on `arbor_rpc` and contains no vendor adapter runtime modules. Add the optional `arbor_acp_adapters` package to use built-in Claude, Codex, Pi, or ZCode integrations.
+ACP clients, native agents and the generic adapter runtime. Add the optional
+`arbor_acp_adapters` package for bundled vendor implementations.
 
-The original `2.0.0-rc.1` is published on Hex. This checkout corrects the
-new package to its independent 1.x line; existing releases and tags are preserved.
+Version `1.0.0-rc.1` is published for downstream migration testing. The original
+`2.0.0-rc.1` candidate is retired, with its archive and tag preserved. Stable
+qualification and the continuous 48-hour soak remain incomplete. See the
+[ExMCP migration guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/MIGRATING_V1_TO_V2.md).
 
-Version `1.0.0-rc.1` is an unpublished implementation snapshot. ArborACP is the library name; its Hex package and OTP application are `arbor_acp`, and its module namespace is `Arbor.ACP.*`.
-
-The planned prerelease is for downstream migration testing. See the
-[v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)
-for replacing the v1 package/namespace and selecting the optional adapter bundle.
-Publication is pending; the stable-release 48-hour gate has not passed.
-
-Installing the transitive `arbor_rpc` source package on macOS/Darwin or Linux
-requires a C17 compiler, even when no subprocess is used. `CC` selects one
-compiler executable. There is no prebuilt-helper promise; assembled releases
-include the built helper and need no runtime compiler. Windows native subprocess
-operations are unsupported; framing is separate. See the [RPC source-install policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates).
+Use Elixir 1.17 or newer with a compatible OTP release. Installing the transitive
+RPC source package on macOS/Darwin or Linux requires a C17 compiler. Assembled
+releases include the built helper and need no compiler at runtime; Windows native
+subprocess operations are unsupported. See the
+[RPC source-build policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates).
 
 ## Installation
 
-Use Elixir `~> 1.17` with a compatible OTP release. While the replacement 1.0 RC is unpublished,
-use reviewed local checkouts of the ACP workspace and the separate ArborRPC
-repository. In a consumer project next to those checkouts:
-
 ```elixir
-defp deps do
-  [
-    {:arbor_rpc, path: "../arbor_rpc", override: true},
-    {:arbor_acp, path: "../arbor_acp/packages/arbor_acp"}
-  ]
-end
+{:arbor_acp, "== 1.0.0-rc.1"}
 ```
 
-Adjust the paths to your checkout layout, then run `mix deps.get`. The explicit
-RPC override replaces the unpublished transitive Hex dependency. Package
-development instead uses `ARBOR_RPC_PATH`, as shown below. Once the replacement 1.0 RC is actually
-published, the planned Hex dependency is `{:arbor_acp, "~> 1.0.0-rc.1"}`; that
-command is not an available installation route yet.
+Run `mix deps.get`. The declared core/RPC dependencies resolve normally from Hex.
+An explicit prerelease range such as `~> 1.0.0-rc.1` also selects this candidate;
+exact pins and a committed lockfile make downstream reports reproducible.
 
 ## First session
 
@@ -45,7 +30,6 @@ The credential-free example starts a native Elixir echo agent, creates a session
 prints streamed updates, and closes its subprocess. From this package directory:
 
 ```sh
-export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
 export ARBOR_V2_LOCAL=1
 mix deps.get
 mix compile
@@ -60,8 +44,8 @@ API key is needed. See the [example notes](examples/acp/README.md).
 The [ACP guide](docs/ACP_GUIDE.md) covers native client connections, session
 lifecycle, streaming, handlers, content, limits, registry discovery and writing
 an agent. For vendor CLIs, use the optional
-[adapter package](https://github.com/trust-arbor/arbor_acp/tree/codex/shared-subprocess/packages/arbor_acp_adapters).
-See the [changelog](CHANGELOG.md) for the planned RC changes.
+[adapter package](https://github.com/trust-arbor/arbor_acp/tree/main/packages/arbor_acp_adapters).
+See the [changelog](CHANGELOG.md) for the RC changes.
 
 Temporary controllers can use `Arbor.ACP.Client.with_connection/2,3` with finite
 startup and cleanup budgets. `Client.prompt/4` returns the unchanged peer result;
@@ -90,7 +74,7 @@ Native agents implement `Arbor.ACP.Agent.Handler` and run with `Arbor.ACP.Agent.
 
 `Adapter.environment_defaults/1` is an optional callback for vendor-owned environment policy. It accepts unset values (`false`) and is applied after the generic baseline, before `env/1` and explicit caller `:env`. Existing `env/1` output stays unchanged.
 
-Managed adapters identify frame credit with the pure optional `subprocess_receipt/2` callback. The bridge ACKs after bounded output admission. `shutdown/1` supports legacy state and explicit success/error tuples; bridge close exposes known cleanup failures. See the [adapter subprocess contract](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/docs/ADAPTER_EXTENSION_API.md) for exact signatures and migration details.
+Managed adapters identify frame credit with the pure optional `subprocess_receipt/2` callback. The bridge ACKs after bounded output admission. `shutdown/1` supports legacy state and explicit success/error tuples; bridge close exposes known cleanup failures. See the [adapter subprocess contract](https://github.com/trust-arbor/arbor_acp/blob/main/packages/arbor_acp/docs/ADAPTER_EXTENSION_API.md) for exact signatures and migration details.
 
 Native child stdio also uses an owned shared handle. Temporary readers retain child lifetime, and filtered reads preserve the original deadline/cutoff. Direct subscribers use generation-tagged RPC events and explicit ACK. The built-in client keeps its bounded pull handoff; transport close and client disconnect expose known cleanup failures.
 
@@ -127,25 +111,23 @@ releases avoid that startup caveat.
 behavior as an explicit host opt-in. It sets `:arbor_acp` `:stdio_mode` and the
 VM-global Logger, `:logger` application and OTP primary levels to `:emergency`.
 It suppresses unrelated application logs and does not redirect them to stderr.
-No transport calls it automatically in 2.0. The old `:stdio_mode` flag itself has
+No transport calls it automatically in this package. The old `:stdio_mode` flag itself has
 no automatic logger effect.
 
 ## Standalone documentation
 
-Clone [ArborRPC](https://github.com/trust-arbor/arbor_rpc) separately while the
-dependency is unpublished. From the ACP workspace root, run:
+From the ACP workspace root, resolve published dependencies and build docs:
 
 ```sh
 cd packages/arbor_acp
-export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
 MIX_ENV=dev mix deps.get
 MIX_ENV=dev mix docs --warnings-as-errors
 ```
 
 ExDoc is a dev-only dependency and does not run in consumer applications. Source
 links use `arbor_acp-v<version>` and the `packages/arbor_acp/` source prefix.
-Version tags are created only for a reviewed release; this unpublished prerelease
-snapshot does not imply that those prospective tags already exist.
+The published candidate has its owning package tag. Later versions require
+reviewed source and a fresh package-qualified tag.
 
-See the [contributor guide](https://github.com/trust-arbor/arbor_acp/blob/codex/shared-subprocess/CONTRIBUTING.md)
+See the [contributor guide](https://github.com/trust-arbor/arbor_acp/blob/main/CONTRIBUTING.md)
 for package checks, optional interoperability suites and source-archive validation.

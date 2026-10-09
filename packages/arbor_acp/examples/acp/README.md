@@ -1,6 +1,6 @@
 # ACP Examples
 
-See the [core quickstart](../../README.md#first-session) for installation and the
+See the [core quickstart](https://github.com/trust-arbor/arbor_acp/blob/main/packages/arbor_acp/README.md#first-session) for installation and the
 [ACP guide](../../docs/ACP_GUIDE.md) for the client and handler APIs.
 
 These examples show both sides of the Agent Client Protocol:
@@ -8,12 +8,10 @@ These examples show both sides of the Agent Client Protocol:
 - `echo_agent.exs` exposes a native Elixir ACP agent over stdio.
 - `controller.exs` starts that agent as a subprocess, creates a session, sends a prompt, and prints streamed updates plus the final prompt result.
 
-Before the first release, clone [ArborRPC](https://github.com/trust-arbor/arbor_rpc)
-separately. From `packages/arbor_acp`, set its checkout path and enable the
-controller's explicit forwarding of local development settings to the echo agent:
+From `packages/arbor_acp`, resolve published dependencies and enable the
+controller's forwarding of the local core checkout to its echo agent:
 
 ```bash
-export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
 export ARBOR_V2_LOCAL=1
 mix deps.get
 mix compile

@@ -6,14 +6,11 @@ ArborRPC is a separate repository with its package at the checkout root.
 
 ## Prepare a source checkout
 
-Use reviewed v2 checkouts of this workspace and
-[ArborRPC](https://github.com/trust-arbor/arbor_rpc). The coordinated RC1 packages
-are unpublished and the migration branches are unmerged; a default-branch clone
-or prospective release tag is not a substitute for the reviewed source revision.
-Use `git clone --branch codex/shared-subprocess https://github.com/trust-arbor/arbor_acp.git`
-for the current workspace, and a separate RPC `main` checkout. The package CI
-pins its RPC revision in `.github/workflows/ci.yml`; check out that commit when
-you need to reproduce a particular CI result.
+Clone the default `main` branch for current source. Normal dependency
+resolution uses the published `1.0.0-rc.1` ACP/RPC graph. When changing shared
+mechanics, optionally clone [ArborRPC](https://github.com/trust-arbor/arbor_rpc)
+separately and select it with `ARBOR_RPC_PATH`. Package CI pins its RPC revision
+in `.github/workflows/ci.yml`; use that commit to reproduce a specific CI result.
 
 Both packages declare Elixir `~> 1.17`. Use a compatible OTP version from the
 [BEAM compatibility guide](.github/BEAM_CI.md); formatting uses Elixir 1.17.3.
@@ -22,7 +19,7 @@ Source compilation on macOS/Linux requires a C17 compiler for ArborRPC. Set
 are unsupported. Node.js/npm are needed only for the optional SDK interop suite;
 vendor CLIs are needed only for explicitly selected CLI tests.
 
-From the workspace root, configure dependencies:
+For local dependency source development, configure overrides from the workspace root:
 
 ```sh
 export ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc
@@ -133,9 +130,9 @@ env -u ARBOR_RPC_PATH -u ARBOR_V2_DEPS ARBOR_V2_LOCAL=0 mix hex.build
 ```
 
 This builds a local archive; it does not publish. Use the
-[coordinated release guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/V2_PACKAGE_RELEASE.md)
+[coordinated release guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/RELEASING.md)
 for the four-package archive/consumer checks, versions, tags and publication
-order. No RC1 package is published or tagged, publisher Hex authentication needs
-renewal, and the final 48-hour stable-release soak has not passed. There is no
-active soak. Preserve those limits when documenting validation; historical
-receipts in [VERIFICATION.md](VERIFICATION.md) apply to their recorded revisions.
+order. RC1 is published and tagged; final stable qualification and the accepted
+continuous 48-hour soak remain incomplete. Completed implementation and local
+verification records remain in Git history; use current source/lockfile identities
+for new results.

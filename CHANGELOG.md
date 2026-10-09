@@ -1,6 +1,11 @@
 # Changelog
 
-## ArborACP / Adapters 1.0.0-rc.1 (unreleased)
+## Unreleased
+
+- Remove completed working notes, publish the adapter extension contract with core
+  docs, and document normal installation of the published RCs.
+
+## ArborACP / Adapters 1.0.0-rc.1 — 2026-10-08
 
 - Correct both extracted packages to independent 1.x versions and use 1.x RPC
   and ACP requirements. Existing 2.0.0-rc.1 releases/tags remain preserved.
@@ -21,7 +26,7 @@ Stable 1.0.0 promotion remains gated on the unfinished 48-hour qualification.
 - Fix the private RPC write-publication race by reloading the published payload
   after ownership is claimed, preserving the original deadline, producer checks
   and bounded credit accounting.
-- Add the [v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md).
+- Add the [v1 to v2 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/MIGRATING_V1_TO_V2.md).
 - Move ArborRPC to its own `trust-arbor/arbor_rpc` repository, with the package at
   its root. Development uses explicit `ARBOR_RPC_PATH`; ACP keeps only the core
   and adapter packages, with unchanged Hex dependency names and module namespaces.

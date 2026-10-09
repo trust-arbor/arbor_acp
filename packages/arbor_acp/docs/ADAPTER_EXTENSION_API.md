@@ -1,4 +1,4 @@
-# Adapter subprocess contract for v2
+# Adapter subprocess and delivery contract
 
 Custom adapters implement `Arbor.ACP.Adapter`. Native protocol translation,
 request correlation, credentials and session state stay in the adapter. Generic
@@ -102,7 +102,7 @@ application data retained after ACK. Applications must bound concurrent writers
 and downstream queues. Windows native subprocess operations are unsupported.
 Host-owned stdio logging is implemented; the library preserves the host's Logger
 policy. Broader platform/pressure qualification and the final 48-hour
-stable-release gate remain pending. See the [workspace README](../README.md) and
+stable-release gate remain pending. See the [workspace README](https://github.com/trust-arbor/arbor_acp/blob/main/README.md) and
 the separate [ArborRPC source-build policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates)
 for current installation requirements and qualification limits.
 

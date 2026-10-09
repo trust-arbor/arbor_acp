@@ -7,8 +7,8 @@ terminal, or user-input operations from the host. ACP uses a stateful initialize
 handshake and protocol version `1`. MCP protocol revision settings do not apply.
 
 Start with the [installation and local echo quickstart](../README.md). These
-guides describe the prepared replacement `1.0.0-rc.1` source tree; the original 2.0.0-rc.1 is published, while the replacement
-Hex packages and tags are not yet available.
+guides describe the published `1.0.0-rc.1` candidate. The original
+`2.0.0-rc.1` candidate is retired with its tag and archive preserved.
 
 ## Connect to a native ACP agent
 
@@ -253,7 +253,7 @@ them. See `Arbor.ACP.Agent` and `Arbor.ACP.Agent.Handler` for callback contracts
 
 Keep stdout exclusively for protocol frames. Configure every host Logger handler
 to stderr or another sink before starting applications; library startup preserves
-host logging policy. See [stdio host logging](../README.md#stdio-host-logging)
+host logging policy. See [stdio host logging](https://github.com/trust-arbor/arbor_acp/blob/main/packages/arbor_acp/README.md#stdio-host-logging)
 and the complete [echo agent/controller](../examples/acp/README.md).
 
 ## Limits, timeouts and troubleshooting
@@ -280,7 +280,7 @@ memory or the operating system's Port buffers.
 
 | Symptom | Check |
 | --- | --- |
-| Hex cannot resolve RC1 | Use the local-checkout dependencies in the README; RC1 remains unpublished |
+| Hex cannot resolve RC1 | Use the explicit `1.0.0-rc.1` prerelease requirement and normal Hex resolution; check the lockfile and registry connectivity |
 | Native helper does not compile | Confirm a C17 compiler, target toolchain and `CC`; see the ArborRPC source-build policy |
 | Agent exits or initialization fails | Verify executable/arguments, child working directory/environment and that the command speaks ACP |
 | Invalid JSON or unexpected stdout | Move startup banners, logs and build output away from the agent's stdout |
@@ -303,7 +303,7 @@ The API entrypoints are `Arbor.ACP`, `Arbor.ACP.Client`, `Arbor.ACP.Agent`,
 `Arbor.ACP.Adapter`, `Arbor.ACP.AdapterBridge`, `Arbor.ACP.AdapterTransport`,
 and the public `Arbor.ACP.AdapterSupport` helpers. Modules documented as internal
 are not extension APIs. See the [changelog](../CHANGELOG.md) and the
-[v1 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/codex/v2-migration/docs/guides/MIGRATING_V1_TO_V2.md)
+[v1 migration guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/MIGRATING_V1_TO_V2.md)
 for namespace, dependency and host-ownership changes. Legacy `_meta.ex_mcp`
 wire metadata remains unchanged in v2.
 
