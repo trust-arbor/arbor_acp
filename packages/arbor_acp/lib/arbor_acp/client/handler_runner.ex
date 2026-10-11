@@ -69,10 +69,30 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   defp queued_update_size({:"$gen_cast", {:session_update, _session_id, update, message}}),
     do: update_size(update, message)
 
+  defp queued_update_size({:"$gen_cast", {:extension_notification, _method, _params}} = message),
+    do: :erlang.external_size(message)
+
   defp queued_update_size(_message), do: 0
 
   defp update_size(update, nil), do: :erlang.external_size(update)
   defp update_size(_update, message), do: :erlang.external_size(message)
+
+  def extension_request(pid, ref, method, params),
+    do: GenServer.cast(pid, {:extension_request, ref, method, params})
+
+  def extension_notification(pid, method, params, max_queue, max_bytes) do
+    if update_mailbox_below_limits?(
+         pid,
+         max_queue,
+         max_bytes,
+         :erlang.external_size({:"$gen_cast", {:extension_notification, method, params}})
+       ) do
+      GenServer.cast(pid, {:extension_notification, method, params})
+      :ok
+    else
+      :dropped
+    end
+  end
 
   def permission_request(pid, ref, session_id, tool_call, options, message) do
     GenServer.cast(pid, {:permission_request, ref, session_id, tool_call, options, message})
@@ -162,6 +182,37 @@ defmodule Arbor.ACP.Client.HandlerRunner do
         Logger.warning("ACP handler session update failed", error_class: error_class(reason))
         {:noreply, state}
     end
+  end
+
+  def handle_cast({:extension_request, ref, method, params}, state) do
+    {result, state} =
+      case safe_call(fn ->
+             state.handler_mod.handle_extension_request(method, params, state.handler_state)
+           end) do
+        {:ok, {:ok, result, handler_state}} ->
+          {{:ok, result}, %{state | handler_state: handler_state}}
+
+        {:ok, {:error, error, handler_state}} ->
+          {{:error, error}, %{state | handler_state: handler_state}}
+
+        _ ->
+          {{:error, %{"code" => -32_603, "message" => "Extension handler failed"}}, state}
+      end
+
+    send(state.owner, {:acp_handler_result, ref, {:extension, result}})
+    {:noreply, state}
+  end
+
+  def handle_cast({:extension_notification, method, params}, state) do
+    state =
+      case safe_call(fn ->
+             state.handler_mod.handle_extension_notification(method, params, state.handler_state)
+           end) do
+        {:ok, {:ok, handler_state}} -> %{state | handler_state: handler_state}
+        _ -> state
+      end
+
+    {:noreply, state}
   end
 
   def handle_cast({:permission_request, ref, session_id, tool_call, options, message}, state) do

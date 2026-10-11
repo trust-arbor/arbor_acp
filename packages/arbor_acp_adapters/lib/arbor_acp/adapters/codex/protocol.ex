@@ -99,6 +99,9 @@ defmodule Arbor.ACP.Adapters.Codex.Protocol do
     {:request, id, method, params || %{}}
   end
 
+  def classify_inbound(%{"id" => id, "method" => method}) when is_binary(method),
+    do: {:request, id, method, %{}}
+
   def classify_inbound(%{"method" => method, "params" => params}) when is_binary(method) do
     {:notification, method, params || %{}}
   end

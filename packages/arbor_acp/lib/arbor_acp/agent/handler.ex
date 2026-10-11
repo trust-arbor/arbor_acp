@@ -111,6 +111,19 @@ defmodule Arbor.ACP.Agent.Handler do
   """
   @callback handle_cancel(session_id :: String.t(), context(), state()) :: callback_result()
 
+  @doc """
+  Handles an underscore-prefixed extension request. Use the ordinary callback
+  result, including `{:error, %{"code" => code, "message" => message}, state}`
+  to retain a peer error object. Advertise extensions under capabilities `_meta`.
+  """
+  @callback handle_extension_request(String.t(), map(), context(), state()) ::
+              {:reply, Arbor.ACP.Types.json_value(), state()}
+              | {:ok, Arbor.ACP.Types.json_value(), state()}
+              | {:error, map(), state()}
+
+  @doc "Handles an underscore-prefixed notification; return `{:ok, state}`."
+  @callback handle_extension_notification(String.t(), map(), context(), state()) :: {:ok, state()}
+
   @doc "Called when the handler runner terminates."
   @callback terminate(reason :: any(), state()) :: :ok
 
@@ -128,6 +141,8 @@ defmodule Arbor.ACP.Agent.Handler do
     handle_set_model: 4,
     handle_set_config_option: 5,
     handle_cancel: 3,
+    handle_extension_request: 4,
+    handle_extension_notification: 4,
     terminate: 2
   ]
 end

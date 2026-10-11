@@ -118,20 +118,20 @@ defmodule Arbor.ACP.Adapters.Codex.LifecycleGoldenTest do
 
   # -- app-server initialize handshake variants ---------------------------------
 
-  test "initialize_error_reply_still_advances" do
+  test "initialize_error_stops_handshake" do
     steps = [
       init_step(),
       :post_connect,
-      {:note, "the app-server rejects initialize; the adapter ignores the reply body"},
+      {:note,
+       "the app-server rejects initialize; the adapter records failure and stops the handshake"},
       {:inbound,
        %{"id" => 1, "error" => %{"code" => -32_600, "message" => "unsupported client"}}},
       {:inbound, %{"id" => 2, "result" => %{"data" => catalog_models(), "nextCursor" => nil}}}
     ]
 
-    transcript = CodexGolden.assert_golden(@area, "initialize_error_reply_still_advances", steps)
+    transcript = CodexGolden.assert_golden(@area, "initialize_error_stops_handshake", steps)
 
-    assert [_initialize, %{"method" => "initialized"}, %{"id" => 2, "method" => "model/list"}] =
-             CodexGolden.writes(transcript)
+    assert [%{"method" => "initialize"}] = CodexGolden.writes(transcript)
 
     assert CodexGolden.messages(transcript) == []
   end

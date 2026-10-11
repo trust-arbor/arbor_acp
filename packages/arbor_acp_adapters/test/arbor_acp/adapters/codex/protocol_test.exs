@@ -418,7 +418,7 @@ defmodule Arbor.ACP.Adapters.Codex.ProtocolTest do
                {:notification, "initialized", %{}}
 
       assert Protocol.classify_inbound(%{"id" => 1, "method" => "foo"}) ==
-               {:notification, "foo", %{}}
+               {:request, 1, "foo", %{}}
 
       assert Protocol.classify_inbound(%{"foo" => 1}) == :unknown
       assert Protocol.decode_line("not-json") == :unknown

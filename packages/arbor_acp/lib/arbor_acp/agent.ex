@@ -23,6 +23,8 @@ defmodule Arbor.ACP.Agent do
   `:max_frame_bytes` and `:max_pending_requests` default to 1 MiB and 1,024.
   `:pending_request_timeout` bounds client-bound requests and pending prompts;
   `:handler_request_timeout` bounds handler callbacks. Both default to 30 seconds.
+  Extension notification callbacks have `:max_extension_queue` (32) and
+  `:max_extension_queue_bytes` (8 MiB); overflowing queues close the agent.
   """
 
   use GenServer
@@ -64,6 +66,8 @@ defmodule Arbor.ACP.Agent do
     :protocol_version,
     max_frame_bytes: @default_max_frame_bytes,
     max_pending_requests: @default_max_pending_requests,
+    max_extension_queue: 32,
+    max_extension_queue_bytes: 8_388_608,
     pending_request_timeout: @default_pending_request_timeout,
     handler_request_timeout: @default_handler_request_timeout,
     pending_callbacks: %{},
@@ -85,6 +89,8 @@ defmodule Arbor.ACP.Agent do
     :protocol_version,
     :max_frame_bytes,
     :max_pending_requests,
+    :max_extension_queue,
+    :max_extension_queue_bytes,
     :pending_request_timeout,
     :handler_request_timeout,
     :transport,
@@ -279,6 +285,32 @@ defmodule Arbor.ACP.Agent do
     GenServer.call(agent, {:finish_prompt, prompt_id, result_or_stop_reason}, timeout)
   end
 
+  @doc "Calls an underscore-prefixed client extension with bounded request ownership."
+  @spec extension_request(GenServer.server(), String.t(), map(), keyword()) ::
+          {:ok, term()} | {:error, term()}
+  def extension_request(agent, method, params, opts \\ []) do
+    with :ok <- Arbor.ACP.Internal.Extensions.validate(method, params) do
+      Arbor.ACP.Internal.Call.call(
+        agent,
+        {:client_request, Arbor.ACP.Internal.Extensions.request(method, params), :extension},
+        Arbor.ACP.Internal.Call.timeout!(opts, 30_000)
+      )
+    end
+  end
+
+  @doc "Sends an underscore-prefixed client notification; success confirms transport admission only."
+  @spec extension_notify(GenServer.server(), String.t(), map(), keyword()) ::
+          :ok | {:error, term()}
+  def extension_notify(agent, method, params, opts \\ []) do
+    with :ok <- Arbor.ACP.Internal.Extensions.validate(method, params) do
+      Arbor.ACP.Internal.Call.call(
+        agent,
+        {:notification, Arbor.ACP.Internal.Extensions.notification(method, params), :extension},
+        Arbor.ACP.Internal.Call.timeout!(opts)
+      )
+    end
+  end
+
   @doc "Requests permission from the ACP client."
   @spec request_permission(GenServer.server(), String.t(), map(), [map()], keyword()) ::
           {:ok, map() | nil} | {:error, any()}
@@ -401,6 +433,9 @@ defmodule Arbor.ACP.Agent do
           Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
         max_pending_requests:
           Options.positive_integer(opts, :max_pending_requests, @default_max_pending_requests),
+        max_extension_queue: Options.positive_integer(opts, :max_extension_queue, 32),
+        max_extension_queue_bytes:
+          Options.positive_integer(opts, :max_extension_queue_bytes, 8_388_608),
         pending_request_timeout:
           Options.positive_integer(
             opts,
@@ -483,6 +518,29 @@ defmodule Arbor.ACP.Agent do
 
       {:notification, "$/cancel_request", params} ->
         {:noreply, handle_cancel_request_notification(params, state)}
+
+      {:notification, "_" <> _ = method, params} ->
+        if state.status == :ready and
+             function_exported?(state.handler_mod, :handle_extension_notification, 4) do
+          ctx = context(state, nil)
+
+          incoming =
+            :erlang.external_size({:"$gen_cast", {:extension_notification, method, params, ctx}})
+
+          if Arbor.ACP.Internal.Extensions.room?(
+               state.handler_pid,
+               incoming,
+               state.max_extension_queue,
+               state.max_extension_queue_bytes
+             ) do
+            HandlerRunner.extension_notification(state.handler_pid, method, params, ctx)
+            {:noreply, state}
+          else
+            {:stop, :extension_queue_full, state}
+          end
+        else
+          {:noreply, state}
+        end
 
       {:notification, method, _params} ->
         Logger.debug("ACP agent received unsupported notification",
@@ -980,6 +1038,23 @@ defmodule Arbor.ACP.Agent do
     end
   end
 
+  defp handle_client_request("_" <> _ = method, params, id, state) do
+    if function_exported?(state.handler_mod, :handle_extension_request, 4) do
+      ctx = context(state, id)
+
+      start_callback(
+        :extension,
+        id,
+        fn ref ->
+          HandlerRunner.extension_request(state.handler_pid, ref, method, params, ctx)
+        end,
+        state
+      )
+    else
+      send_method_not_found(method, id, state)
+    end
+  end
+
   defp handle_client_request(method, _params, id, state) do
     send_method_not_found(method, id, state)
   end
@@ -1225,6 +1300,24 @@ defmodule Arbor.ACP.Agent do
         state = %{state | pending_callbacks: pending}
         handle_cancel_result(prompt_id, result, state)
 
+      {%{kind: :extension, request_id: id} = callback, pending} ->
+        cancel_timer(Map.get(callback, :timer_ref))
+        state = %{state | pending_callbacks: pending}
+
+        case result do
+          {:reply, value} ->
+            if Arbor.ACP.Internal.Extensions.json?(value),
+              do: send_without_reply(Protocol.encode_response(value, id), state),
+              else:
+                send_without_reply(
+                  Protocol.encode_error(-32_603, "Invalid extension response", nil, id),
+                  state
+                )
+
+          other ->
+            handle_generic_result(id, other, state)
+        end
+
       {%{request_id: id} = callback, pending} ->
         cancel_timer(Map.get(callback, :timer_ref))
         state = %{state | pending_callbacks: pending}
@@ -1423,6 +1516,8 @@ defmodule Arbor.ACP.Agent do
     end
   end
 
+  defp ensure_client_capability(%{status: :ready}, :extension), do: :ok
+  defp ensure_client_capability(_state, :extension), do: {:error, :not_initialized}
   defp ensure_client_capability(_state, :permission), do: :ok
 
   defp ensure_client_capability(state, :fs_read) do
@@ -1540,6 +1635,17 @@ defmodule Arbor.ACP.Agent do
   defp send_error(id, {code, message, data}, state)
        when is_integer(code) and is_binary(message) do
     send_without_reply(Protocol.encode_error(code, message, data, id), state)
+  end
+
+  defp send_error(id, %{"code" => code, "message" => message} = error, state)
+       when is_integer(code) and is_binary(message) do
+    if Arbor.ACP.Internal.Extensions.error?(error),
+      do: send_without_reply(Arbor.RPC.JSONRPC.error(id, error), state),
+      else:
+        send_without_reply(
+          Protocol.encode_error(-32_603, "Invalid extension error", nil, id),
+          state
+        )
   end
 
   defp send_error(id, reason, state) do

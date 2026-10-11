@@ -94,3 +94,14 @@ candidate availability, callback signatures and complete examples.
 Start with `examples/acp/README.md` for testing without
 vendor accounts. Use documented adapter callback and bounded subprocess contracts
 when extending the core rather than copying a vendor's implementation helpers.
+
+## Protocol extensions
+
+- Use `Client.extension_request/4` and `Arbor.ACP.Agent.extension_request/4` for advertised
+  underscore-prefixed ACP extensions, with JSON object parameters and string keys.
+- `extension_notify/4` confirms admission only; timeouts do not prove remote cancellation.
+- Use optional handler extension callbacks and return results/errors to the runtime,
+  which owns correlation, deadlines and cleanup.
+- `Client.subscribe_extensions/3` delivers monitored bounded notifications as
+  `{:acp_extension_notification, method, params}`; keep the subscriber draining.
+- Use standard `meta:` for lifecycle/prompt metadata. Vendor methods remain in addon packages.

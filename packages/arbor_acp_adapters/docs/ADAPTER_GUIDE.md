@@ -161,9 +161,14 @@ permissions and elicitation. Modes are `read-only`, `agent`, and
 `agent-full-access`; removed legacy mode aliases are not accepted.
 
 Session config options include mode, model, reasoning effort and fast mode when
-the selected model supports it. Changes apply to subsequent turns. Dynamic tool
+the selected model supports it. Changes apply to subsequent turns. With raw native access off, dynamic tool
 calls, ChatGPT token refresh and attestation generation are rejected explicitly;
 secret user-input questions are not exposed as ordinary ACP forms.
+
+For arbitrary Codex methods, complete native events, server-request handlers and
+managed native parameter overrides, see [Codex native API](CODEX_NATIVE_API.md).
+Raw access is opt-in; `Arbor.ACP.Adapters.Codex.Native.start_link/1` defaults to
+exclusive native ownership.
 
 ### Pi
 

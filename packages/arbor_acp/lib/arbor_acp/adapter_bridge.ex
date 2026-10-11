@@ -683,6 +683,9 @@ defmodule Arbor.ACP.AdapterBridge do
             state = %{state | adapter_state: new_adapter_state}
             state = synthesize_result(state, id, result || %{"sessions" => []})
             {:reply, :ok, state}
+
+          {:error, reason, new_adapter_state} ->
+            reply_translation_error(msg, reason, %{state | adapter_state: new_adapter_state})
         end
     end
   end
@@ -722,6 +725,20 @@ defmodule Arbor.ACP.AdapterBridge do
     |> then(&state.adapter_mod.translate_outbound(&1, state.adapter_state))
     |> config_option_parts()
     |> apply_config_option_translation(msg, state)
+  end
+
+  defp handle_outbound(%{"method" => "_" <> _} = msg, _json, _from, state) do
+    case translate_outbound_message(msg, state) do
+      {:ok, :skip, state} ->
+        if Map.has_key?(msg, "id"),
+          do:
+            {:reply, :ok,
+             synthesize_error(state, msg["id"], -32_601, "Extension method not supported")},
+          else: {:reply, {:error, :unsupported_extension}, state}
+
+      translated ->
+        handle_translated_outbound(translated, msg)
+    end
   end
 
   defp handle_outbound(msg, _json, _from, state) do

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add generic ACP extensions and the Codex native API, complete event/server-request access and managed native parameter overrides. Prepare core and adapter RC.2 with the matching minimum core dependency.
+
 - Remove completed working notes, publish the adapter extension contract with core
   docs, and document normal installation of the published RCs.
 

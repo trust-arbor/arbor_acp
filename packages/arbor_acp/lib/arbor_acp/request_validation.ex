@@ -45,6 +45,7 @@ defmodule Arbor.ACP.RequestValidation do
     do: validate_terminal_id_request(params)
 
   def validate_agent_request("terminal/" <> _method, _params), do: {:error, :method_not_found}
+  def validate_agent_request("_" <> _ = method, params), do: validate_extension(method, params)
   def validate_agent_request(_method, _params), do: :ok
 
   @spec validate_elicitation_response(term()) :: :ok | {:error, :invalid_params}
@@ -122,7 +123,15 @@ defmodule Arbor.ACP.RequestValidation do
            ],
       do: {:error, :invalid_params}
 
+  def validate_client_request("_" <> _ = method, params), do: validate_extension(method, params)
   def validate_client_request(_method, _params), do: :ok
+
+  defp validate_extension(method, params) do
+    case Arbor.ACP.Internal.Extensions.validate(method, params) do
+      :ok -> :ok
+      _ -> {:error, :invalid_params}
+    end
+  end
 
   defp validate_elicitation_request(%{"mode" => "form"} = params) do
     with :ok <- validate_elicitation_scope(params),
