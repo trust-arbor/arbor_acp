@@ -48,6 +48,7 @@ defmodule Arbor.ACP.Client do
 
   require Logger
 
+  alias Arbor.ACP.Internal.Extensions
   alias Arbor.ACP.Capabilities
   alias Arbor.ACP.LifecycleParams
   alias Arbor.ACP.Maps
@@ -95,6 +96,7 @@ defmodule Arbor.ACP.Client do
     handler_request_timeout: @default_handler_request_timeout,
     max_update_queue: @default_max_update_queue,
     max_update_queue_bytes: @default_max_update_queue_bytes,
+    extension_subscribers: %{},
     pending_requests: %{},
     pending_caller_monitors: %{},
     pending_agent_requests: %{},
@@ -106,6 +108,61 @@ defmodule Arbor.ACP.Client do
   ]
 
   # Public API
+
+  @doc """
+  Calls an underscore-prefixed ACP extension using ordinary request ownership.
+
+  Parameters must be a JSON object with string keys. Results and peer error
+  objects are preserved. Extensions have application-defined authority and
+  semantics; check advertised `_meta` capabilities before calling them.
+  A timeout does not prove that the remote operation stopped.
+  """
+  @spec extension_request(GenServer.server(), String.t(), map(), keyword()) ::
+          {:ok, term()} | {:error, term()}
+  def extension_request(client, method, params, opts \\ []) do
+    with :ok <- Extensions.validate(method, params) do
+      Call.call(
+        client,
+        {:extension_request, Extensions.request(method, params)},
+        Call.timeout!(opts, 30_000)
+      )
+    end
+  end
+
+  @doc "Sends an underscore-prefixed notification; success confirms transport admission only."
+  @spec extension_notify(GenServer.server(), String.t(), map(), keyword()) ::
+          :ok | {:error, term()}
+  def extension_notify(client, method, params, opts \\ []) do
+    with :ok <- Extensions.validate(method, params) do
+      Call.call(
+        client,
+        {:extension_notify, Extensions.notification(method, params)},
+        Call.timeout!(opts)
+      )
+    end
+  end
+
+  @doc """
+  Subscribes a PID to extension notifications as
+  `{:acp_extension_notification, method, params}`. `:methods` is `:all` or a
+  list of underscore-prefixed method names. There are at most 32 subscribers.
+  Subscribers are monitored. The existing update queue count/byte limits
+  apply; a full consumer queue closes the connection instead of silently
+  losing extension events. Notifications also reach the optional handler.
+  """
+  @spec subscribe_extensions(GenServer.server(), pid(), keyword()) :: :ok | {:error, term()}
+  def subscribe_extensions(client, pid \\ self(), opts \\ []) do
+    Call.call(
+      client,
+      {:subscribe_extensions, pid, Keyword.get(opts, :methods, :all)},
+      Call.timeout!(opts)
+    )
+  end
+
+  @doc "Removes an extension notification subscription."
+  @spec unsubscribe_extensions(GenServer.server(), pid(), keyword()) :: :ok | {:error, term()}
+  def unsubscribe_extensions(client, pid \\ self(), opts \\ []),
+    do: Call.call(client, {:unsubscribe_extensions, pid}, Call.timeout!(opts))
 
   @doc "Starts the ACP client and connects to the agent."
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -170,6 +227,7 @@ defmodule Arbor.ACP.Client do
   @doc """
   Creates a new agent session.
 
+  `:meta` carries a JSON metadata object in the standard ACP `_meta` field.
   `cwd` is required per ACP spec
   (https://agentclientprotocol.com/protocol/session-setup).
   """
@@ -239,6 +297,7 @@ defmodule Arbor.ACP.Client do
   event listener as they arrive. The caller is unblocked when the agent sends
   the JSON-RPC result for the prompt request.
 
+  `:meta` carries standard ACP request metadata.
   Returns the agent's result unchanged, including completion metadata and
   extensions. Use `prompt_text/4` to explicitly collect streamed message text.
   """
@@ -246,7 +305,7 @@ defmodule Arbor.ACP.Client do
           {:ok, Arbor.ACP.Types.json_value()} | {:error, term()}
   def prompt(client, session_id, content, opts \\ []) do
     timeout = Call.timeout!(opts, 300_000)
-    Call.call(client, {:prompt, session_id, content}, timeout)
+    Call.call(client, {:prompt, session_id, content, Keyword.get(opts, :meta)}, timeout)
   end
 
   @doc """
@@ -267,13 +326,17 @@ defmodule Arbor.ACP.Client do
   @spec prompt_text(GenServer.server(), String.t(), String.t() | [map()], keyword()) ::
           {:ok, %{result: map(), text: String.t(), truncated?: boolean()}} | {:error, term()}
   def prompt_text(client, session_id, content, opts \\ []) do
-    opts = Keyword.validate!(opts, [:timeout, :max_text_bytes])
+    opts = Keyword.validate!(opts, [:timeout, :max_text_bytes, :meta])
     limit = Keyword.get(opts, :max_text_bytes)
 
     unless is_nil(limit) or (is_integer(limit) and limit > 0),
       do: raise(ArgumentError, "max_text_bytes must be a positive byte count")
 
-    Call.call(client, {:prompt_text, session_id, content, limit}, Call.timeout!(opts, 300_000))
+    Call.call(
+      client,
+      {:prompt_text, session_id, content, limit, Keyword.get(opts, :meta)},
+      Call.timeout!(opts, 300_000)
+    )
   end
 
   @doc "Lists available sessions from the agent. Stabilized in ACP spec March 9, 2026."
@@ -509,6 +572,58 @@ defmodule Arbor.ACP.Client do
     end
   end
 
+  def handle_call({:extension_request, msg}, from, %{status: :ready} = state),
+    do: send_request(msg, from, state)
+
+  def handle_call({:extension_notify, msg}, _from, %{status: :ready} = state) do
+    case do_send(msg, state) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:subscribe_extensions, pid, methods}, _from, state) do
+    valid_methods =
+      methods == :all or
+        (is_list(methods) and Enum.all?(methods, &(Extensions.validate(&1, %{}) == :ok)))
+
+    cond do
+      not is_pid(pid) or node(pid) != node() or not Process.alive?(pid) or not valid_methods ->
+        {:reply, {:error, :invalid_subscription}, state}
+
+      not Map.has_key?(state.extension_subscribers, pid) and
+          map_size(state.extension_subscribers) >= 32 ->
+        {:reply, {:error, :too_many_subscribers}, state}
+
+      true ->
+        existing = Map.get(state.extension_subscribers, pid)
+        monitor = if existing, do: existing.monitor, else: Process.monitor(pid)
+
+        subscribers =
+          Map.put(state.extension_subscribers, pid, %{monitor: monitor, methods: methods})
+
+        {:reply, :ok, %{state | extension_subscribers: subscribers}}
+    end
+  end
+
+  def handle_call({:unsubscribe_extensions, pid}, _from, state) do
+    {subscription, subscribers} = Map.pop(state.extension_subscribers, pid)
+    if subscription, do: Process.demonitor(subscription.monitor, [:flush])
+    {:reply, :ok, %{state | extension_subscribers: subscribers}}
+  end
+
+  def handle_call({:prompt, session_id, content, meta}, from, %{status: :ready} = state) do
+    start_prompt(session_id, content, :raw, from, state, meta)
+  end
+
+  def handle_call(
+        {:prompt_text, session_id, content, limit, meta},
+        from,
+        %{status: :ready} = state
+      ) do
+    start_prompt(session_id, content, {:collect, limit}, from, state, meta)
+  end
+
   def handle_call({:prompt, session_id, content}, from, %{status: :ready} = state) do
     start_prompt(session_id, content, :raw, from, state)
   end
@@ -703,7 +818,10 @@ defmodule Arbor.ACP.Client do
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case Map.fetch(state.pending_caller_monitors, ref) do
       :error ->
-        {:noreply, state}
+        subscribers =
+          Map.reject(state.extension_subscribers, fn {_pid, entry} -> entry.monitor == ref end)
+
+        {:noreply, %{state | extension_subscribers: subscribers}}
 
       {:ok, request_id} ->
         monitors = Map.delete(state.pending_caller_monitors, ref)
@@ -792,6 +910,9 @@ defmodule Arbor.ACP.Client do
 
   defp handle_parsed_message({:request, method, params, id}, state, message),
     do: validate_and_handle_agent_request(method, params, id, state, message)
+
+  defp handle_parsed_message({:notification, "_" <> _ = method, params}, state, _message),
+    do: handle_extension_notification(method, params, state)
 
   defp handle_parsed_message(parsed, state, _message), do: handle_parsed_message(parsed, state)
 
@@ -891,8 +1012,9 @@ defmodule Arbor.ACP.Client do
     end
   end
 
-  defp start_prompt(session_id, content, mode, from, state) do
-    with {:ok, blocks} <- prompt_blocks(content),
+  defp start_prompt(session_id, content, mode, from, state, meta \\ nil) do
+    with true <- is_nil(meta) or (is_map(meta) and Extensions.json?(meta)),
+         {:ok, blocks} <- prompt_blocks(content),
          :ok <- validate_prompt_blocks(state, blocks),
          :ok <- admit_prompt(state, session_id, mode) do
       :telemetry.execute(
@@ -902,6 +1024,7 @@ defmodule Arbor.ACP.Client do
       )
 
       msg = Protocol.encode_session_prompt(session_id, blocks)
+      msg = if is_nil(meta), do: msg, else: put_in(msg, ["params", "_meta"], meta)
       state = begin_prompt_collection(state, session_id, mode)
 
       case send_request(msg, from, state, {:prompt, session_id}) do
@@ -912,6 +1035,9 @@ defmodule Arbor.ACP.Client do
           deferred
       end
     else
+      false ->
+        {:reply, {:error, :invalid_meta}, state}
+
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
@@ -1506,6 +1632,48 @@ defmodule Arbor.ACP.Client do
     state
   end
 
+  defp handle_extension_notification(method, params, state) do
+    event = {:acp_extension_notification, method, params}
+
+    subscribers =
+      Enum.filter(state.extension_subscribers, fn {_pid, entry} ->
+        entry.methods == :all or method in entry.methods
+      end)
+
+    room? =
+      Enum.all?(subscribers, fn {pid, _} ->
+        update_mailbox_below_limits?(
+          pid,
+          state.max_update_queue,
+          state.max_update_queue_bytes,
+          :erlang.external_size(event),
+          :listener
+        )
+      end)
+
+    handler_result =
+      if state.handler_pid &&
+           function_exported?(state.handler_mod, :handle_extension_notification, 3) do
+        HandlerRunner.extension_notification(
+          state.handler_pid,
+          method,
+          params,
+          state.max_update_queue,
+          state.max_update_queue_bytes
+        )
+      else
+        :ok
+      end
+
+    if room? and handler_result == :ok do
+      Enum.each(subscribers, fn {pid, _} -> send(pid, event) end)
+      state
+    else
+      Logger.warning("ACP extension consumer queue is full; closing connection")
+      do_disconnect(state)
+    end
+  end
+
   defp admit_prompt(state, session_id, mode) do
     if Map.has_key?(state.prompt_text, session_id) or
          (mode != :raw and prompt_pending?(state, session_id)),
@@ -1828,6 +1996,16 @@ defmodule Arbor.ACP.Client do
     end
   end
 
+  defp handle_agent_request("_" <> _ = method, params, id, state) do
+    if state.handler_pid && function_exported?(state.handler_mod, :handle_extension_request, 3) do
+      ref = make_ref()
+      HandlerRunner.extension_request(state.handler_pid, ref, method, params)
+      track_agent_request(state, ref, :extension, id, nil)
+    else
+      send_agent_request_error(state, id, -32_601, "Extension method not supported")
+    end
+  end
+
   defp handle_agent_request(method, _params, id, state) do
     Logger.debug("ACP client received unknown agent request",
       method_hash: LogSummary.fingerprint(method)
@@ -1863,6 +2041,18 @@ defmodule Arbor.ACP.Client do
         send_to_transport(response, state)
         state
     end
+  end
+
+  defp encode_handler_response(%{kind: :extension, id: id}, {:extension, {:ok, result}}) do
+    if Extensions.json?(result),
+      do: Protocol.encode_response(result, id),
+      else: Protocol.encode_error(-32_603, "Invalid extension response", nil, id)
+  end
+
+  defp encode_handler_response(%{kind: :extension, id: id}, {:extension, {:error, error}}) do
+    if Extensions.error?(error),
+      do: Arbor.RPC.JSONRPC.error(id, error),
+      else: Protocol.encode_error(-32_603, "Extension handler failed", nil, id)
   end
 
   defp encode_handler_response(%{kind: :permission, id: id}, {:permission, {:ok, outcome}}) do
@@ -2003,6 +2193,9 @@ defmodule Arbor.ACP.Client do
 
   defp queued_update_size({:acp_session_update, _session_id, update}, :listener),
     do: :erlang.external_size(update)
+
+  defp queued_update_size({:acp_extension_notification, _, _} = event, :listener),
+    do: :erlang.external_size(event)
 
   defp queued_update_size(_message, _kind), do: 0
 

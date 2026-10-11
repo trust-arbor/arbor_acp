@@ -131,3 +131,13 @@ reviewed source and a fresh package-qualified tag.
 
 See the [contributor guide](https://github.com/trust-arbor/arbor_acp/blob/main/CONTRIBUTING.md)
 for package checks, optional interoperability suites and source-archive validation.
+
+## Protocol extensions
+
+These APIs are introduced in `1.0.0-rc.2`; use the source checkout with local
+dependencies when testing before that candidate is published.
+
+Clients and agents support generic `extension_request/4`, `extension_notify/4`
+and optional extension-handler callbacks. Clients also provide bounded monitored
+notification subscriptions. Session and prompt calls accept standard `meta:`.
+See the [extension contract](docs/ADAPTER_EXTENSION_API.md) for examples and limits.

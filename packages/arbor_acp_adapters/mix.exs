@@ -1,8 +1,8 @@
 defmodule Arbor.ACP.Adapters.MixProject do
   use Mix.Project
-  @version "1.0.0-rc.1"
+  @version "1.0.0-rc.2"
   @rpc_requirement "~> 1.0.0-rc.1"
-  @acp_requirement "~> 1.0.0-rc.1"
+  @acp_requirement "~> 1.0.0-rc.2"
   def project do
     [
       app: :arbor_acp_adapters,
@@ -24,6 +24,7 @@ defmodule Arbor.ACP.Adapters.MixProject do
           "README.md",
           {"usage-rules.md", title: "Agent usage rules"},
           "docs/ADAPTER_GUIDE.md",
+          "docs/CODEX_NATIVE_API.md",
           "CHANGELOG.md"
         ],
         source_ref: "arbor_acp_adapters-v#{@version}",

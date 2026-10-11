@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add the Codex native API: arbitrary methods, complete native events and server-request replies, explicit exclusive/shared ownership modes and managed native parameter overrides. Stop the native handshake when initialization fails.
 - Refresh published-RC installation guidance and consolidate current documentation.
 
 

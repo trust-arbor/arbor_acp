@@ -27,7 +27,7 @@
   %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "the app-server rejects initialize; the adapter ignores the reply body"
+      text: "the app-server rejects initialize; the adapter records failure and stops the handshake"
     },
     result: %{}
   },
@@ -38,11 +38,7 @@
     },
     result: %{
       skipped: true,
-      tag: :skip_and_write,
-      writes: [
-        %{"method" => "initialized"},
-        %{"id" => 2, "method" => "model/list", "params" => %{"includeHidden" => false}}
-      ]
+tag: :skip
     }
   },
   %Arbor.ACP.Test.CodexGolden.Entry{

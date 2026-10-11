@@ -139,6 +139,17 @@ defmodule Arbor.ACP.Client.Handler do
   @doc "Called when an accepted URL elicitation completes out of band."
   @callback handle_elicitation_complete(elicitation_id :: String.t(), state()) :: {:ok, state()}
 
+  @doc """
+  Handles an underscore-prefixed request. Return `{:ok, JSON_value, state}`
+  or `{:error, %{"code" => integer, "message" => string}, state}`. Error data
+  and unknown fields are preserved. The runtime owns IDs, timeouts and replies.
+  """
+  @callback handle_extension_request(String.t(), map(), state()) ::
+              {:ok, term(), state()} | {:error, map(), state()}
+
+  @doc "Handles an underscore-prefixed notification on the bounded handler queue."
+  @callback handle_extension_notification(String.t(), map(), state()) :: {:ok, state()}
+
   @doc "Called when the handler is being terminated."
   @callback terminate(reason :: any(), state()) :: :ok
 
@@ -153,6 +164,8 @@ defmodule Arbor.ACP.Client.Handler do
     handle_form_elicitation: 2,
     handle_url_elicitation: 2,
     handle_elicitation_complete: 2,
+    handle_extension_request: 3,
+    handle_extension_notification: 3,
     terminate: 2
   ]
 end

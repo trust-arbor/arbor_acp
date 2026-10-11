@@ -79,3 +79,18 @@ Core Client response semantics apply to adapted connections: `Client.prompt/4`
 preserves the adapter's peer result. Use `Client.prompt_text/4` for explicit
 streamed text collection and check `truncated?` before treating it as complete.
 See the installed `arbor_acp/docs/ACP_GUIDE.md` for RC migration guidance.
+
+## Codex native extensions
+
+- Use `Arbor.ACP.Adapters.Codex.Native` for native app-server methods and managed
+  `native_params` overrides; see `docs/CODEX_NATIVE_API.md`.
+- `Native.start_link/1` defaults to exclusive native ownership. Standard ACP
+  session operations require a managed connection or explicit shared mode.
+- Enable experimental native capabilities through `adapter_opts[:native_initialize_params]`.
+- Raw access is off on normal ACP connections. Shared access is trusted
+  application code responsible for coordinating native mutations with ACP state.
+- Native events use monitored bounded extension subscriptions. Handle dynamic
+  tools and other native server requests with `handle_extension_request/3`;
+  return results/errors to the runtime rather than writing native responses.
+- Native parameter maps use JSON string keys. Preserve ACP-owned workspace,
+  input, permission and identity fields; use native mode for full control.

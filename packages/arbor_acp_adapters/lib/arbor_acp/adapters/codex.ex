@@ -28,6 +28,7 @@ defmodule Arbor.ACP.Adapters.Codex do
   alias Arbor.ACP.Adapters.Codex.FileChanges
   alias Arbor.ACP.Adapters.Codex.MCP
   alias Arbor.ACP.Adapters.Codex.Permissions
+  alias Arbor.ACP.Adapters.Codex.NativeProtocol
   alias Arbor.ACP.Adapters.Codex.Protocol
   alias Arbor.ACP.Adapters.Codex.Sessions
   alias Arbor.ACP.Adapters.Codex.SlashCommands
@@ -46,6 +47,9 @@ defmodule Arbor.ACP.Adapters.Codex do
     models: [],
     next_id: 1,
     phase: :initializing,
+    native_api: :off,
+    native_pending_limit: 1024,
+    native_initialize_error: nil,
     pending_requests: %{},
     pending_client_requests: %{},
     client_capabilities: %{},
@@ -64,7 +68,9 @@ defmodule Arbor.ACP.Adapters.Codex do
   def init(opts) do
     {:ok,
      %__MODULE__{
-       opts: opts,
+       opts: NativeProtocol.init!(opts),
+       native_api: Keyword.get(opts, :native_api, :off),
+       native_pending_limit: Keyword.get(opts, :max_native_pending_requests, 1024),
        model: Keyword.get(opts, :model),
        mode_id: Config.normalize_mode_id(Keyword.get(opts, :mode_id, Config.default_mode())),
        reasoning_effort: Keyword.get(opts, :reasoning_effort, Config.default_reasoning_effort())
@@ -86,6 +92,7 @@ defmodule Arbor.ACP.Adapters.Codex do
         "sse" => false,
         "_meta" => %{"ex_mcp" => %{"codex" => %{"stdioMcpServers" => true}}}
       },
+      "_meta" => %{"arbor.acp.codex" => %{"nativeApi" => true, "nativeParams" => true}},
       "loadSession" => true,
       "auth" => %{"logout" => %{}},
       "sessionCapabilities" => %{
@@ -198,12 +205,16 @@ defmodule Arbor.ACP.Adapters.Codex do
     client_version = Keyword.get(state.opts, :client_version, "1.0.0")
 
     request =
-      Protocol.encode_request(id, Protocol.method(:initialize), %{
-        "clientInfo" => %{
-          "name" => client_name,
-          "version" => client_version
-        }
-      })
+      Protocol.encode_request(
+        id,
+        Protocol.method(:initialize),
+        Map.merge(
+          %{
+            "clientInfo" => %{"name" => client_name, "version" => client_version}
+          },
+          Keyword.get(state.opts, :native_initialize_params, %{})
+        )
+      )
 
     state = track_request(state, id, :initialize, nil)
     {:ok, request, state}
@@ -212,11 +223,36 @@ defmodule Arbor.ACP.Adapters.Codex do
   # Outbound: ACP -> Codex app-server
 
   @impl true
-  def translate_outbound(%{"method" => "initialize", "params" => params}, state) do
+  def translate_outbound(msg, state) do
+    with :ok <- NativeProtocol.validate_outbound(msg, state),
+         :ok <- NativeProtocol.validate_overrides(msg, msg["method"]) do
+      do_translate_outbound(msg, state)
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  @impl true
+  def outbound_write_failed(%{"id" => id}, _reason, state), do: NativeProtocol.cancel(id, state)
+  def outbound_write_failed(_msg, _reason, state), do: state
+
+  defp do_translate_outbound(%{"method" => "_arbor/codex/" <> _} = msg, state),
+    do: NativeProtocol.outbound(msg, state)
+
+  defp do_translate_outbound(
+         %{"method" => "$/cancel_request", "params" => %{"requestId" => id}},
+         state
+       ),
+       do: {:ok, :skip, NativeProtocol.cancel(id, state)}
+
+  defp do_translate_outbound(%{"method" => "initialize", "params" => params}, state) do
     {:ok, :skip, %{state | client_capabilities: params["clientCapabilities"] || %{}}}
   end
 
-  def translate_outbound(%{"method" => "authenticate", "id" => acp_id, "params" => params}, state) do
+  defp do_translate_outbound(
+         %{"method" => "authenticate", "id" => acp_id, "params" => params},
+         state
+       ) do
     method_id = params["methodId"] || params["provider"] || params["id"]
 
     case auth_request_params(method_id, params, state) do
@@ -234,17 +270,20 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"method" => "authenticate"}, state),
+  defp do_translate_outbound(%{"method" => "authenticate"}, state),
     do: {:error, "authenticate requires methodId", state}
 
-  def translate_outbound(%{"method" => "logout"}, state) do
+  defp do_translate_outbound(%{"method" => "logout"}, state) do
     {id, state} = next_request_id(state)
     request = Protocol.encode_request(id, Protocol.method(:account_logout), %{})
     state = track_request(state, id, :logout, nil)
     {:reply_and_write, %{}, request, state}
   end
 
-  def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
+  defp do_translate_outbound(
+         %{"method" => "session/new", "id" => acp_id, "params" => params},
+         state
+       ) do
     mode_id =
       Config.normalize_mode_id(params["modeId"] || params["approvalPolicy"] || state.mode_id)
 
@@ -261,7 +300,13 @@ defmodule Arbor.ACP.Adapters.Codex do
           |> Config.merge_thread_mode_wire_params(mode_id)
 
         {id, state} = next_request_id(state)
-        request = Protocol.encode_request(id, Protocol.method(:thread_start), wire_params)
+
+        request =
+          Protocol.encode_request(
+            id,
+            Protocol.method(:thread_start),
+            NativeProtocol.overrides(wire_params, params)
+          )
 
         state =
           track_request(state, id, :thread_start, acp_id, %{
@@ -276,7 +321,10 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"method" => "session/load", "id" => acp_id, "params" => params}, state) do
+  defp do_translate_outbound(
+         %{"method" => "session/load", "id" => acp_id, "params" => params},
+         state
+       ) do
     case Sessions.fetch_id(params) do
       {:ok, session_id} ->
         mode_id =
@@ -302,7 +350,13 @@ defmodule Arbor.ACP.Adapters.Codex do
               |> Config.merge_thread_mode_wire_params(mode_id)
 
             {id, state} = next_request_id(state)
-            request = Protocol.encode_request(id, Protocol.method(:thread_resume), wire_params)
+
+            request =
+              Protocol.encode_request(
+                id,
+                Protocol.method(:thread_resume),
+                NativeProtocol.overrides(wire_params, params)
+              )
 
             state =
               track_request(state, id, :thread_resume, acp_id, %{
@@ -322,10 +376,10 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(
-        %{"method" => "session/resume", "id" => acp_id, "params" => params},
-        state
-      ) do
+  defp do_translate_outbound(
+         %{"method" => "session/resume", "id" => acp_id, "params" => params},
+         state
+       ) do
     case Sessions.fetch_id(params) do
       {:ok, session_id} ->
         mode_id =
@@ -344,7 +398,13 @@ defmodule Arbor.ACP.Adapters.Codex do
               |> Config.merge_thread_mode_wire_params(mode_id)
 
             {id, state} = next_request_id(state)
-            request = Protocol.encode_request(id, Protocol.method(:thread_resume), wire_params)
+
+            request =
+              Protocol.encode_request(
+                id,
+                Protocol.method(:thread_resume),
+                NativeProtocol.overrides(wire_params, params)
+              )
 
             state =
               track_request(state, id, :thread_resume, acp_id, %{
@@ -364,7 +424,10 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"method" => "session/list", "id" => acp_id, "params" => params}, state) do
+  defp do_translate_outbound(
+         %{"method" => "session/list", "id" => acp_id, "params" => params},
+         state
+       ) do
     cwd = session_list_cwd(params, state)
 
     case authorize_optional_workspace(cwd, :session_list, state) do
@@ -387,7 +450,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"method" => "session/close", "params" => params}, state) do
+  defp do_translate_outbound(%{"method" => "session/close", "params" => params}, state) do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id) do
       {id, state} = next_request_id(state)
@@ -424,7 +487,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"method" => "session/delete", "params" => params}, state) do
+  defp do_translate_outbound(%{"method" => "session/delete", "params" => params}, state) do
     case Sessions.fetch_id(params) do
       {:ok, session_id} ->
         session = Map.get(state.sessions, session_id)
@@ -485,10 +548,10 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(
-        %{"method" => "session/prompt", "id" => acp_id, "params" => params},
-        state
-      ) do
+  defp do_translate_outbound(
+         %{"method" => "session/prompt", "id" => acp_id, "params" => params},
+         state
+       ) do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id) do
       input_items = Content.extract_input_items(params["prompt"])
@@ -505,7 +568,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"method" => "session/cancel", "params" => params}, state) do
+  defp do_translate_outbound(%{"method" => "session/cancel", "params" => params}, state) do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id),
          {:ok, turn_id} <- fetch_turn_id(params, session) do
@@ -524,7 +587,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"method" => "session/set_mode", "params" => params}, state) do
+  defp do_translate_outbound(%{"method" => "session/set_mode", "params" => params}, state) do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id),
          {:ok, mode_id} <- Config.normalize_requested_mode(params["modeId"]) do
@@ -542,7 +605,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"method" => "session/set_model", "params" => params}, state) do
+  defp do_translate_outbound(%{"method" => "session/set_model", "params" => params}, state) do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id),
          {:ok, selection} <- model_selection(params["modelId"], session, state) do
@@ -561,7 +624,10 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"method" => "session/set_config_option", "params" => params}, state) do
+  defp do_translate_outbound(
+         %{"method" => "session/set_config_option", "params" => params},
+         state
+       ) do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id),
          {:ok, update} <- config_update(params, session, state) do
@@ -579,10 +645,14 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(%{"id" => response_id} = response, state) do
+  defp do_translate_outbound(%{"id" => response_id} = response, state) do
     case Map.pop(state.pending_client_requests, response_id) do
       {nil, _pending} ->
         {:ok, :skip, state}
+
+      {%{kind: :native} = entry, pending} ->
+        {:ok, NativeProtocol.client_response(entry, response),
+         %{state | pending_client_requests: pending}}
 
       {entry, pending} ->
         state = %{state | pending_client_requests: pending}
@@ -600,7 +670,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  def translate_outbound(_msg, state), do: {:ok, :skip, state}
+  defp do_translate_outbound(_msg, state), do: {:ok, :skip, state}
 
   defp close_session_state(session_id, session, state) do
     prompt_messages =
@@ -669,7 +739,12 @@ defmodule Arbor.ACP.Adapters.Codex do
         additional_directories
       )
 
-    request = Protocol.encode_request(id, Protocol.method(:turn_start), wire_params)
+    request =
+      Protocol.encode_request(
+        id,
+        Protocol.method(:turn_start),
+        NativeProtocol.overrides(wire_params, params)
+      )
 
     state =
       state
@@ -860,21 +935,49 @@ defmodule Arbor.ACP.Adapters.Codex do
 
   @impl true
   def translate_inbound(line, state) do
-    case Protocol.decode_line(line) do
-      {:response, id, reply} ->
-        handle_response(state, id, reply)
+    case Jason.decode(line) do
+      {:ok, event} when is_map(event) ->
+        translated =
+          case Protocol.classify_inbound(event) do
+            {:response, id, reply} ->
+              handle_response(state, id, reply)
 
-      {:request, id, method, params} ->
-        handle_server_request(id, method, params, state)
+            {:request, id, method, params} ->
+              if NativeProtocol.exclusive?(state),
+                do: NativeProtocol.server_request(id, method, params, state),
+                else: handle_server_request(id, method, params, state)
 
-      {:notification, method, params} ->
-        if closed_session_params?(params, state) do
-          {:skip, state}
-        else
-          handle_notification(method, params, state)
-        end
+            {:notification, "serverRequest/resolved" = method, params} ->
+              {cancelled, state} = NativeProtocol.resolved(params, state)
 
-      :unknown ->
+              mapped =
+                if NativeProtocol.exclusive?(state),
+                  do: {:skip, state},
+                  else: handle_notification(method, params, state)
+
+              if cancelled == [] do
+                mapped
+              else
+                case mapped do
+                  {:skip, state} -> {:messages, cancelled, state}
+                  {:messages, messages, state} -> {:messages, cancelled ++ messages, state}
+                end
+              end
+
+            {:notification, method, params} ->
+              cond do
+                NativeProtocol.exclusive?(state) -> {:skip, state}
+                closed_session_params?(params, state) -> {:skip, state}
+                true -> handle_notification(method, params, state)
+              end
+
+            :unknown ->
+              {:skip, state}
+          end
+
+        NativeProtocol.add_event(translated, event, state)
+
+      _ ->
         {:skip, state}
     end
   end
@@ -890,7 +993,13 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  defp handle_typed_response(:initialize, _entry, _reply, state) do
+  defp handle_typed_response(:native, entry, reply, state),
+    do: NativeProtocol.response(entry, reply, state)
+
+  defp handle_typed_response(:initialize, _entry, {:error, error}, state),
+    do: {:skip, %{state | phase: :failed, native_initialize_error: error}}
+
+  defp handle_typed_response(:initialize, _entry, {:ok, _result}, state) do
     {id, state} = next_request_id(%{state | phase: :ready})
 
     request =
@@ -1770,23 +1879,29 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  defp handle_server_request(codex_id, method, _params, state)
+  defp handle_server_request(codex_id, method, params, state)
        when method in [
               "item/tool/call",
               "account/chatgptAuthTokens/refresh",
               "attestation/generate"
             ] do
-    Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
-
-    {:skip_and_write,
-     Protocol.encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
+    if NativeProtocol.enabled?(state) do
+      NativeProtocol.server_request(codex_id, method, params, state)
+    else
+      {:skip_and_write,
+       Protocol.encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"),
+       state}
+    end
   end
 
-  defp handle_server_request(codex_id, method, _params, state) do
-    Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
-
-    {:skip_and_write,
-     Protocol.encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
+  defp handle_server_request(codex_id, method, params, state) do
+    if NativeProtocol.enabled?(state) do
+      NativeProtocol.server_request(codex_id, method, params, state)
+    else
+      {:skip_and_write,
+       Protocol.encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"),
+       state}
+    end
   end
 
   defp request_permission_from_client(

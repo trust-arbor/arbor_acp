@@ -8,7 +8,7 @@ defmodule Arbor.ACP.LifecycleParams do
 
   @spec client_opts(keyword()) :: keyword()
   def client_opts(opts) when is_list(opts) do
-    Keyword.take(opts, [:mcp_servers, :additional_directories])
+    Keyword.take(opts, [:mcp_servers, :additional_directories, :meta])
   end
 
   @spec validate_cwd(any()) :: :ok | {:error, {:invalid_params, :cwd_must_be_absolute}}
@@ -24,6 +24,11 @@ defmodule Arbor.ACP.LifecycleParams do
     mcp_servers = mcp_servers(opts)
 
     cond do
+      not is_nil(Keyword.get(opts, :meta)) and
+          not (is_map(Keyword.get(opts, :meta)) and
+                   Arbor.ACP.Internal.Extensions.json?(Keyword.get(opts, :meta))) ->
+        {:error, :invalid_meta}
+
       removed_native_mcp_servers?(mcp_servers) ->
         {:error, {:invalid_params, :native_mcp_removed}}
 
@@ -53,7 +58,14 @@ defmodule Arbor.ACP.LifecycleParams do
     params
     |> Map.put("mcpServers", mcp_servers(opts))
     |> Maps.put_present("additionalDirectories", validate_additional_directories!(opts))
+    |> Maps.put_present("_meta", metadata(opts))
   end
+
+  defp metadata(opts) when is_list(opts) do
+    if Keyword.keyword?(opts), do: Keyword.get(opts, :meta), else: nil
+  end
+
+  defp metadata(opts), do: Maps.get(opts, "_meta")
 
   @spec mcp_servers(keyword() | map() | nil) :: list()
   def mcp_servers(opts) when is_list(opts) do

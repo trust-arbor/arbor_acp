@@ -70,6 +70,12 @@ defmodule Arbor.ACP.Agent.HandlerRunner do
     )
   end
 
+  def extension_request(pid, ref, method, params, ctx),
+    do: GenServer.cast(pid, {:callback, ref, :handle_extension_request, [method, params, ctx]})
+
+  def extension_notification(pid, method, params, ctx),
+    do: GenServer.cast(pid, {:extension_notification, method, params, ctx})
+
   def cancel(pid, ref, session_id, ctx) do
     GenServer.cast(pid, {:callback, ref, :handle_cancel, [session_id, ctx]})
   end
@@ -102,6 +108,18 @@ defmodule Arbor.ACP.Agent.HandlerRunner do
 
     send(state.owner, {:acp_agent_handler_result, ref, result})
     {:noreply, state}
+  end
+
+  def handle_cast({:extension_notification, method, params, ctx}, state) do
+    case invoke(
+           state.handler_mod,
+           :handle_extension_notification,
+           [method, params, ctx],
+           state.handler_state
+         ) do
+      {:ok, {:ok, handler_state}} -> {:noreply, %{state | handler_state: handler_state}}
+      _ -> {:noreply, state}
+    end
   end
 
   @impl true

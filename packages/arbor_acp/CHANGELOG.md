@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add generic, bidirectional ACP extension requests/notifications, optional handler callbacks, bounded monitored subscriptions and standard session/prompt metadata.
 - Refresh published-RC installation guidance and consolidate current documentation.
 
 

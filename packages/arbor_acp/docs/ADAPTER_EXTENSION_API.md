@@ -128,3 +128,48 @@ Failed initialization closes its resources and reports an additional cleanup
 failure if the original error did not already carry it. Adapter transport also
 preserves an unconfirmed close-call failure instead of treating every exit as
 successful cleanup.
+
+## Generic ACP extension methods
+
+`Arbor.ACP.Client` and `Arbor.ACP.Agent` both expose `extension_request/4` and
+`extension_notify/4`. Method names must start with `_` and parameters must be
+JSON objects with string keys. Requests preserve peer JSON results/error objects
+and use ordinary pending capacity, deadlines, cancellation and close handling.
+Notifications confirm transport admission only. A timeout does not prove remote
+cancellation. Extension authority and semantics belong to the application;
+advertise/check support in capability `_meta` before using an extension.
+
+Client handlers may implement `handle_extension_request(method, params, state)`
+and `handle_extension_notification(method, params, state)`. Agent handlers use
+the same callbacks with `ctx` before `state`. Request callbacks return
+`{:ok, value, state}` (agents also accept `{:reply, value, state}`) or
+`{:error, %{"code" => code, "message" => message}, state}`. The complete error
+map, including `data` and future fields, is preserved. The runtime owns IDs,
+replies, cancellation, capacity and handler timeouts. Notification callbacks
+return `{:ok, state}` and run asynchronously on the owning handler queue.
+Unimplemented requests return Method not found; unimplemented notifications are
+ignored. Returning `:noreply` is not supported for extension requests.
+
+```elixir
+{:ok, result} = Arbor.ACP.Client.extension_request(client, "_vendor/query", %{})
+:ok = Arbor.ACP.Agent.extension_notify(agent, "_vendor/changed", %{"revision" => 1})
+:ok = Arbor.ACP.Client.subscribe_extensions(client, self(), methods: ["_vendor/changed"])
+
+receive do
+  {:acp_extension_notification, "_vendor/changed", params} -> consume(params)
+end
+
+:ok = Arbor.ACP.Client.unsubscribe_extensions(client)
+```
+
+Subscriptions are limited to 32 monitored local PIDs. `:methods` may be `:all`
+or a list of extension names. Client `max_update_queue` and
+`max_update_queue_bytes` apply to subscribers and extension-notification
+callbacks. Full queues close the connection rather than silently discard
+extension events; application consumers must drain their mailboxes. Native
+agents bound notification callback queues with `max_extension_queue` (32) and
+`max_extension_queue_bytes` (8 MiB), closing on overflow.
+
+Lifecycle client methods and both prompt helpers accept `meta:` to populate the
+standard ACP `_meta` field. Other metadata is retained. Vendor helpers can use
+this mechanism to pass native parameters while leaving the core vendor-neutral.

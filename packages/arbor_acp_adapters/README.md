@@ -120,3 +120,14 @@ reviewed source and a fresh package-qualified tag.
 
 See the [contributor guide](https://github.com/trust-arbor/arbor_acp/blob/main/CONTRIBUTING.md)
 for fixture tests, optional real CLI smoke tests and source-archive validation.
+
+## Codex native API
+
+These APIs require core and adapter packages `1.0.0-rc.2` or later; use the
+source checkout with local dependencies when testing before publication.
+
+`Arbor.ACP.Adapters.Codex.Native` exposes arbitrary app-server methods, full
+native events and server requests. Its managed prompt/session helpers also pass
+native parameters such as `outputSchema` while retaining ACP lifecycle handling.
+See the [Codex native guide](docs/CODEX_NATIVE_API.md) for ownership modes,
+capability flags and examples.

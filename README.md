@@ -19,6 +19,7 @@ preserved. Stable promotion requires the remaining qualification and 48-hour soa
 | Use a vendor CLI | [Adapter quickstart](packages/arbor_acp_adapters/README.md), [adapter guide](packages/arbor_acp_adapters/docs/ADAPTER_GUIDE.md) |
 | Run without vendor credentials | [Echo agent/controller](packages/arbor_acp/examples/acp/README.md) |
 | Implement a custom adapter | [Adapter extension contract](packages/arbor_acp/docs/ADAPTER_EXTENSION_API.md) |
+| Use the full Codex app-server API | [Codex native guide](packages/arbor_acp_adapters/docs/CODEX_NATIVE_API.md) |
 | Contribute or release | [Contributing](CONTRIBUTING.md), [BEAM CI](.github/BEAM_CI.md), [releasing](docs/RELEASING.md) |
 | Review changes | [Workspace changelog](CHANGELOG.md), [core changelog](packages/arbor_acp/CHANGELOG.md), [adapter changelog](packages/arbor_acp_adapters/CHANGELOG.md) |
 
