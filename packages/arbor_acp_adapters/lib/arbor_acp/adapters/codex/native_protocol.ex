@@ -167,7 +167,14 @@ defmodule Arbor.ACP.Adapters.Codex.NativeProtocol do
 
       true ->
         acp_id = "codex-native-#{state.next_id}"
-        entry = %{kind: :native, codex_id: id, session_id: nil}
+
+        entry = %{
+          kind: :native,
+          codex_id: id,
+          session_id: nil,
+          thread_id: params["threadId"],
+          turn_id: params["turnId"]
+        }
 
         state = %{
           state
@@ -185,9 +192,35 @@ defmodule Arbor.ACP.Adapters.Codex.NativeProtocol do
   def resolved(params, state) do
     id = params["requestId"] || params["id"]
 
+    cancel_client_requests(state, fn entry -> entry.codex_id == id end)
+  end
+
+  def turn_completed(_params, %{native_api: :off} = state), do: {[], state}
+
+  def turn_completed(params, state) do
+    thread_id = params["threadId"]
+
+    turn_id =
+      case params["turn"] do
+        %{"id" => id} -> id
+        _ -> nil
+      end
+
+    # Codex can end an interrupted dynamic-tool call without a separate
+    # serverRequest/resolved notification. Only settle explicitly scoped calls.
+    if is_binary(thread_id) and is_binary(turn_id) do
+      cancel_client_requests(state, fn entry ->
+        entry.thread_id == thread_id and entry.turn_id == turn_id
+      end)
+    else
+      {[], state}
+    end
+  end
+
+  defp cancel_client_requests(state, predicate) do
     {cancelled, pending} =
       Enum.split_with(state.pending_client_requests, fn {_acp_id, entry} ->
-        Map.get(entry, :kind) == :native and entry.codex_id == id
+        Map.get(entry, :kind) == :native and predicate.(entry)
       end)
 
     messages =

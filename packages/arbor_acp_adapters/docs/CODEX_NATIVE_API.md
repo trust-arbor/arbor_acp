@@ -77,7 +77,11 @@ The outer extension parameters contain `method`, `params`, the original native
 native method's response schema. Return `{:error, error_map, state}` to send a
 complete native error. The runtime translates IDs, replies exactly once, times
 out handlers, suppresses late replies and propagates native server-request
-resolution as ACP cancellation. Missing handlers return Method not found.
+resolution as ACP cancellation. Turn completion also cancels outstanding native
+callbacks with matching explicit `threadId` and `turnId`, even if Codex omits a
+separate resolution event. Unscoped requests and callbacks for other turns remain
+subject to their own resolution or handler deadline. Missing handlers return
+Method not found.
 
 Exclusive mode delegates every native server request, including approval and
 permission requests, to this callback. In shared mode the existing ACP approval
@@ -183,6 +187,44 @@ Generate the exact native schema using your installed CLI:
 codex app-server generate-json-schema --out ./codex-schemas
 codex app-server generate-json-schema --experimental --out ./codex-schemas
 ```
+
+## Release qualification
+
+The real-native CI suite pins the executable version in
+`test/fixtures/acp/codex/cli_version.txt` and uses isolated CLI state. It tests
+reads, concurrent requests, lifecycle/events, errors, managed parameters and
+typed cleanup without authentication or model calls:
+
+```sh
+CODEX_PATH=/absolute/path/to/codex mix test --only interop_codex_native
+```
+
+Authenticated qualification is separate and excluded by default. It requires
+the same CLI pin, an existing working Codex login and explicit opt-in:
+
+```sh
+CODEX_PATH=/absolute/path/to/codex \
+ARBOR_CODEX_AUTH_QUALIFICATION=1 \
+ARBOR_CODEX_QUALIFICATION_REPORT=/absolute/path/to/qualification.jsonl \
+mix test --only codex_authenticated
+```
+
+This runs five real model turns: native text streaming, managed `outputSchema`,
+a fixed dynamic tool roundtrip, denied command approval, and interruption while
+a dynamic-tool callback is pending. It uses disposable workspaces and ephemeral
+threads. The tool has no external effects; approvals are denied. The authenticated
+launcher disables MCP servers, apps, plugins, hooks and web search while retaining
+the existing login. Cleanup must confirm that the owned child was reaped and its
+process group is absent. Missing authentication, failed cases, unavailable
+cleanup receipts and CLI pin mismatches fail the suite.
+
+The optional report contains case outcomes and runtime identities, without
+credentials, account details or native frame payloads. Preserve it with the
+qualified source/archive identities before publication. Passing this subset
+qualifies the bridge paths exercised here; provider-specific and other native
+features can need additional application tests. Protocol shapes follow the
+[official app-server documentation](https://learn.chatgpt.com/docs/app-server)
+and the pinned CLI's generated schema.
 
 See [OpenAI app-server documentation](https://learn.chatgpt.com/docs/app-server)
 and [ACP extensibility](https://agentclientprotocol.com/protocol/v1/extensibility).

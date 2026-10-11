@@ -1,0 +1,63 @@
+name: Codex native compatibility
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  MIX_ENV: test
+  ARBOR_V2_LOCAL: '1'
+  ARBOR_RPC_PATH: ${{ github.workspace }}/.arbor-v2/rpc
+jobs:
+  native:
+    name: Real Codex / Elixir ${{ matrix.toolchain.elixir }} / OTP ${{ matrix.toolchain.otp }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - {id: minimum, elixir: '1.17.3', otp: '27.0'}
+          - {id: current, elixir: '1.20.4', otp: '29.1.1'}
+    defaults:
+      run:
+        working-directory: packages/arbor_acp_adapters
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check out shared RPC
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: trust-arbor/arbor_rpc
+          ref: b2e4abee581b060310202c0b8b4d9a5d0e2e3995
+          path: .arbor-v2/rpc
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: ${{ matrix.toolchain.otp }}
+          elixir-version: ${{ matrix.toolchain.elixir }}
+          version-type: strict
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+      - name: Install reviewed Codex CLI
+        run: |
+          cli_version=$(cat test/fixtures/acp/codex/cli_version.txt)
+          npm install --prefix "$GITHUB_WORKSPACE/.arbor-v2/codex" --no-save --ignore-scripts "@openai/codex@$cli_version"
+          printf 'CODEX_PATH=%s\n' "$GITHUB_WORKSPACE/.arbor-v2/codex/node_modules/.bin/codex" >> "$GITHUB_ENV"
+      - run: mix deps.get
+      - run: mix deps.compile
+      - name: Test real native protocol without authentication or model calls
+        run: mix test --only interop_codex_native --warnings-as-errors --no-deps-check
+        env:
+          ARBOR_CODEX_QUALIFICATION_REPORT: ${{ github.workspace }}/codex-native-${{ matrix.toolchain.id }}.jsonl
+      - name: Retain sanitized qualification receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: codex-native-${{ matrix.toolchain.id }}
+          path: codex-native-${{ matrix.toolchain.id }}.jsonl
+          if-no-files-found: warn

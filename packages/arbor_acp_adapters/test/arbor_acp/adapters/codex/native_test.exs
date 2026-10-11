@@ -297,6 +297,67 @@ defmodule Arbor.ACP.Adapters.Codex.NativeTest do
              Native.new_session(client, "/tmp", native_params: %{"future" => true})
   end
 
+  test "turn completion settles only matching native callbacks in exclusive and shared modes" do
+    for mode <- [:exclusive, :shared] do
+      {:ok, initial} = Codex.init(native_api: mode)
+
+      {requests, state} =
+        Enum.map_reduce(
+          [
+            %{"threadId" => "thread-a", "turnId" => "turn-a"},
+            %{"threadId" => "thread-a", "turnId" => "turn-b"},
+            %{"threadId" => "thread-b", "turnId" => "turn-a"},
+            %{"threadId" => "thread-a"},
+            %{}
+          ],
+          initial,
+          fn params, state ->
+            {:messages, [request, _event], state} =
+              Codex.translate_inbound(
+                Jason.encode!(%{
+                  "id" => state.next_id,
+                  "method" => "future/request",
+                  "params" => params
+                }),
+                state
+              )
+
+            {request, state}
+          end
+        )
+
+      {:messages, messages, unchanged} =
+        Codex.translate_inbound(
+          Jason.encode!(%{
+            "method" => "turn/completed",
+            "params" => %{"threadId" => "thread-a", "turn" => %{}}
+          }),
+          state
+        )
+
+      refute Enum.any?(messages, &(&1["method"] == "$/cancel_request"))
+      assert unchanged.pending_client_requests == state.pending_client_requests
+
+      completed = %{
+        "method" => "turn/completed",
+        "params" => %{
+          "threadId" => "thread-a",
+          "turn" => %{"id" => "turn-a", "status" => "interrupted"}
+        }
+      }
+
+      {:messages, messages, settled} = Codex.translate_inbound(Jason.encode!(completed), state)
+      cancellations = Enum.filter(messages, &(&1["method"] == "$/cancel_request"))
+      assert [%{"params" => %{"requestId" => id}}] = cancellations
+      assert id == hd(requests)["id"]
+      assert map_size(settled.pending_client_requests) == 4
+      assert {:ok, :skip, _} = Codex.translate_outbound(%{"id" => id, "result" => %{}}, settled)
+
+      {:messages, repeated, _} = Codex.translate_inbound(Jason.encode!(completed), settled)
+      refute Enum.any?(repeated, &(&1["method"] == "$/cancel_request"))
+    end
+  end
+
   test "native connections can be supervised and cleanup their owned runtime" do
     {:ok, supervisor} =
       Supervisor.start_link([{Native, [adapter_opts: [codex_path: @peer]]}],
