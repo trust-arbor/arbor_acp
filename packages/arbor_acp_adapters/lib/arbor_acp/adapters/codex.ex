@@ -947,13 +947,24 @@ defmodule Arbor.ACP.Adapters.Codex do
                 do: NativeProtocol.server_request(id, method, params, state),
                 else: handle_server_request(id, method, params, state)
 
-            {:notification, "serverRequest/resolved" = method, params} ->
-              {cancelled, state} = NativeProtocol.resolved(params, state)
+            {:notification, method, params}
+            when method in ["serverRequest/resolved", "turn/completed"] ->
+              {cancelled, state} =
+                if method == "turn/completed",
+                  do: NativeProtocol.turn_completed(params, state),
+                  else: NativeProtocol.resolved(params, state)
 
               mapped =
-                if NativeProtocol.exclusive?(state),
-                  do: {:skip, state},
-                  else: handle_notification(method, params, state)
+                cond do
+                  NativeProtocol.exclusive?(state) ->
+                    {:skip, state}
+
+                  method == "turn/completed" and closed_session_params?(params, state) ->
+                    {:skip, state}
+
+                  true ->
+                    handle_notification(method, params, state)
+                end
 
               if cancelled == [] do
                 mapped

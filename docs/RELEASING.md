@@ -25,6 +25,12 @@ versions, tags and source archives.
   Credential-free CLI lifecycle checks do not qualify authenticated model turns.
 - Exercise native/adapter startup, streaming, cancellation, limits, timeout and
   cleanup with the actual selected vendor versions and downstream applications.
+- For Codex native candidates, require the pinned real-native CI and all five
+  authenticated qualification cases: streaming, managed structured output,
+  dynamic tools, approval denial and interruption with a pending callback.
+  Retain sanitized receipts and exact source identities; credentials and native
+  payloads must not appear in public evidence. See the
+  [qualification commands](../packages/arbor_acp_adapters/docs/CODEX_NATIVE_API.md#release-qualification).
 - Build archives with source overrides unset. Check no vendor implementation or
   MCP runtime leaks into core, and no host paths, generated native binaries or
   test fixtures ship inadvertently.

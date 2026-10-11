@@ -10,6 +10,8 @@ ExUnit.configure(
     interop: true,
     interop_acp: true,
     interop_acp_cli: true,
+    interop_codex_native: true,
+    codex_authenticated: true,
     interop_acp_ecosystem: true,
     wip: true,
     skip: true

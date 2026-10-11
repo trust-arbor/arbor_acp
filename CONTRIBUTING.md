@@ -104,6 +104,23 @@ executables and fails when one is unavailable. Executable override variables are
 documented in the [adapter guide](packages/arbor_acp_adapters/docs/ADAPTER_GUIDE.md).
 Live authenticated prompts and provider/network behavior need separate evidence.
 
+The Codex native suite uses the reviewed pin in
+`packages/arbor_acp_adapters/test/fixtures/acp/codex/cli_version.txt`. From the
+adapters project, with that executable installed:
+
+```sh
+CODEX_PATH=/absolute/path/to/codex mix test --only interop_codex_native
+```
+
+The dedicated Codex native CI runs this on minimum and current BEAM toolchains.
+It uses isolated CLI state and tests native reads, concurrent correlation,
+thread lifecycle/events, errors, managed overrides and typed subprocess cleanup.
+It never authenticates or starts a model turn. Missing executables and version
+mismatches fail rather than skip coverage.
+
+Before publishing a candidate that changes native handling, run the separate
+[authenticated qualification](packages/arbor_acp_adapters/docs/CODEX_NATIVE_API.md#release-qualification).
+
 From the core package, inspect the ecosystem snapshot without networking:
 
 ```sh
