@@ -137,7 +137,11 @@ for package checks, optional interoperability suites and source-archive validati
 These APIs are introduced in `1.0.0-rc.2`; use the source checkout with local
 dependencies when testing before that candidate is published.
 
-Clients and agents support generic `extension_request/4`, `extension_notify/4`
-and optional extension-handler callbacks. Clients also provide bounded monitored
-notification subscriptions. Session and prompt calls accept standard `meta:`.
+Clients send any method string with `Client.request/4`, including `_`-prefixed
+ACP extensions such as `_session/steering`. `extension_request/4` remains the
+underscore-prefixed helper. Initialize `_meta` and other unknown handshake
+fields are available from `Client.agent_meta/1` and `Client.initialize_result/1`.
+Clients and agents also support `extension_notify/4` and optional
+extension-handler callbacks, plus bounded monitored notification subscriptions.
+Session and prompt calls accept standard `meta:`.
 See the [extension contract](docs/ADAPTER_EXTENSION_API.md) for examples and limits.

@@ -85,6 +85,7 @@ defmodule Arbor.ACP.Client do
     :agent_capabilities,
     :client_capabilities,
     :auth_methods,
+    :initialize_result,
     :handler_mod,
     :handler_pid,
     :event_listener,
@@ -110,6 +111,24 @@ defmodule Arbor.ACP.Client do
   # Public API
 
   @doc """
+  Sends an arbitrary JSON-RPC request using ordinary request ownership.
+
+  Use this for ACP `_`-prefixed extension methods such as `_session/steering`
+  and for methods the typed helpers do not yet cover. Parameters must be a
+  JSON object with string keys. Results and peer error objects are preserved.
+  Typed helpers remain the preferred path for standard session, prompt and
+  lifecycle operations. Check advertised `_meta` before calling an extension.
+  A timeout does not prove that the remote operation stopped.
+  """
+  @spec request(GenServer.server(), String.t(), map(), keyword()) ::
+          {:ok, term()} | {:error, term()}
+  def request(client, method, params, opts \\ []) do
+    with :ok <- Extensions.validate_request(method, params) do
+      dispatch_request(client, method, params, opts)
+    end
+  end
+
+  @doc """
   Calls an underscore-prefixed ACP extension using ordinary request ownership.
 
   Parameters must be a JSON object with string keys. Results and peer error
@@ -121,11 +140,7 @@ defmodule Arbor.ACP.Client do
           {:ok, term()} | {:error, term()}
   def extension_request(client, method, params, opts \\ []) do
     with :ok <- Extensions.validate(method, params) do
-      Call.call(
-        client,
-        {:extension_request, Extensions.request(method, params)},
-        Call.timeout!(opts, 30_000)
-      )
+      dispatch_request(client, method, params, opts)
     end
   end
 
@@ -404,6 +419,24 @@ defmodule Arbor.ACP.Client do
     Call.call(client, :agent_capabilities)
   end
 
+  @doc """
+  Returns the complete initialize result, including `_meta` and any unknown
+  fields advertised by the agent.
+  """
+  @spec initialize_result(GenServer.server()) :: {:ok, map() | nil} | {:error, term()}
+  def initialize_result(client) do
+    Call.call(client, :initialize_result)
+  end
+
+  @doc """
+  Returns the agent's `_meta` object from the initialize handshake, or `nil`
+  when the agent omitted it.
+  """
+  @spec agent_meta(GenServer.server()) :: {:ok, term()} | {:error, term()}
+  def agent_meta(client) do
+    Call.call(client, :agent_meta)
+  end
+
   @doc "Returns the agent's authentication methods from the initialize handshake."
   @spec auth_methods(GenServer.server()) :: {:ok, [map()]} | {:error, term()}
   def auth_methods(client) do
@@ -653,6 +686,20 @@ defmodule Arbor.ACP.Client do
 
   def handle_call(:agent_capabilities, _from, state) do
     {:reply, {:ok, state.agent_capabilities}, state}
+  end
+
+  def handle_call(:initialize_result, _from, state) do
+    {:reply, {:ok, state.initialize_result}, state}
+  end
+
+  def handle_call(:agent_meta, _from, state) do
+    meta =
+      case state.initialize_result do
+        %{"_meta" => meta} -> meta
+        _missing -> nil
+      end
+
+    {:reply, {:ok, meta}, state}
   end
 
   def handle_call(:auth_methods, _from, state) do
@@ -955,6 +1002,14 @@ defmodule Arbor.ACP.Client do
 
   # Private helpers
 
+  defp dispatch_request(client, method, params, opts) do
+    Call.call(
+      client,
+      {:extension_request, Extensions.request(method, params)},
+      Call.timeout!(opts, 30_000)
+    )
+  end
+
   defp init_client(opts, scope, scope_monitor) do
     handler_mod = Keyword.get(opts, :handler, DefaultHandler)
     handler_opts = Keyword.get(opts, :handler_opts, [])
@@ -1127,7 +1182,8 @@ defmodule Arbor.ACP.Client do
       {:ok,
        %{
          state
-         | agent_info: result["agentInfo"],
+         | initialize_result: result,
+           agent_info: result["agentInfo"],
            agent_capabilities: result["agentCapabilities"],
            client_capabilities: capabilities,
            auth_methods: result["authMethods"] || [],

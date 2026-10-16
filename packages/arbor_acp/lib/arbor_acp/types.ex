@@ -382,7 +382,8 @@ defmodule Arbor.ACP.Types do
   required "agentInfo" => agent_info(),
   optional "agentCapabilities" => agent_capabilities(),
   optional "authMethods" => [auth_method()],
-  optional "protocolVersion" => pos_integer()
+  optional "protocolVersion" => pos_integer(),
+  optional "_meta" => map()
   }
   ```
   """

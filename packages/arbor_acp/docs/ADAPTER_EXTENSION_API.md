@@ -131,13 +131,17 @@ successful cleanup.
 
 ## Generic ACP extension methods
 
-`Arbor.ACP.Client` and `Arbor.ACP.Agent` both expose `extension_request/4` and
-`extension_notify/4`. Method names must start with `_` and parameters must be
-JSON objects with string keys. Requests preserve peer JSON results/error objects
-and use ordinary pending capacity, deadlines, cancellation and close handling.
-Notifications confirm transport admission only. A timeout does not prove remote
-cancellation. Extension authority and semantics belong to the application;
-advertise/check support in capability `_meta` before using an extension.
+`Arbor.ACP.Client.request/4` sends any method string, including ACP
+`_`-prefixed extensions such as `_session/steering` and methods the typed
+helpers do not cover. `Arbor.ACP.Client` and `Arbor.ACP.Agent` both expose
+`extension_request/4` and `extension_notify/4` for underscore-prefixed names.
+Parameters must be JSON objects with string keys. Requests preserve peer JSON
+results/error objects and use ordinary pending capacity, deadlines,
+cancellation and close handling. Notifications confirm transport admission
+only. A timeout does not prove remote cancellation. Extension authority and
+semantics belong to the application; advertise/check support in initialize
+`_meta` (`Client.agent_meta/1` or `Client.initialize_result/1`) before using
+an extension.
 
 Client handlers may implement `handle_extension_request(method, params, state)`
 and `handle_extension_notification(method, params, state)`. Agent handlers use
@@ -151,6 +155,12 @@ Unimplemented requests return Method not found; unimplemented notifications are
 ignored. Returning `:noreply` is not supported for extension requests.
 
 ```elixir
+{:ok, %{"steering" => %{"supported" => true}}} = Arbor.ACP.Client.agent_meta(client)
+{:ok, result} = Arbor.ACP.Client.request(client, "_session/steering", %{
+  "sessionId" => session_id,
+  "content" => [%{"type" => "text", "text" => "continue"}],
+  "_meta" => %{"steering" => %{"idleBehavior" => "promptRequired"}}
+})
 {:ok, result} = Arbor.ACP.Client.extension_request(client, "_vendor/query", %{})
 :ok = Arbor.ACP.Agent.extension_notify(agent, "_vendor/changed", %{"revision" => 1})
 :ok = Arbor.ACP.Client.subscribe_extensions(client, self(), methods: ["_vendor/changed"])

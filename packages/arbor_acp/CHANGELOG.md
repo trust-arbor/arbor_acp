@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add `Client.request/4` to send any method string, including ACP `_`-prefixed
+  extensions such as `_session/steering`, through ordinary request ownership.
+  Existing typed helpers and `extension_request/4` are unchanged.
+- Preserve initialize `_meta` and other unknown handshake fields. Expose them
+  with `Client.agent_meta/1` and `Client.initialize_result/1`.
 - Add generic, bidirectional ACP extension requests/notifications, optional handler callbacks, bounded monitored subscriptions and standard session/prompt metadata.
 - Refresh published-RC installation guidance and consolidate current documentation.
 
