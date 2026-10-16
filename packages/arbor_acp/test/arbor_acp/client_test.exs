@@ -177,6 +177,9 @@ defmodule Arbor.ACP.ClientTest do
           ignore_method: ignore_method,
           capabilities: capabilities,
           auth_methods: auth_methods,
+          meta: Keyword.get(opts, :meta),
+          initialize_extra: Keyword.get(opts, :initialize_extra, %{}),
+          method_replies: Keyword.get(opts, :method_replies, %{}),
           test_pid: test_pid
         })
       end)
@@ -203,18 +206,19 @@ defmodule Arbor.ACP.ClientTest do
       send(state.test_pid, {:initialize_request, msg["params"] || %{}})
       Process.sleep(state.initialize_delay_ms)
 
-      response =
-        Jason.encode!(%{
-          "jsonrpc" => "2.0",
-          "result" => %{
-            "agentInfo" => %{"name" => "mock_agent", "version" => "1.0.0"},
-            "agentCapabilities" => state.capabilities,
-            "authMethods" => state.auth_methods,
-            "protocolVersion" => state.protocol_version
-          },
-          "id" => id
-        })
+      result =
+        %{
+          "agentInfo" => %{"name" => "mock_agent", "version" => "1.0.0"},
+          "agentCapabilities" => state.capabilities,
+          "authMethods" => state.auth_methods,
+          "protocolVersion" => state.protocol_version
+        }
+        |> Map.merge(state.initialize_extra)
 
+      result =
+        if is_map(state.meta), do: Map.put(result, "_meta", state.meta), else: result
+
+      response = Jason.encode!(%{"jsonrpc" => "2.0", "result" => result, "id" => id})
       MessageRelay.push(state.to_client, response)
     end
 
@@ -431,6 +435,28 @@ defmodule Arbor.ACP.ClientTest do
       MessageRelay.push(state.to_client, response)
     end
 
+    defp handle_message(%{"method" => method, "id" => id} = msg, state) do
+      send(state.test_pid, {:arbitrary_request, method, msg["params"]})
+
+      response =
+        case Map.get(state.method_replies, method, :echo) do
+          {:error, error} ->
+            Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "error" => error})
+
+          :echo ->
+            Jason.encode!(%{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => msg["params"] || %{}
+            })
+
+          result ->
+            Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "result" => result})
+        end
+
+      MessageRelay.push(state.to_client, response)
+    end
+
     defp handle_message(_msg, _state), do: :ok
   end
 
@@ -632,6 +658,27 @@ defmodule Arbor.ACP.ClientTest do
       assert [%{"id" => "api-key"}] = auth_methods
 
       assert Client.status!(client) == :ready
+    end
+
+    test "exposes initialize _meta and unknown result fields" do
+      meta = %{"steering" => %{"supported" => true}}
+      extra = %{"futureField" => %{"kept" => true}}
+      {client, _agent} = start_client(meta: meta, initialize_extra: extra)
+
+      assert {:ok, ^meta} = Client.agent_meta(client)
+      assert {:ok, result} = Client.initialize_result(client)
+      assert result["_meta"] == meta
+      assert result["futureField"] == %{"kept" => true}
+      assert result["agentInfo"]["name"] == "mock_agent"
+      assert {:ok, caps} = Client.agent_capabilities(client)
+      assert caps["streaming"] == true
+    end
+
+    test "returns nil agent meta when initialize omitted _meta" do
+      {client, _agent} = start_client()
+      assert {:ok, nil} = Client.agent_meta(client)
+      assert {:ok, result} = Client.initialize_result(client)
+      refute Map.has_key?(result, "_meta")
     end
 
     test "honors a configurable total initialize timeout and closes the transport" do
@@ -1980,6 +2027,51 @@ defmodule Arbor.ACP.ClientTest do
 
       assert :ok = Client.disconnect(client)
       assert Client.status!(client) == :disconnected
+    end
+  end
+
+  describe "arbitrary requests" do
+    test "sends underscore-prefixed extension methods and returns the result" do
+      params = %{
+        "sessionId" => "sess_mock_001",
+        "content" => [%{"type" => "text", "text" => "continue"}],
+        "_meta" => %{"steering" => %{"idleBehavior" => "promptRequired"}}
+      }
+
+      {client, _agent} =
+        start_client(method_replies: %{"_session/steering" => %{"outcome" => "joined"}})
+
+      assert {:ok, %{"outcome" => "joined"}} =
+               Client.request(client, "_session/steering", params)
+
+      assert_receive {:arbitrary_request, "_session/steering", ^params}
+    end
+
+    test "sends unrecognized methods the typed helpers do not cover" do
+      params = %{"sessionId" => "sess_mock_001", "foo" => 1}
+      {client, _agent} = start_client()
+
+      assert {:ok, ^params} = Client.request(client, "vendor/experimental", params)
+      assert_receive {:arbitrary_request, "vendor/experimental", ^params}
+    end
+
+    test "returns peer errors for arbitrary requests" do
+      error = %{"code" => -32_000, "message" => "nope", "data" => %{"x" => 1}}
+      {client, _agent} = start_client(method_replies: %{"_session/steering" => {:error, error}})
+
+      assert {:error, ^error} = Client.request(client, "_session/steering", %{})
+    end
+
+    test "keeps typed session helpers working" do
+      {client, _agent} = start_client()
+      assert {:ok, %{"sessionId" => "sess_mock_001"}} = Client.new_session(client, "/tmp/project")
+    end
+
+    test "rejects invalid method or params before dispatch" do
+      {client, _agent} = start_client()
+      assert {:error, _} = Client.request(client, "", %{})
+      assert {:error, _} = Client.request(client, "vendor/x", %{atom: 1})
+      refute_received {:arbitrary_request, _, _}
     end
   end
 end

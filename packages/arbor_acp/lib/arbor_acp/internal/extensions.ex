@@ -11,6 +11,15 @@ defmodule Arbor.ACP.Internal.Extensions do
 
   def validate(_method, _params), do: {:error, :invalid_extension_method_or_params}
 
+  def validate_request(method, params)
+      when is_binary(method) and method != "" and is_map(params) do
+    if String.valid?(method) and json?(params),
+      do: :ok,
+      else: {:error, :invalid_request_params}
+  end
+
+  def validate_request(_method, _params), do: {:error, :invalid_request_method_or_params}
+
   def json?(value) when is_binary(value), do: String.valid?(value)
   def json?(value) when is_number(value) or is_boolean(value) or is_nil(value), do: true
   def json?(value) when is_list(value), do: Enum.all?(value, &json?/1)

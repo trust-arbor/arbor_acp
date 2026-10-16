@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `Client.request/4` for arbitrary ACP methods, including `_`-prefixed
+  extensions, and preserve initialize `_meta` plus other unknown handshake
+  fields via `Client.agent_meta/1` and `Client.initialize_result/1`.
 - Add real-Codex native compatibility CI and authenticated candidate qualification.
 - Settle native callbacks scoped to a completed Codex turn even without a separate request-resolution event.
 - Add generic ACP extensions and the Codex native API, complete event/server-request access and managed native parameter overrides. Prepare core and adapter RC.2 with the matching minimum core dependency.

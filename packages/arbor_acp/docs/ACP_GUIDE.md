@@ -57,7 +57,11 @@ the core package supplies the generic bridge and `Arbor.ACP.Adapter` behaviour.
 ## Sessions, capabilities and configuration
 
 Inspect `Client.agent_capabilities/1` and `Client.auth_methods/1` after connecting.
-Optional lifecycle methods depend on the capabilities advertised by that agent:
+The complete initialize payload, including `_meta` and other unknown fields, is
+available from `Client.initialize_result/1`; `Client.agent_meta/1` returns only
+`_meta` (`nil` when the agent omitted it). Agents advertise extension support
+such as steering under `_meta.steering.supported`. Optional lifecycle methods
+depend on the capabilities advertised by that agent:
 
 | Operation | Client API | Meaning |
 | --- | --- | --- |
@@ -73,6 +77,12 @@ Optional lifecycle methods depend on the capabilities advertised by that agent:
 `end_session/2` uses close when advertised, otherwise retains its historical local
 telemetry-only behavior. Use `disconnect/1` to end the connection. Closing a
 session and deleting its saved history are different operations.
+
+`Client.request/4` sends any method string, including ACP `_`-prefixed
+extensions such as `_session/steering`, with JSON object params. It uses the
+same request ownership, deadlines and error return as the typed helpers.
+Prefer those helpers for standard session, prompt and lifecycle calls.
+`Client.extension_request/4` remains the underscore-prefixed helper.
 
 Use `authenticate/3` with an advertised method ID or a method-specific params
 map. `logout/2` requires the logout capability. Available models, modes and

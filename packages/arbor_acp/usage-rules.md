@@ -97,8 +97,11 @@ when extending the core rather than copying a vendor's implementation helpers.
 
 ## Protocol extensions
 
-- Use `Client.extension_request/4` and `Arbor.ACP.Agent.extension_request/4` for advertised
-  underscore-prefixed ACP extensions, with JSON object parameters and string keys.
+- Use `Client.request/4` for any method string, including advertised `_`-prefixed
+  ACP extensions such as `_session/steering`, with JSON object parameters and string keys.
+- Use `Client.extension_request/4` and `Arbor.ACP.Agent.extension_request/4` when you
+  want the underscore-prefixed helper. Inspect `Client.agent_meta/1` or
+  `Client.initialize_result/1` for initialize `_meta` and other unknown fields.
 - `extension_notify/4` confirms admission only; timeouts do not prove remote cancellation.
 - Use optional handler extension callbacks and return results/errors to the runtime,
   which owns correlation, deadlines and cleanup.

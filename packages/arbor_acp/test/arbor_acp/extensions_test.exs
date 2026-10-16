@@ -7,6 +7,14 @@ defmodule Arbor.ACP.ExtensionsTest do
     @behaviour Arbor.ACP.Agent.Handler
     def init(opts), do: {:ok, Keyword.fetch!(opts, :parent)}
 
+    def handle_initialize(_params, _, state) do
+      {:reply,
+       %{
+         "_meta" => %{"steering" => %{"supported" => true}},
+         "futureField" => %{"kept" => true}
+       }, state}
+    end
+
     def handle_new_session(params, _, state) do
       send(state, {:new_params, params})
       {:reply, %{"sessionId" => "extension-session"}, state}
@@ -200,5 +208,28 @@ defmodule Arbor.ACP.ExtensionsTest do
     meta = %{"vendor" => %{"future" => true}}
     assert {:ok, _} = Client.new_session(client, "/tmp", meta: meta)
     assert_receive {:new_params, %{"_meta" => ^meta}}
+  end
+
+  test "request sends advertised extension methods through ordinary ownership" do
+    {client, _} = pair()
+
+    params = %{
+      "sessionId" => "extension-session",
+      "content" => [%{"type" => "text", "text" => "continue"}],
+      "_meta" => %{"steering" => %{"idleBehavior" => "promptRequired"}}
+    }
+
+    assert {:ok, ^params} = Client.request(client, "_session/steering", params)
+    assert {:ok, _} = Client.extension_request(client, "_vendor/new-method", %{})
+  end
+
+  test "initialize result keeps _meta and unknown fields" do
+    {client, _} = pair()
+    assert {:ok, %{"steering" => %{"supported" => true}}} = Client.agent_meta(client)
+    assert {:ok, result} = Client.initialize_result(client)
+    assert result["_meta"]["steering"]["supported"] == true
+    assert result["futureField"] == %{"kept" => true}
+    assert result["agentInfo"]["name"]
+    assert {:ok, _caps} = Client.agent_capabilities(client)
   end
 end
