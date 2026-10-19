@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Validate `Arbor.ACP.Registry.npx_command/1` npm package names and separate them from `npx` flags with `--`.
 - Add generic, bidirectional ACP extension requests/notifications, optional handler callbacks, bounded monitored subscriptions and standard session/prompt metadata.
 - Refresh published-RC installation guidance and consolidate current documentation.
 

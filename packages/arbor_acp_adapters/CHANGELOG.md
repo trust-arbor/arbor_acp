@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject Claude Code and Pi CLI option values that would be parsed as extra flags. Require Claude `--resume` and `--session-id` values to be session UUIDs.
 - Add pinned real-Codex native CI and opt-in authenticated release qualification with sanitized receipts and verified subprocess cleanup.
 - Cancel native callbacks scoped to a completed turn when Codex omits a separate request-resolution event, preserving unrelated requests and suppressing late replies.
 - Add the Codex native API: arbitrary methods, complete native events and server-request replies, explicit exclusive/shared ownership modes and managed native parameter overrides. Stop the native handshake when initialization fails.

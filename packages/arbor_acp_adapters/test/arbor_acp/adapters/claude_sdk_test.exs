@@ -44,7 +44,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
           model: "opus",
           additional_directories: ["/tmp/shared"],
           mcp_servers: %{"docs" => %{"command" => "docs-mcp"}},
-          resume: "sess_1"
+          resume: "123e4567-e89b-12d3-a456-426614174000"
         )
 
       assert "--model" in args
@@ -54,7 +54,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
       assert [config] = mcp_config_values(args)
       assert %{"mcpServers" => %{"docs" => _}} = config |> File.read!() |> Jason.decode!()
       assert "--resume" in args
-      assert "sess_1" in args
+      assert "123e4567-e89b-12d3-a456-426614174000" in args
     end
 
     test "bypass permission mode requires the explicit dangerous opt-in flag" do

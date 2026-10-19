@@ -295,7 +295,8 @@ memory or the operating system's Port buffers.
 `Arbor.ACP.Registry.fetch/1` downloads the public agent registry; `parse/1`
 accepts already obtained JSON for offline use. `agents/1`, `get_agent/2` and
 `find_agents/2` inspect entries, while `distribution/2` and `npx_command/1`
-inspect launch metadata. These helpers do not install or run an agent. Review a
+inspect launch metadata. `npx_command/1` validates the npm package name and
+inserts `--` before it. These helpers do not install or run an agent. Review a
 distribution before using its command in a subprocess.
 
 The API entrypoints are `Arbor.ACP`, `Arbor.ACP.Client`, `Arbor.ACP.Agent`,

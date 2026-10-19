@@ -7,6 +7,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
   # it uses a richer stdin/stdout protocol than the basic CLI stream. This module
   # keeps that wire-shape construction side-effect free.
 
+  alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
   alias Arbor.ACP.Adapters.Internal.Maps, as: MapHelpers
 
   @sdk_version "0.3.238"
@@ -22,42 +23,45 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
   }
 
   @doc "Builds the Claude Code command line used by SDK-style sessions."
-  @spec command(keyword()) :: {String.t(), [String.t()]}
+  @spec command(keyword()) ::
+          {String.t(), [String.t()]} | {:error, {:invalid_option, atom(), String.t()}}
   def command(opts) do
-    args =
-      [
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--input-format",
-        "stream-json"
-      ]
-      |> append_thinking(opts)
-      |> append_optional(opts, :effort, "--effort")
-      |> append_optional(opts, :max_turns, "--max-turns")
-      |> append_optional(opts, :max_budget_usd, "--max-budget-usd")
-      |> append_optional(opts, :model, "--model")
-      |> append_optional(opts, :fallback_model, "--fallback-model")
-      |> append_optional(opts, :agent, "--agent")
-      |> append_permission_prompt(opts)
-      |> append_tools(opts)
-      |> append_mcp_config(opts)
-      |> append_permission_mode(opts)
-      |> append_flag(
-        opts,
-        :allow_dangerously_skip_permissions,
-        "--allow-dangerously-skip-permissions"
-      )
-      |> append_flag(opts, :include_partial_messages, "--include-partial-messages", true)
-      |> append_flag(opts, :strict_mcp_config, "--strict-mcp-config")
-      |> append_repeated(opts, :additional_directories, "--add-dir")
-      |> append_optional(opts, :resume, "--resume")
-      |> append_optional(opts, :resume_session_at, "--resume-session-at")
-      |> append_flag(opts, :fork_session, "--fork-session")
-      |> append_optional(opts, :session_id, "--session-id")
-      |> append_extra_args(opts)
+    with :ok <- validate_command_argv(opts) do
+      args =
+        [
+          "--output-format",
+          "stream-json",
+          "--verbose",
+          "--input-format",
+          "stream-json"
+        ]
+        |> append_thinking(opts)
+        |> append_optional(opts, :effort, "--effort")
+        |> append_optional(opts, :max_turns, "--max-turns")
+        |> append_optional(opts, :max_budget_usd, "--max-budget-usd")
+        |> append_optional(opts, :model, "--model")
+        |> append_optional(opts, :fallback_model, "--fallback-model")
+        |> append_optional(opts, :agent, "--agent")
+        |> append_permission_prompt(opts)
+        |> append_tools(opts)
+        |> append_mcp_config(opts)
+        |> append_permission_mode(opts)
+        |> append_flag(
+          opts,
+          :allow_dangerously_skip_permissions,
+          "--allow-dangerously-skip-permissions"
+        )
+        |> append_flag(opts, :include_partial_messages, "--include-partial-messages", true)
+        |> append_flag(opts, :strict_mcp_config, "--strict-mcp-config")
+        |> append_repeated(opts, :additional_directories, "--add-dir")
+        |> append_optional(opts, :resume, "--resume")
+        |> append_optional(opts, :resume_session_at, "--resume-session-at")
+        |> append_flag(opts, :fork_session, "--fork-session")
+        |> append_optional(opts, :session_id, "--session-id")
+        |> append_extra_args(opts)
 
-    {cli_path(opts), args}
+      {cli_path(opts), args}
+    end
   end
 
   @doc "Returns the Claude Code executable path used for SDK-style sessions."
@@ -404,6 +408,93 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
 
   defp prepend_content(acc, items) when is_list(items), do: Enum.reverse(items) ++ acc
   defp prepend_content(acc, item), do: [item | acc]
+
+  # Claude Code's documented CLI takes space-separated `--flag value` forms for
+  # these options (the `=` form is documented only for `--debug`). Values that
+  # start with `-` would be parsed as extra flags, so they are rejected.
+  @uuid_argv_keys [:resume, :session_id]
+  @value_argv_keys [
+    :effort,
+    :max_turns,
+    :max_budget_usd,
+    :model,
+    :fallback_model,
+    :agent,
+    :additional_directories,
+    :resume_session_at,
+    :allowed_tools,
+    :disallowed_tools,
+    :tools,
+    :thinking,
+    :max_thinking_tokens,
+    :mcp_config_path,
+    :permission_mode
+  ]
+
+  defp validate_command_argv(opts) do
+    with :ok <- validate_uuid_argv_opts(opts) do
+      reject_leading_dash_argv_opts(opts)
+    end
+  end
+
+  defp validate_uuid_argv_opts(opts) do
+    Enum.reduce_while(@uuid_argv_keys, :ok, fn key, :ok ->
+      case validate_uuid_argv_opt(opts, key) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_uuid_argv_opt(opts, key) do
+    case Keyword.get(opts, key) do
+      nil ->
+        :ok
+
+      value ->
+        string = to_string(value)
+
+        if SessionStore.valid_session_id?(string) do
+          :ok
+        else
+          invalid(key, "must be a Claude session UUID")
+        end
+    end
+  end
+
+  defp reject_leading_dash_argv_opts(opts) do
+    Enum.reduce_while(@value_argv_keys, :ok, fn key, :ok ->
+      case reject_leading_dash_argv_opt(opts, key) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp reject_leading_dash_argv_opt(opts, key) do
+    reject_leading_dash_value(key, Keyword.get(opts, key))
+  end
+
+  defp reject_leading_dash_value(_key, nil), do: :ok
+
+  defp reject_leading_dash_value(key, values) when is_list(values) do
+    Enum.reduce_while(values, :ok, fn value, :ok ->
+      case reject_leading_dash_value(key, value) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp reject_leading_dash_value(key, value) do
+    if value |> to_string() |> String.starts_with?("-") do
+      invalid(key, "must not start with '-'")
+    else
+      :ok
+    end
+  end
+
+  defp invalid(key, message), do: {:error, {:invalid_option, key, message}}
 
   defp append_thinking(args, opts) do
     cond do
