@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 1.0.0-rc.2 — 2026-10-22
+
+- **Security:** Pi edit snapshots are taken only for regular files of at most 1 MiB inside the session workspace. An agent-named path (absolute, `..` or a symlink escape) could previously send any readable file's contents to the ACP client as a diff (#5).
 - **Security:** reject Claude Code and Pi CLI option values that would be parsed as extra flags, the argument injection behind CVE-2026-96620 (a value such as `--mcp-config …` could start an arbitrary command). `ClaudeSDK.Protocol.command/1` and `Pi.cli_command/1` now return `{:error, {:invalid_option, key, reason}}` for a value starting with `-` or one that is not a string, checked in the exact form it would reach argv. Claude `--resume` and `--session-id` values must be session UUIDs.
 - Add pinned real-Codex native CI and opt-in authenticated release qualification with sanitized receipts and verified subprocess cleanup.
 - Cancel native callbacks scoped to a completed turn when Codex omits a separate request-resolution event, preserving unrelated requests and suppressing late replies.

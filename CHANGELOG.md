@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## ArborACP / Adapters 1.0.0-rc.2 — 2026-10-22
+
+- **Security:** contain Pi edit snapshots to the session workspace and cap their size.
 - **Security:** harden Claude, Pi and `npx` argv construction against option injection (the class of CVE-2026-96620).
 - Add real-Codex native compatibility CI and authenticated candidate qualification.
 - Settle native callbacks scoped to a completed Codex turn even without a separate request-resolution event.

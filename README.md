@@ -5,7 +5,7 @@ Two independent Mix projects live here:
 - [ArborACP](packages/arbor_acp/README.md): client, native agent and generic adapter runtime.
 - [ArborACP adapters](packages/arbor_acp_adapters/README.md): optional Claude, Codex, Pi and ZCode implementations.
 
-Both packages are published as `1.0.0-rc.1` for downstream testing. Shared
+Both packages are published as `1.0.0-rc.2` for downstream testing. Shared
 JSON-RPC, framing, environment and subprocess mechanics are provided by
 [ArborRPC](https://github.com/trust-arbor/arbor_rpc), in its own repository.
 The original `2.0.0-rc.1` candidates are retired, with their tags and archives
@@ -33,9 +33,9 @@ for package, namespace, configuration and ownership changes.
 Choose only the packages your application uses:
 
 ```elixir
-{:arbor_acp, "== 1.0.0-rc.1"}
+{:arbor_acp, "== 1.0.0-rc.2"}
 # Add when using a bundled vendor adapter:
-{:arbor_acp_adapters, "== 1.0.0-rc.1"}
+{:arbor_acp_adapters, "== 1.0.0-rc.2"}
 ```
 
 Run `mix deps.get`; ACP and RPC dependencies resolve normally from Hex. Vendor
