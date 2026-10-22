@@ -20,7 +20,7 @@ jobs:
       matrix:
         toolchain:
           - {id: minimum, elixir: '1.17.3', otp: '27.0'}
-          - {id: current, elixir: '1.20.4', otp: '29.1.1'}
+          - {id: current, elixir: '1.20.4', otp: '29.1.2'}
     defaults:
       run:
         working-directory: packages/arbor_acp_adapters
