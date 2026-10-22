@@ -105,11 +105,10 @@ defmodule Arbor.ACP.Adapters.Pi do
     settings = Settings.load(Keyword.get(opts, :cwd), opts)
     cli_path = Settings.pi_command(opts, settings)
 
-    args =
-      ["--mode", "rpc", "--no-themes"]
-      |> append_opt(opts, :session_path, "--session")
-
-    {cli_path, args}
+    with {:ok, args} <-
+           append_opt(["--mode", "rpc", "--no-themes"], opts, :session_path, "--session") do
+      {cli_path, args}
+    end
   end
 
   @impl true
@@ -497,24 +496,12 @@ defmodule Arbor.ACP.Adapters.Pi do
         opts =
           state.opts |> Keyword.put(:cwd, cwd) |> maybe_keyword_put(:session_path, session_file)
 
-        {cmd, args} = cli_command(opts)
-
-        case PortRunner.open(cmd, args, opts, __MODULE__) do
-          {:ok, port} ->
-            [actor] = Subprocess.linked_processes(port)
-
-            {:ok,
-             %{
-               state
-               | port: port,
-                 port_monitor: Process.monitor(actor),
-                 framing: nil,
-                 subprocess_error: nil,
-                 cleanup_result: :ok
-             }}
-
+        case cli_command(opts) do
           {:error, reason} ->
             {:error, inspect(reason), state}
+
+          {cmd, args} ->
+            open_session_process(cmd, args, opts, state)
         end
 
       {:error, reason} ->
@@ -1944,10 +1931,39 @@ defmodule Arbor.ACP.Adapters.Pi do
     {id, RPC.request(id, type, fields), %{state | rpc_counter: counter}}
   end
 
+  defp open_session_process(cmd, args, opts, state) do
+    case PortRunner.open(cmd, args, opts, __MODULE__) do
+      {:ok, port} ->
+        [actor] = Subprocess.linked_processes(port)
+
+        {:ok,
+         %{
+           state
+           | port: port,
+             port_monitor: Process.monitor(actor),
+             framing: nil,
+             subprocess_error: nil,
+             cleanup_result: :ok
+         }}
+
+      {:error, reason} ->
+        {:error, inspect(reason), state}
+    end
+  end
+
   defp append_opt(args, opts, key, flag) do
     case Keyword.get(opts, key) do
-      nil -> args
-      value -> args ++ [flag, to_string(value)]
+      nil ->
+        {:ok, args}
+
+      value ->
+        string = to_string(value)
+
+        if String.starts_with?(string, "-") do
+          {:error, {:invalid_option, key, "must not start with '-'"}}
+        else
+          {:ok, args ++ [flag, string]}
+        end
     end
   end
 

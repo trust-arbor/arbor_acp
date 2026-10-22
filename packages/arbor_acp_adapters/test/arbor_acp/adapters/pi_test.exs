@@ -51,6 +51,13 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert "/tmp/session.jsonl" in args
     end
 
+    test "rejects a session_path that would be parsed as another flag" do
+      for session_path <- ["-x", ~c"--mode"] do
+        assert {:error, {:invalid_option, :session_path, "must not start with '-'"}} =
+                 Pi.cli_command(session_path: session_path)
+      end
+    end
+
     test "does not pass unsupported runtime settings through process argv" do
       {_cmd, args} =
         Pi.cli_command(

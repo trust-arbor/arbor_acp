@@ -88,18 +88,73 @@ defmodule Arbor.ACP.Registry do
   Builds an `npx` command from an agent registry entry.
 
   Returns `{:error, :npx_distribution_not_found}` when the agent does not have
-  an `npx` distribution.
+  an `npx` distribution, or `{:error, :invalid_npx_package}` when the package
+  name is not a valid npm package specifier. Valid packages are separated from
+  `npx` flags with `--`.
   """
-  @spec npx_command(agent()) :: {:ok, [String.t()]} | {:error, :npx_distribution_not_found}
+  @spec npx_command(agent()) ::
+          {:ok, [String.t()]} | {:error, :npx_distribution_not_found | :invalid_npx_package}
   def npx_command(agent) do
     case distribution(agent, "npx") do
       %{"package" => package} = npx ->
-        {:ok, ["npx", "-y", package | Map.get(npx, "args", [])]}
+        if valid_npx_package?(package) do
+          {:ok, ["npx", "-y", "--", package | Map.get(npx, "args", [])]}
+        else
+          {:error, :invalid_npx_package}
+        end
 
       _ ->
         {:error, :npx_distribution_not_found}
     end
   end
+
+  @max_npm_name 214
+  @npm_name_re ~r/^[A-Za-z0-9][A-Za-z0-9._~-]*$/
+  @npm_spec_re ~r/^[A-Za-z0-9][A-Za-z0-9._~+-]*$/
+
+  defp valid_npx_package?(package) when is_binary(package) and package != "" do
+    case npx_package_parts(package) do
+      {:ok, name, spec} ->
+        byte_size(name) <= @max_npm_name and valid_npm_name?(name) and valid_npm_spec?(spec)
+
+      :error ->
+        false
+    end
+  end
+
+  defp valid_npx_package?(_package), do: false
+
+  defp npx_package_parts("@" <> rest) do
+    case String.split(rest, "/", parts: 2) do
+      [_scope] ->
+        :error
+
+      [scope, name_and_spec] ->
+        split_name_and_spec("@#{scope}/", name_and_spec)
+    end
+  end
+
+  defp npx_package_parts(package), do: split_name_and_spec("", package)
+
+  defp split_name_and_spec(prefix, name_and_spec) do
+    case String.split(name_and_spec, "@", parts: 2) do
+      [name] when name != "" -> {:ok, prefix <> name, nil}
+      [name, spec] when name != "" and spec != "" -> {:ok, prefix <> name, spec}
+      _ -> :error
+    end
+  end
+
+  defp valid_npm_name?("@" <> rest) do
+    case String.split(rest, "/", parts: 2) do
+      [scope, name] -> Regex.match?(@npm_name_re, scope) and Regex.match?(@npm_name_re, name)
+      _ -> false
+    end
+  end
+
+  defp valid_npm_name?(name), do: Regex.match?(@npm_name_re, name)
+
+  defp valid_npm_spec?(nil), do: true
+  defp valid_npm_spec?(spec), do: Regex.match?(@npm_spec_re, spec)
 
   defp http_get(url, headers, timeout) do
     ensure_http_started()

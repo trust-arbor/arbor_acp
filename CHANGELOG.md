@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Security:** harden Claude, Pi and `npx` argv construction against option injection (the class of CVE-2026-96620).
 - Add real-Codex native compatibility CI and authenticated candidate qualification.
 - Settle native callbacks scoped to a completed Codex turn even without a separate request-resolution event.
 - Add generic ACP extensions and the Codex native API, complete event/server-request access and managed native parameter overrides. Prepare core and adapter RC.2 with the matching minimum core dependency.

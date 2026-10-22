@@ -7,6 +7,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
   # it uses a richer stdin/stdout protocol than the basic CLI stream. This module
   # keeps that wire-shape construction side-effect free.
 
+  alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
   alias Arbor.ACP.Adapters.Internal.Maps, as: MapHelpers
 
   @sdk_version "0.3.238"
@@ -22,42 +23,45 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
   }
 
   @doc "Builds the Claude Code command line used by SDK-style sessions."
-  @spec command(keyword()) :: {String.t(), [String.t()]}
+  @spec command(keyword()) ::
+          {String.t(), [String.t()]} | {:error, {:invalid_option, atom(), String.t()}}
   def command(opts) do
-    args =
-      [
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--input-format",
-        "stream-json"
-      ]
-      |> append_thinking(opts)
-      |> append_optional(opts, :effort, "--effort")
-      |> append_optional(opts, :max_turns, "--max-turns")
-      |> append_optional(opts, :max_budget_usd, "--max-budget-usd")
-      |> append_optional(opts, :model, "--model")
-      |> append_optional(opts, :fallback_model, "--fallback-model")
-      |> append_optional(opts, :agent, "--agent")
-      |> append_permission_prompt(opts)
-      |> append_tools(opts)
-      |> append_mcp_config(opts)
-      |> append_permission_mode(opts)
-      |> append_flag(
-        opts,
-        :allow_dangerously_skip_permissions,
-        "--allow-dangerously-skip-permissions"
-      )
-      |> append_flag(opts, :include_partial_messages, "--include-partial-messages", true)
-      |> append_flag(opts, :strict_mcp_config, "--strict-mcp-config")
-      |> append_repeated(opts, :additional_directories, "--add-dir")
-      |> append_optional(opts, :resume, "--resume")
-      |> append_optional(opts, :resume_session_at, "--resume-session-at")
-      |> append_flag(opts, :fork_session, "--fork-session")
-      |> append_optional(opts, :session_id, "--session-id")
-      |> append_extra_args(opts)
+    with :ok <- validate_command_argv(opts) do
+      args =
+        [
+          "--output-format",
+          "stream-json",
+          "--verbose",
+          "--input-format",
+          "stream-json"
+        ]
+        |> append_thinking(opts)
+        |> append_optional(opts, :effort, "--effort")
+        |> append_optional(opts, :max_turns, "--max-turns")
+        |> append_optional(opts, :max_budget_usd, "--max-budget-usd")
+        |> append_optional(opts, :model, "--model")
+        |> append_optional(opts, :fallback_model, "--fallback-model")
+        |> append_optional(opts, :agent, "--agent")
+        |> append_permission_prompt(opts)
+        |> append_tools(opts)
+        |> append_mcp_config(opts)
+        |> append_permission_mode(opts)
+        |> append_flag(
+          opts,
+          :allow_dangerously_skip_permissions,
+          "--allow-dangerously-skip-permissions"
+        )
+        |> append_flag(opts, :include_partial_messages, "--include-partial-messages", true)
+        |> append_flag(opts, :strict_mcp_config, "--strict-mcp-config")
+        |> append_repeated(opts, :additional_directories, "--add-dir")
+        |> append_optional(opts, :resume, "--resume")
+        |> append_optional(opts, :resume_session_at, "--resume-session-at")
+        |> append_flag(opts, :fork_session, "--fork-session")
+        |> append_optional(opts, :session_id, "--session-id")
+        |> append_extra_args(opts)
 
-    {cli_path(opts), args}
+      {cli_path(opts), args}
+    end
   end
 
   @doc "Returns the Claude Code executable path used for SDK-style sessions."
@@ -404,6 +408,70 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
 
   defp prepend_content(acc, items) when is_list(items), do: Enum.reverse(items) ++ acc
   defp prepend_content(acc, item), do: [item | acc]
+
+  # Claude Code's documented CLI takes space-separated `--flag value` forms for
+  # these options (the `=` form is documented only for `--debug`). A value that
+  # starts with `-` would be parsed as another flag, so it is rejected. Each
+  # value is converted exactly as its appender below converts it, so it cannot
+  # pass this check in one form (say a charlist) and reach argv in another.
+  @uuid_argv_keys [:resume, :session_id]
+  @repeated_argv_keys [:additional_directories, :mcp_config_path]
+  @csv_argv_keys [:allowed_tools, :disallowed_tools, :tools]
+  @argv_keys @uuid_argv_keys ++
+               @repeated_argv_keys ++
+               @csv_argv_keys ++
+               [
+                 :effort,
+                 :max_turns,
+                 :max_budget_usd,
+                 :model,
+                 :fallback_model,
+                 :agent,
+                 :resume_session_at,
+                 :thinking,
+                 :max_thinking_tokens,
+                 :permission_mode
+               ]
+
+  defp validate_command_argv(opts) do
+    Enum.find_value(@argv_keys, :ok, fn key ->
+      case Keyword.get(opts, key) do
+        nil -> nil
+        value -> Enum.find_value(argv_strings(key, value), &argv_value_error(key, &1))
+      end
+    end)
+  end
+
+  defp argv_strings(key, values) when key in @repeated_argv_keys do
+    values |> List.wrap() |> Enum.reject(&is_nil/1) |> Enum.map(&argv_string/1)
+  end
+
+  defp argv_strings(key, values) when key in @csv_argv_keys and is_list(values) do
+    strings = Enum.map(values, &argv_string/1)
+
+    if :not_a_string in strings, do: [:not_a_string], else: [Enum.join(strings, ",")]
+  end
+
+  defp argv_strings(_key, value), do: [argv_string(value)]
+
+  defp argv_string(value) do
+    String.Chars.to_string(value)
+  rescue
+    Protocol.UndefinedError -> :not_a_string
+  end
+
+  defp argv_value_error(key, :not_a_string), do: invalid(key, "must be a string")
+
+  defp argv_value_error(key, string) when key in @uuid_argv_keys do
+    if SessionStore.valid_session_id?(string),
+      do: nil,
+      else: invalid(key, "must be a Claude session UUID")
+  end
+
+  defp argv_value_error(key, "-" <> _rest), do: invalid(key, "must not start with '-'")
+  defp argv_value_error(_key, _string), do: nil
+
+  defp invalid(key, message), do: {:error, {:invalid_option, key, message}}
 
   defp append_thinking(args, opts) do
     cond do

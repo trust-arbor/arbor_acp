@@ -67,12 +67,22 @@ defmodule Arbor.ACP.RegistryTest do
       agent = Registry.get_agent(@registry, "gemini-cli")
 
       assert Registry.npx_command(agent) ==
-               {:ok, ["npx", "-y", "@google/gemini-cli@0.44.1", "--acp"]}
+               {:ok, ["npx", "-y", "--", "@google/gemini-cli@0.44.1", "--acp"]}
     end
 
     test "returns an error when npx distribution is unavailable" do
       assert Registry.npx_command(%{"distribution" => %{}}) ==
                {:error, :npx_distribution_not_found}
+    end
+
+    test "rejects a package name that looks like a flag" do
+      agent = %{"distribution" => %{"npx" => %{"package" => "-x"}}}
+      assert {:error, :invalid_npx_package} = Registry.npx_command(agent)
+    end
+
+    test "rejects an empty package name" do
+      agent = %{"distribution" => %{"npx" => %{"package" => ""}}}
+      assert {:error, :invalid_npx_package} = Registry.npx_command(agent)
     end
   end
 
