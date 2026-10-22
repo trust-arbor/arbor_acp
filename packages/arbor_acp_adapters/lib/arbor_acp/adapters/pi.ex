@@ -19,6 +19,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   require Logger
 
   alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner
+  alias Arbor.ACP.AdapterSupport.WorkspacePath
   alias Arbor.RPC.{Framing, Subprocess}
 
   alias Arbor.ACP.Adapters.Pi.Config
@@ -1558,51 +1559,66 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp process_untracked_response(_event, state), do: {:skip, state}
 
+  # Edit snapshots are only taken for files inside the session workspace and
+  # below a size cap: the old/new contents are sent to the ACP client as a
+  # diff, so an agent-named path must not be able to exfiltrate arbitrary
+  # files (absolute paths, `..`, or symlink escapes) or force huge reads.
+  @max_edit_snapshot_bytes 1_048_576
+
   defp maybe_snapshot_edit(tool_call_id, "edit", %{"path" => path} = args, state)
        when is_binary(path) do
-    abs =
-      if Path.type(path) == :absolute, do: path, else: Path.expand(path, state.cwd || File.cwd!())
-
-    case File.read(abs) do
-      {:ok, old_text} ->
-        line = Tools.find_unique_line_number(old_text, args["oldText"] || "")
-        snapshot = %{path: path, old_text: old_text}
-        {line, %{state | edit_snapshots: Map.put(state.edit_snapshots, tool_call_id, snapshot)}}
-
-      _ ->
-        {nil, state}
+    with {:ok, abs} <- snapshot_path(path, state),
+         {:ok, old_text} <- read_snapshot_file(abs) do
+      line = Tools.find_unique_line_number(old_text, args["oldText"] || "")
+      snapshot = %{path: path, abs: abs, old_text: old_text}
+      {line, %{state | edit_snapshots: Map.put(state.edit_snapshots, tool_call_id, snapshot)}}
+    else
+      _ -> {nil, state}
     end
   end
 
   defp maybe_snapshot_edit(_tool_call_id, _tool_name, _args, state), do: {nil, state}
+
+  defp snapshot_path(path, state) do
+    root = state.cwd || File.cwd!()
+    lexical = if Path.type(path) == :absolute, do: path, else: Path.expand(path, root)
+    abs = WorkspacePath.canonical(lexical)
+
+    if Path.type(root) == :absolute and WorkspacePath.within?(abs, root),
+      do: {:ok, abs},
+      else: :error
+  end
+
+  defp read_snapshot_file(abs) do
+    with {:ok, %File.Stat{type: :regular, size: size}} <- File.stat(abs),
+         true <- size <= @max_edit_snapshot_bytes,
+         {:ok, text} <- File.read(abs),
+         true <- byte_size(text) <= @max_edit_snapshot_bytes do
+      {:ok, text}
+    else
+      _ -> :error
+    end
+  end
 
   defp tool_result_content(tool_call_id, text, is_error, state) do
     snapshot = state.edit_snapshots[tool_call_id]
     state = %{state | edit_snapshots: Map.delete(state.edit_snapshots, tool_call_id)}
 
     content =
-      if !is_error && snapshot do
-        abs =
-          if Path.type(snapshot.path) == :absolute,
-            do: snapshot.path,
-            else: Path.expand(snapshot.path, state.cwd || File.cwd!())
-
-        case File.read(abs) do
-          {:ok, new_text} when new_text != snapshot.old_text ->
-            [
-              %{
-                "type" => "diff",
-                "path" => snapshot.path,
-                "oldText" => snapshot.old_text,
-                "newText" => new_text
-              }
-            ] ++ (Tools.text_content(text) || [])
-
-          _ ->
-            Tools.text_content(text)
-        end
+      with false <- is_error,
+           %{} <- snapshot,
+           {:ok, abs} <- snapshot_path(snapshot.abs, state),
+           {:ok, new_text} when new_text != snapshot.old_text <- read_snapshot_file(abs) do
+        [
+          %{
+            "type" => "diff",
+            "path" => snapshot.path,
+            "oldText" => snapshot.old_text,
+            "newText" => new_text
+          }
+        ] ++ (Tools.text_content(text) || [])
       else
-        Tools.text_content(text)
+        _ -> Tools.text_content(text)
       end
 
     {content, state}

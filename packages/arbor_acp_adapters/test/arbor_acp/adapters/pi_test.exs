@@ -1168,6 +1168,80 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert hd(update["content"])["oldText"] == "old\n"
       assert hd(update["content"])["newText"] == "new\n"
     end
+
+    defp run_edit(state, id, path, target) do
+      start =
+        Jason.encode!(%{
+          "type" => "tool_execution_start",
+          "toolCallId" => id,
+          "toolName" => "edit",
+          "args" => %{"path" => path, "oldText" => "x"}
+        })
+
+      {:messages, [_], state} = Pi.translate_inbound(start, state)
+      refute Map.has_key?(state.edit_snapshots, id)
+      File.write!(target, File.read!(target) <> "changed\n")
+
+      finish =
+        Jason.encode!(%{
+          "type" => "tool_execution_end",
+          "toolCallId" => id,
+          "result" => %{"content" => [%{"type" => "text", "text" => "updated"}]},
+          "isError" => false
+        })
+
+      {:messages, [notification], state} = Pi.translate_inbound(finish, state)
+      {notification["params"]["update"]["content"], state}
+    end
+
+    defp outside_file(name, contents) do
+      dir = Path.join(System.tmp_dir!(), "pi_outside_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      path = Path.join(dir, name)
+      File.write!(path, contents)
+      path
+    end
+
+    test "edit snapshot refuses absolute paths outside the workspace", %{state: state} do
+      secret = outside_file("secret.txt", "TOP SECRET\n")
+      {content, state} = run_edit(state, "edit-abs", secret, secret)
+      refute Enum.any?(content || [], &(&1["type"] == "diff"))
+      refute inspect(content) =~ "TOP SECRET"
+      assert state.edit_snapshots == %{}
+    end
+
+    test "edit snapshot refuses relative traversal outside the workspace", %{
+      state: state,
+      tmp_dir: tmp_dir
+    } do
+      secret = outside_file("secret.txt", "TOP SECRET\n")
+      rel = Path.relative_to(secret, tmp_dir, force: true)
+      assert String.starts_with?(rel, "..")
+      {content, _state} = run_edit(state, "edit-rel", rel, secret)
+      refute inspect(content) =~ "TOP SECRET"
+    end
+
+    test "edit snapshot refuses symlinks escaping the workspace", %{
+      state: state,
+      tmp_dir: tmp_dir
+    } do
+      secret = outside_file("secret.txt", "TOP SECRET\n")
+      File.mkdir_p!(tmp_dir)
+      link = Path.join(tmp_dir, "link.txt")
+      :ok = File.ln_s(secret, link)
+      {content, _state} = run_edit(state, "edit-link", "link.txt", secret)
+      refute inspect(content) =~ "TOP SECRET"
+    end
+
+    test "edit snapshot skips files above the size cap", %{state: state, tmp_dir: tmp_dir} do
+      File.mkdir_p!(tmp_dir)
+      path = Path.join(tmp_dir, "big.txt")
+      File.write!(path, :binary.copy("a", 1_048_577))
+      {content, state} = run_edit(state, "edit-big", path, path)
+      refute Enum.any?(content || [], &(&1["type"] == "diff"))
+      assert state.edit_snapshots == %{}
+    end
   end
 
   describe "extension UI interop" do
