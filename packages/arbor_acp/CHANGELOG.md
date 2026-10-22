@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Validate `Arbor.ACP.Registry.npx_command/1` npm package names and separate them from `npx` flags with `--`.
+- **Security:** validate `Arbor.ACP.Registry.npx_command/1` npm package specifiers and separate them from `npx` flags with `--`, so a registry entry cannot inject `npx` options. An invalid specifier returns `{:error, :invalid_npx_package}`.
 - Add generic, bidirectional ACP extension requests/notifications, optional handler callbacks, bounded monitored subscriptions and standard session/prompt metadata.
 - Refresh published-RC installation guidance and consolidate current documentation.
 

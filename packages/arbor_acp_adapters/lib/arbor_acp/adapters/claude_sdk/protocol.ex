@@ -410,89 +410,66 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
   defp prepend_content(acc, item), do: [item | acc]
 
   # Claude Code's documented CLI takes space-separated `--flag value` forms for
-  # these options (the `=` form is documented only for `--debug`). Values that
-  # start with `-` would be parsed as extra flags, so they are rejected.
+  # these options (the `=` form is documented only for `--debug`). A value that
+  # starts with `-` would be parsed as another flag, so it is rejected. Each
+  # value is converted exactly as its appender below converts it, so it cannot
+  # pass this check in one form (say a charlist) and reach argv in another.
   @uuid_argv_keys [:resume, :session_id]
-  @value_argv_keys [
-    :effort,
-    :max_turns,
-    :max_budget_usd,
-    :model,
-    :fallback_model,
-    :agent,
-    :additional_directories,
-    :resume_session_at,
-    :allowed_tools,
-    :disallowed_tools,
-    :tools,
-    :thinking,
-    :max_thinking_tokens,
-    :mcp_config_path,
-    :permission_mode
-  ]
+  @repeated_argv_keys [:additional_directories, :mcp_config_path]
+  @csv_argv_keys [:allowed_tools, :disallowed_tools, :tools]
+  @argv_keys @uuid_argv_keys ++
+               @repeated_argv_keys ++
+               @csv_argv_keys ++
+               [
+                 :effort,
+                 :max_turns,
+                 :max_budget_usd,
+                 :model,
+                 :fallback_model,
+                 :agent,
+                 :resume_session_at,
+                 :thinking,
+                 :max_thinking_tokens,
+                 :permission_mode
+               ]
 
   defp validate_command_argv(opts) do
-    with :ok <- validate_uuid_argv_opts(opts) do
-      reject_leading_dash_argv_opts(opts)
-    end
-  end
-
-  defp validate_uuid_argv_opts(opts) do
-    Enum.reduce_while(@uuid_argv_keys, :ok, fn key, :ok ->
-      case validate_uuid_argv_opt(opts, key) do
-        :ok -> {:cont, :ok}
-        error -> {:halt, error}
+    Enum.find_value(@argv_keys, :ok, fn key ->
+      case Keyword.get(opts, key) do
+        nil -> nil
+        value -> Enum.find_value(argv_strings(key, value), &argv_value_error(key, &1))
       end
     end)
   end
 
-  defp validate_uuid_argv_opt(opts, key) do
-    case Keyword.get(opts, key) do
-      nil ->
-        :ok
-
-      value ->
-        string = to_string(value)
-
-        if SessionStore.valid_session_id?(string) do
-          :ok
-        else
-          invalid(key, "must be a Claude session UUID")
-        end
-    end
+  defp argv_strings(key, values) when key in @repeated_argv_keys do
+    values |> List.wrap() |> Enum.reject(&is_nil/1) |> Enum.map(&argv_string/1)
   end
 
-  defp reject_leading_dash_argv_opts(opts) do
-    Enum.reduce_while(@value_argv_keys, :ok, fn key, :ok ->
-      case reject_leading_dash_argv_opt(opts, key) do
-        :ok -> {:cont, :ok}
-        error -> {:halt, error}
-      end
-    end)
+  defp argv_strings(key, values) when key in @csv_argv_keys and is_list(values) do
+    strings = Enum.map(values, &argv_string/1)
+
+    if :not_a_string in strings, do: [:not_a_string], else: [Enum.join(strings, ",")]
   end
 
-  defp reject_leading_dash_argv_opt(opts, key) do
-    reject_leading_dash_value(key, Keyword.get(opts, key))
+  defp argv_strings(_key, value), do: [argv_string(value)]
+
+  defp argv_string(value) do
+    String.Chars.to_string(value)
+  rescue
+    Protocol.UndefinedError -> :not_a_string
   end
 
-  defp reject_leading_dash_value(_key, nil), do: :ok
+  defp argv_value_error(key, :not_a_string), do: invalid(key, "must be a string")
 
-  defp reject_leading_dash_value(key, values) when is_list(values) do
-    Enum.reduce_while(values, :ok, fn value, :ok ->
-      case reject_leading_dash_value(key, value) do
-        :ok -> {:cont, :ok}
-        error -> {:halt, error}
-      end
-    end)
+  defp argv_value_error(key, string) when key in @uuid_argv_keys do
+    if SessionStore.valid_session_id?(string),
+      do: nil,
+      else: invalid(key, "must be a Claude session UUID")
   end
 
-  defp reject_leading_dash_value(key, value) do
-    if value |> to_string() |> String.starts_with?("-") do
-      invalid(key, "must not start with '-'")
-    else
-      :ok
-    end
-  end
+  defp argv_value_error(key, "-" <> _rest), do: invalid(key, "must not start with '-'")
+  defp argv_value_error(_key, _string), do: nil
 
   defp invalid(key, message), do: {:error, {:invalid_option, key, message}}
 

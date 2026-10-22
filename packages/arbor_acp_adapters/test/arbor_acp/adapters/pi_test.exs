@@ -51,16 +51,10 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert "/tmp/session.jsonl" in args
     end
 
-    test "session_path starting with a dash never produces a bare \"-x\" argv entry" do
-      case Pi.cli_command(session_path: "-x") do
-        {:error, _reason} ->
-          :ok
-
-        {_cmd, args} ->
-          refute "-x" in args
-
-        other ->
-          flunk("expected an argv tuple or an error, got: #{inspect(other)}")
+    test "rejects a session_path that would be parsed as another flag" do
+      for session_path <- ["-x", ~c"--mode"] do
+        assert {:error, {:invalid_option, :session_path, "must not start with '-'"}} =
+                 Pi.cli_command(session_path: session_path)
       end
     end
 

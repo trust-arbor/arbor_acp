@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Reject Claude Code and Pi CLI option values that would be parsed as extra flags. Require Claude `--resume` and `--session-id` values to be session UUIDs.
+- **Security:** reject Claude Code and Pi CLI option values that would be parsed as extra flags, the argument injection behind CVE-2026-96620 (a value such as `--mcp-config …` could start an arbitrary command). `ClaudeSDK.Protocol.command/1` and `Pi.cli_command/1` now return `{:error, {:invalid_option, key, reason}}` for a value starting with `-` or one that is not a string, checked in the exact form it would reach argv. Claude `--resume` and `--session-id` values must be session UUIDs.
 - Add pinned real-Codex native CI and opt-in authenticated release qualification with sanitized receipts and verified subprocess cleanup.
 - Cancel native callbacks scoped to a completed turn when Codex omits a separate request-resolution event, preserving unrelated requests and suppressing late replies.
 - Add the Codex native API: arbitrary methods, complete native events and server-request replies, explicit exclusive/shared ownership modes and managed native parameter overrides. Stop the native handshake when initialization fails.

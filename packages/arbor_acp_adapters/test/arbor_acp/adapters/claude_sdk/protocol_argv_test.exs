@@ -5,27 +5,58 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.ProtocolArgvTest do
 
   @uuid "123e4567-e89b-12d3-a456-426614174000"
   @session_uuid "123e4567-e89b-12d3-a456-426614174001"
-  @dash "-x"
 
-  describe "value-taking flags never emit a bare leading-dash argv entry" do
-    test "resume: \"-x\" never produces a bare \"-x\" argv entry" do
-      refute_bare_dash_value(Protocol.command(resume: @dash), @dash)
+  describe "value-taking options" do
+    # A value starting with `-` would be parsed as another Claude Code flag,
+    # e.g. `--mcp-config` starting an arbitrary command (CVE-2026-96620).
+    test "reject a value that would be parsed as another flag" do
+      for {key, value} <- [
+            effort: "-x",
+            max_turns: -1,
+            max_budget_usd: "-1",
+            model: "-x",
+            model: ~c"--mcp-config",
+            model: :"-x",
+            fallback_model: "-x",
+            agent: "-x",
+            resume_session_at: "-x",
+            thinking: "-x",
+            max_thinking_tokens: "-x",
+            permission_mode: "-x",
+            additional_directories: ["/workspace", "-x"],
+            additional_directories: "-x",
+            mcp_config_path: "-x",
+            allowed_tools: ["-x", "Read"],
+            disallowed_tools: "-x",
+            tools: ["-x"]
+          ] do
+        assert {:error, {:invalid_option, ^key, "must not start with '-'"}} =
+                 Protocol.command([{key, value}]),
+               inspect({key, value})
+      end
     end
 
-    test "resume_session_at: \"-x\" never produces a bare \"-x\" argv entry" do
-      refute_bare_dash_value(Protocol.command(resume_session_at: @dash), @dash)
+    test "reject a value that is not a string" do
+      assert {:error, {:invalid_option, :model, "must be a string"}} =
+               Protocol.command(model: %{"name" => "x"})
+
+      assert {:error, {:invalid_option, :allowed_tools, "must be a string"}} =
+               Protocol.command(allowed_tools: ["Read", {:bash, "-x"}])
     end
 
-    test "session_id: \"-x\" never produces a bare \"-x\" argv entry" do
-      refute_bare_dash_value(Protocol.command(session_id: @dash), @dash)
-    end
+    test "pass ordinary values through unchanged" do
+      assert {_cmd, args} =
+               Protocol.command(
+                 model: "claude-sonnet-4",
+                 max_turns: 3,
+                 additional_directories: ["/a", "/b"],
+                 allowed_tools: ["Read", "Bash(git:*)"]
+               )
 
-    test "model: \"-x\" never produces a bare \"-x\" argv entry" do
-      refute_bare_dash_value(Protocol.command(model: @dash), @dash)
-    end
-
-    test "additional_directories: [\"-x\"] never produces a bare \"-x\" argv entry" do
-      refute_bare_dash_value(Protocol.command(additional_directories: [@dash]), @dash)
+      assert flag_values(args, "--model") == ["claude-sonnet-4"]
+      assert flag_values(args, "--max-turns") == ["3"]
+      assert flag_values(args, "--add-dir") == ["/a", "/b"]
+      assert flag_values(args, "--allowedTools") == ["Read,Bash(git:*)"]
     end
   end
 
@@ -40,47 +71,27 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.ProtocolArgvTest do
       assert flag_values(args, "--session-id") == [@session_uuid]
     end
 
-    test "rejects a non-UUID resume value" do
-      assert {:error, {:invalid_option, :resume, message}} = Protocol.command(resume: "sess_1")
-      assert message =~ "UUID"
+    test "resume and session-id reject anything but a UUID, including flags" do
+      for {key, value} <- [
+            resume: "sess_1",
+            resume: "-x",
+            resume: ~c"--mcp-config",
+            session_id: "not-a-uuid",
+            session_id: "-x"
+          ] do
+        assert {:error, {:invalid_option, ^key, "must be a Claude session UUID"}} =
+                 Protocol.command([{key, value}]),
+               inspect({key, value})
+      end
     end
-
-    test "rejects a non-UUID session-id value" do
-      assert {:error, {:invalid_option, :session_id, message}} =
-               Protocol.command(session_id: "not-a-uuid")
-
-      assert message =~ "UUID"
-    end
-  end
-
-  defp refute_bare_dash_value({:error, _reason}, _value), do: :ok
-
-  defp refute_bare_dash_value({_cmd, args}, value) when is_list(args) do
-    refute value in args
-  end
-
-  defp refute_bare_dash_value(other, _value) do
-    flunk("expected an argv tuple or an error, got: #{inspect(other)}")
   end
 
   defp flag_values(args, flag) do
-    equals = flag <> "="
-
     args
     |> Enum.with_index()
     |> Enum.flat_map(fn
-      {^flag, index} ->
-        [Enum.at(args, index + 1)]
-
-      {arg, _index} when is_binary(arg) ->
-        if String.starts_with?(arg, equals) do
-          [String.replace_prefix(arg, equals, "")]
-        else
-          []
-        end
-
-      {_arg, _index} ->
-        []
+      {^flag, index} -> [Enum.at(args, index + 1)]
+      _other -> []
     end)
   end
 end
