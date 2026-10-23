@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Security:** a project's `.pi/settings.json` can no longer choose the executable the Pi adapter spawns. `piCommand` is honored from adapter options (`:cli_path`/`:pi_command`), `PI_ACP_PI_COMMAND`, or the global agent settings only; the project value is ignored. Previously an untrusted repository could run an arbitrary program at `session/new`.
+- **Security:** the Pi edit-snapshot workspace root is the host-supplied session `cwd`; the `cwd` the agent reports in `get_state` no longer replaces it, so an agent cannot widen the rc.2 snapshot containment.
+- **Security:** Codex and ZCode `:workspace_roots` checks use the shared `WorkspacePath` canonicalizer, which now resolves symlinks before `..` (see the core changelog); `<root>/link/../…` escapes are rejected.
+
 ## 1.0.0-rc.2 — 2026-10-22
 
 - **Security:** Pi edit snapshots are taken only for regular files of at most 1 MiB inside the session workspace. An agent-named path (absolute, `..` or a symlink escape) could previously send any readable file's contents to the ACP client as a diff (#5).

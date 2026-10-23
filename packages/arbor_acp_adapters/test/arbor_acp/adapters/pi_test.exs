@@ -120,6 +120,35 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
       refute Map.has_key?(SlashCommands.normalize_input(%{"input" => ["invalid"]}), "input")
     end
+
+    test "project settings cannot choose the executable", %{tmp_dir: tmp_dir} do
+      agent_dir = Path.join(tmp_dir, "agent")
+      project = Path.join(tmp_dir, "project")
+      File.mkdir_p!(agent_dir)
+      File.mkdir_p!(Path.join(project, ".pi"))
+
+      File.write!(
+        Path.join(project, ".pi/settings.json"),
+        Jason.encode!(%{"piCommand" => "./evil", "quietStartup" => true})
+      )
+
+      settings = Settings.load(project, agent_dir: agent_dir)
+      assert settings["quietStartup"] == true
+      refute Map.has_key?(settings, "piCommand")
+      assert Settings.pi_command([agent_dir: agent_dir], settings) == "pi"
+      assert {"pi", _args} = Pi.cli_command(cwd: project, agent_dir: agent_dir)
+
+      File.write!(
+        Path.join(agent_dir, "settings.json"),
+        Jason.encode!(%{"piCommand" => "/opt/pi"})
+      )
+
+      settings = Settings.load(project, agent_dir: agent_dir)
+      assert Settings.pi_command([agent_dir: agent_dir], settings) == "/opt/pi"
+
+      assert Settings.pi_command([agent_dir: agent_dir, cli_path: "/usr/bin/pi"], settings) ==
+               "/usr/bin/pi"
+    end
   end
 
   describe "capabilities/0" do
@@ -384,6 +413,36 @@ defmodule Arbor.ACP.Adapters.PiTest do
                  "description" => nil
                }
              ]
+    end
+
+    test "session/new keeps the host cwd when the agent reports another", %{
+      state: state,
+      tmp_dir: tmp_dir
+    } do
+      msg = %{"method" => "session/new", "id" => 13, "params" => %{"cwd" => tmp_dir}}
+
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      ids_by_type = Map.new(decode_many(data), &{&1["type"], &1["id"]})
+
+      state =
+        respond(state, ids_by_type["new_session"], "new_session", %{})
+        |> respond(ids_by_type["get_state"], "get_state", %{
+          "sessionId" => "pi-session",
+          "sessionFile" => Path.join(tmp_dir, "pi-session.jsonl"),
+          "cwd" => "/"
+        })
+        |> respond(ids_by_type["get_available_models"], "get_available_models", %{
+          "models" => []
+        })
+
+      assert {:messages, [response | _], state} =
+               Pi.translate_inbound(
+                 response_line(ids_by_type["get_commands"], "get_commands", %{"commands" => []}),
+                 state
+               )
+
+      assert response["id"] == 13
+      assert state.workspace_root == tmp_dir
     end
 
     test "session/new maps empty model list to auth-required", %{state: state, tmp_dir: tmp_dir} do
@@ -1161,6 +1220,43 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert hd(update["content"])["type"] == "diff"
       assert hd(update["content"])["oldText"] == "old\n"
       assert hd(update["content"])["newText"] == "new\n"
+    end
+
+    test "edit snapshots stay inside the host workspace root when the agent reports another cwd",
+         %{state: state, tmp_dir: tmp_dir} do
+      outside = Path.join(System.tmp_dir!(), "pi_outside_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(outside)
+      on_exit(fn -> File.rm_rf!(outside) end)
+      path = Path.join(outside, "secret.txt")
+      File.write!(path, "secret\n")
+
+      # A misbehaving agent reporting `cwd: "/"` must not widen containment.
+      state = %{state | cwd: "/", workspace_root: tmp_dir}
+
+      start =
+        Jason.encode!(%{
+          "type" => "tool_execution_start",
+          "toolCallId" => "edit-outside",
+          "toolName" => "edit",
+          "args" => %{"path" => path, "oldText" => "secret"}
+        })
+
+      assert {:messages, [_notification], state} = Pi.translate_inbound(start, state)
+      refute Map.has_key?(state.edit_snapshots, "edit-outside")
+      File.write!(path, "changed\n")
+
+      finish =
+        Jason.encode!(%{
+          "type" => "tool_execution_end",
+          "toolCallId" => "edit-outside",
+          "result" => %{"content" => [%{"type" => "text", "text" => "updated"}]},
+          "isError" => false
+        })
+
+      assert {:messages, [notification], _state} = Pi.translate_inbound(finish, state)
+      update = notification["params"]["update"]
+      refute Enum.any?(update["content"], &(&1["type"] == "diff"))
+      refute inspect(update) =~ "secret"
     end
 
     defp run_edit(state, id, path, target) do

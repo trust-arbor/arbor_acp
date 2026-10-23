@@ -5,7 +5,12 @@ defmodule Arbor.ACP.Adapters.Pi.Settings do
   def load(cwd, opts \\ []) do
     agent_dir = agent_dir(opts)
     global = read_json(Path.join(agent_dir, "settings.json"))
-    project = read_json(project_settings_path(cwd))
+
+    # The project directory is the untrusted workspace a session opens on, so
+    # it must never choose which executable the adapter spawns. `piCommand`
+    # comes from adapter options, the environment, or the global agent
+    # settings only.
+    project = cwd |> project_settings_path() |> read_json() |> Map.delete("piCommand")
 
     global
     |> deep_merge(project)
@@ -53,6 +58,8 @@ defmodule Arbor.ACP.Adapters.Pi.Settings do
     end)
   end
 
+  @doc false
+  # `settings["piCommand"]` is the global value only; see `load/2`.
   @spec pi_command(keyword(), map()) :: String.t()
   def pi_command(opts, settings) do
     Keyword.get(opts, :cli_path) ||

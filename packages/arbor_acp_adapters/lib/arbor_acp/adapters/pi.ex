@@ -65,6 +65,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     prelude_lines: [],
     startup_sent?: false,
     last_session_cwd: nil,
+    workspace_root: nil,
     settings: %{},
     pending_prompt: nil,
     prompt_queue: PromptQueue.new(),
@@ -93,6 +94,7 @@ defmodule Arbor.ACP.Adapters.Pi do
        session_dir: Keyword.get(opts, :session_dir),
        session_map_path: Keyword.get(opts, :session_map_path, SessionStore.default_map_path()),
        cwd: Keyword.get(opts, :cwd),
+       workspace_root: Keyword.get(opts, :cwd),
        last_session_cwd: Keyword.get(opts, :cwd)
      }}
   end
@@ -470,6 +472,7 @@ defmodule Arbor.ACP.Adapters.Pi do
      %{
        state
        | cwd: cwd,
+         workspace_root: cwd,
          settings: settings,
          last_session_cwd: cwd,
          startup_sent?: false,
@@ -485,6 +488,7 @@ defmodule Arbor.ACP.Adapters.Pi do
       |> close_active_session()
       |> Map.merge(%{
         cwd: cwd,
+        workspace_root: cwd,
         settings: settings,
         last_session_cwd: cwd,
         startup_sent?: false,
@@ -1516,6 +1520,11 @@ defmodule Arbor.ACP.Adapters.Pi do
         settings: settings
       })
 
+    # The cwd the agent reports is bookkeeping only. Edit-snapshot containment
+    # keeps the host-authorized session cwd so a misbehaving agent cannot
+    # widen its own workspace root.
+    state = %{state | workspace_root: group.cwd || state.workspace_root}
+
     replay = replay_messages_for(group, session_id)
     response = Sessions.session_response(group.acp_id, session_id, session_file, models, modes)
     {startup_messages, state} = startup_messages(session_id, cwd, state, settings)
@@ -1579,8 +1588,9 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp maybe_snapshot_edit(_tool_call_id, _tool_name, _args, state), do: {nil, state}
 
-  defp snapshot_path(path, state) do
-    root = state.cwd || File.cwd!()
+  defp snapshot_path(_path, %{workspace_root: nil}), do: :error
+
+  defp snapshot_path(path, %{workspace_root: root}) do
     lexical = if Path.type(path) == :absolute, do: path, else: Path.expand(path, root)
     abs = WorkspacePath.canonical(lexical)
 
