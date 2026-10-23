@@ -486,6 +486,66 @@ defmodule Arbor.ACP.Adapters.CodexTest do
       assert codex_msg["params"] == %{"type" => "apiKey", "apiKey" => "codex-key"}
     end
 
+    test "gateway authenticate is refused unless the application enabled it", %{state: state} do
+      msg = %{
+        "method" => "authenticate",
+        "id" => 13,
+        "params" => %{
+          "methodId" => "gateway",
+          "_meta" => %{"gateway" => %{"baseUrl" => "https://gateway.example/v1"}}
+        }
+      }
+
+      assert {:error, message, ^state} = Codex.translate_outbound(msg, state)
+      assert message =~ "gateway_auth"
+      assert state.gateway_config == nil
+    end
+
+    test "gateway authenticate configures an https gateway when enabled" do
+      {:ok, state} = Codex.init(gateway_auth: true)
+
+      msg = %{
+        "method" => "authenticate",
+        "id" => 14,
+        "params" => %{
+          "methodId" => "gateway",
+          "_meta" => %{
+            "gateway" => %{
+              "baseUrl" => "https://gateway.example/v1",
+              "headers" => %{"Authorization" => "Bearer gw"}
+            }
+          }
+        }
+      }
+
+      assert {:reply, %{}, new_state} = Codex.translate_outbound(msg, state)
+      assert new_state.gateway_config.provider_config["base_url"] == "https://gateway.example/v1"
+
+      assert new_state.gateway_config.provider_config["http_headers"]["Authorization"] ==
+               "Bearer gw"
+
+      loopback =
+        put_in(msg, ["params", "_meta", "gateway", "baseUrl"], "http://127.0.0.1:8080/v1")
+
+      assert {:reply, %{}, _state} = Codex.translate_outbound(loopback, state)
+    end
+
+    test "gateway authenticate rejects a plaintext remote baseUrl" do
+      {:ok, state} = Codex.init(gateway_auth: true)
+
+      msg = %{
+        "method" => "authenticate",
+        "id" => 15,
+        "params" => %{
+          "methodId" => "gateway",
+          "_meta" => %{"gateway" => %{"baseUrl" => "http://gateway.example/v1"}}
+        }
+      }
+
+      assert {:error, message, ^state} = Codex.translate_outbound(msg, state)
+      assert message =~ "https"
+    end
+
     test "api key authenticate does not read ambient system env", %{state: state} do
       msg = %{
         "method" => "authenticate",

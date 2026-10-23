@@ -6,7 +6,8 @@
         workspace_roots: ["/tmp"],
         authorize_mcp_server: :__fun__,
         trust_authorized_workspaces: true,
-        cwd: "/tmp/project"
+        cwd: "/tmp/project",
+        gateway_auth: true
       ]
     },
     result: %{tag: :ok}

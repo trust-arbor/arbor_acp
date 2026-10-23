@@ -6,7 +6,8 @@
         workspace_roots: ["/tmp"],
         authorize_mcp_server: :__fun__,
         trust_authorized_workspaces: true,
-        cwd: "/tmp/project"
+        cwd: "/tmp/project",
+        gateway_auth: true
       ]
     },
     result: %{tag: :ok}
@@ -99,13 +100,13 @@
         }
       }
     },
-    result: %{error: "gateway auth requires adapter_opts[:gateway]", tag: :error}
+    result: %{error: "gateway auth requires _meta.gateway", tag: :error}
   },
   %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :outbound,
       message: %{"id" => 32, "method" => "authenticate", "params" => %{"methodId" => "gateway"}}
     },
-    result: %{error: "gateway auth requires adapter_opts[:gateway]", tag: :error}
+    result: %{error: "gateway auth requires _meta.gateway", tag: :error}
   }
 ]

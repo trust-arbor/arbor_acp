@@ -3078,13 +3078,21 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  defp auth_request_params("gateway", params, _state) do
+  # Gateway auth redirects all model traffic (and the headers sent with it)
+  # to a client-named URL, so it is honored only when the application opted
+  # in, matching the `auth_methods/1` advertisement.
+  defp auth_request_params("gateway", params, state) do
     meta = get_in(params, ["_meta", "gateway"])
 
-    if is_map(meta) do
-      gateway_auth_params(meta)
-    else
-      {:error, "gateway auth requires adapter_opts[:gateway]"}
+    cond do
+      not Keyword.get(state.opts, :gateway_auth, false) ->
+        {:error, "gateway auth is not enabled; set adapter_opts[:gateway_auth]"}
+
+      is_map(meta) ->
+        gateway_auth_params(meta)
+
+      true ->
+        {:error, "gateway auth requires _meta.gateway"}
     end
   end
 
@@ -3117,6 +3125,27 @@ defmodule Arbor.ACP.Adapters.Codex do
   end
 
   defp gateway_auth_params(%{"baseUrl" => base_url} = meta) when is_binary(base_url) do
+    if secure_gateway_url?(base_url),
+      do: build_gateway_auth_params(base_url, meta),
+      else: {:error, "gateway baseUrl must use https (http is allowed for loopback only)"}
+  end
+
+  defp gateway_auth_params(_meta), do: {:error, "gateway auth requires baseUrl"}
+
+  defp secure_gateway_url?(url) do
+    case URI.parse(url) do
+      %URI{scheme: "https", host: host} when is_binary(host) and host != "" ->
+        true
+
+      %URI{scheme: "http", host: host} when host in ["localhost", "127.0.0.1", "::1", "[::1]"] ->
+        true
+
+      _other ->
+        false
+    end
+  end
+
+  defp build_gateway_auth_params(base_url, meta) do
     provider_name =
       case meta["providerName"] do
         name when is_binary(name) and name != "" -> name
@@ -3137,8 +3166,6 @@ defmodule Arbor.ACP.Adapters.Codex do
         }
       }}}
   end
-
-  defp gateway_auth_params(_meta), do: {:error, "gateway auth requires baseUrl"}
 
   defp explicit_env_value(opts, name) do
     opts

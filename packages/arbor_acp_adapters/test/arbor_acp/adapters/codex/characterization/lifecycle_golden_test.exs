@@ -622,7 +622,7 @@ defmodule Arbor.ACP.Adapters.Codex.LifecycleGoldenTest do
 
   test "session_new_after_gateway_authenticate" do
     steps =
-      connected_steps() ++
+      connected_steps(gateway_auth: true) ++
         [
           {:note, "gateway auth never reaches the app-server; it only records provider config"},
           authenticate_step(30, "gateway", %{
@@ -1649,7 +1649,7 @@ defmodule Arbor.ACP.Adapters.Codex.LifecycleGoldenTest do
 
   test "session_load_after_gateway_authenticate" do
     steps =
-      connected_steps() ++
+      connected_steps(gateway_auth: true) ++
         [
           authenticate_step(30, "gateway", %{
             "_meta" => %{
@@ -3431,7 +3431,7 @@ defmodule Arbor.ACP.Adapters.Codex.LifecycleGoldenTest do
 
   test "authenticate_gateway_without_base_url_errors" do
     steps =
-      connected_steps() ++
+      connected_steps(gateway_auth: true) ++
         [
           authenticate_step(30, "gateway", %{
             "_meta" => %{"gateway" => %{"providerName" => "Acme"}}
@@ -3447,14 +3447,35 @@ defmodule Arbor.ACP.Adapters.Codex.LifecycleGoldenTest do
 
     assert Enum.map(Enum.drop(transcript, 4), & &1.result.error) == [
              "gateway auth requires baseUrl",
-             "gateway auth requires adapter_opts[:gateway]",
-             "gateway auth requires adapter_opts[:gateway]"
+             "gateway auth requires _meta.gateway",
+             "gateway auth requires _meta.gateway"
            ]
+  end
+
+  test "authenticate_gateway_refused_without_opt_in" do
+    steps =
+      connected_steps() ++
+        [
+          {:note,
+           "gateway auth redirects model traffic, so it needs adapter_opts[:gateway_auth]"},
+          authenticate_step(30, "gateway", %{
+            "_meta" => %{"gateway" => %{"baseUrl" => "https://gateway.example.com/v1"}}
+          }),
+          session_new_step(10)
+        ]
+
+    transcript =
+      CodexGolden.assert_golden(@area, "authenticate_gateway_refused_without_opt_in", steps)
+
+    assert Enum.at(transcript, 5).result.error =~ "gateway_auth"
+    assert %{"params" => params} = List.last(CodexGolden.writes(transcript))
+    refute get_in(params, ["config", "model_providers", "custom-gateway"])
+    refute params["modelProvider"] == "custom-gateway"
   end
 
   test "authenticate_gateway_defaults_provider_name" do
     steps =
-      connected_steps() ++
+      connected_steps(gateway_auth: true) ++
         [
           authenticate_step(30, "gateway", %{
             "_meta" => %{"gateway" => %{"baseUrl" => "https://gateway.example.com/v1"}}
@@ -3476,7 +3497,7 @@ defmodule Arbor.ACP.Adapters.Codex.LifecycleGoldenTest do
 
   test "authenticate_gateway_blank_provider_name_uses_default" do
     steps =
-      connected_steps() ++
+      connected_steps(gateway_auth: true) ++
         [
           {:note, "providerName \"\" (or a non-string) is treated as absent"},
           authenticate_step(30, "gateway", %{
@@ -3503,7 +3524,7 @@ defmodule Arbor.ACP.Adapters.Codex.LifecycleGoldenTest do
 
   test "authenticate_gateway_header_override_wins_over_default" do
     steps =
-      connected_steps() ++
+      connected_steps(gateway_auth: true) ++
         [
           {:note, "a user-supplied X-Client-Feature-ID replaces the \"codex\" default"},
           authenticate_step(30, "gateway", %{

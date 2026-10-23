@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Security:** `Arbor.ACP.AdapterSupport.WorkspacePath.canonical/1` now resolves symlinks before applying `..`, the way the kernel does. A path such as `<root>/link/../secret` where `link` points outside the workspace previously passed `within?/2` (and therefore the client's `fs/*` and `terminal/create` authorization) while the file actually opened lived outside the root.
+
 ## 1.0.0-rc.2 — 2026-10-22
 
 - **Security:** validate `Arbor.ACP.Registry.npx_command/1` npm package specifiers and separate them from `npx` flags with `--`, so a registry entry cannot inject `npx` options. An invalid specifier returns `{:error, :invalid_npx_package}`.
