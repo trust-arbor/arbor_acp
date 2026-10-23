@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Security:** `Arbor.ACP.Registry` fetch no longer lets `:httpc` autoredirect. Cross-origin (and any other) 3xx hops are refused so Authorization and other request headers are not replayed onto a different origin, including an https-to-http downgrade.
 - Fix: the AdapterBridge also accepts a bare `{:error, reason}` from `translate_outbound/2` on the session lifecycle path (`session/new`, `session/load`, `session/resume`), replying with a JSON-RPC error instead of crashing (follow-up to #12).
 ## 1.0.0-rc.3 — 2026-10-22
 

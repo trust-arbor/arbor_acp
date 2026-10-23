@@ -28,6 +28,10 @@ defmodule Arbor.ACP.Registry do
   - `:headers` - additional HTTP request headers.
   - `:http_client` - test hook taking `(url, headers, timeout)` and returning
     `{:ok, body}` or `{:error, reason}`.
+
+  HTTP redirects are refused (`{:error, {:redirect_refused, status, location}}`)
+  so request headers are not replayed onto another origin, including an
+  https-to-http downgrade.
   """
   @spec fetch(keyword()) :: {:ok, registry()} | {:error, any()}
   def fetch(opts \\ []) do
@@ -160,12 +164,17 @@ defmodule Arbor.ACP.Registry do
     ensure_http_started()
 
     request = {String.to_charlist(url), normalize_headers(headers)}
-    http_options = [timeout: timeout, connect_timeout: timeout]
+    # Disable :httpc's default autoredirect so Authorization and other
+    # request headers are not replayed onto a different origin.
+    http_options = [timeout: timeout, connect_timeout: timeout, autoredirect: false]
     options = [body_format: :binary]
 
     case :httpc.request(:get, request, http_options, options) do
       {:ok, {{_, status, _}, _headers, body}} when status in 200..299 ->
         {:ok, body}
+
+      {:ok, {{_, status, _reason}, resp_headers, _body}} when status in 300..399 ->
+        {:error, {:redirect_refused, status, location_header(resp_headers)}}
 
       {:ok, {{_, status, reason}, _headers, body}} ->
         {:error, {:http_error, status, to_string(reason), body}}
@@ -173,6 +182,12 @@ defmodule Arbor.ACP.Registry do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp location_header(headers) do
+    Enum.find_value(headers, fn {name, value} ->
+      if String.downcase(to_string(name)) == "location", do: to_string(value)
+    end)
   end
 
   defp ensure_http_started do
