@@ -7,7 +7,7 @@ terminal, or user-input operations from the host. ACP uses a stateful initialize
 handshake and protocol version `1`. MCP protocol revision settings do not apply.
 
 Start with the [installation and local echo quickstart](../README.md). These
-guides describe the published `1.0.0-rc.1` candidate. The original
+guides describe the published `1.0.0-rc.2` candidate. The original
 `2.0.0-rc.1` candidate is retired with its tag and archive preserved.
 
 ## Connect to a native ACP agent
@@ -280,7 +280,7 @@ memory or the operating system's Port buffers.
 
 | Symptom | Check |
 | --- | --- |
-| Hex cannot resolve RC1 | Use the explicit `1.0.0-rc.1` prerelease requirement and normal Hex resolution; check the lockfile and registry connectivity |
+| Hex cannot resolve the RC | Use the explicit `1.0.0-rc.2` prerelease requirement and normal Hex resolution; check the lockfile and registry connectivity |
 | Native helper does not compile | Confirm a C17 compiler, target toolchain and `CC`; see the ArborRPC source-build policy |
 | Agent exits or initialization fails | Verify executable/arguments, child working directory/environment and that the command speaks ACP |
 | Invalid JSON or unexpected stdout | Move startup banners, logs and build output away from the agent's stdout |
@@ -311,7 +311,7 @@ wire metadata remains unchanged in v2.
 ## Migrating from the original release candidate
 
 The original `arbor_acp 2.0.0-rc.1` client added buffered streamed text to
-`Client.prompt/4` results. Independent `1.0.0-rc.1` candidates preserve those
+`Client.prompt/4` results. The independent `1.0.0` candidates preserve those
 results unchanged. Replace code reading synthesized `result["text"]` with
 `Client.prompt_text/4` and read its separate `text` and `truncated?` fields.
 A peer's own `"text"` extension stays in `result`; streamed text does not replace it.
