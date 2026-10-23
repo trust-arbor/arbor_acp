@@ -1,8 +1,8 @@
 defmodule Arbor.ACP.Adapters.MixProject do
   use Mix.Project
-  @version "1.0.0-rc.2"
-  @rpc_requirement "~> 1.0.0-rc.1"
-  @acp_requirement "~> 1.0.0-rc.2"
+  @version "1.0.0-rc.3"
+  @rpc_requirement "~> 1.0.0-rc.2"
+  @acp_requirement "~> 1.0.0-rc.3"
   def project do
     [
       app: :arbor_acp_adapters,

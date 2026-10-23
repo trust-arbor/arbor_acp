@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## ArborACP / Adapters 1.0.0-rc.3 — 2026-10-22
+
+- **Security:** resolve symlinks before `..` in `WorkspacePath`, closing a workspace confinement bypass in the client's `fs`/`terminal` authorization and the Codex/ZCode workspace-root checks.
+- **Security:** ignore `piCommand` from a project's `.pi/settings.json`, so an untrusted repository cannot choose the executable the Pi adapter spawns; keep the host-supplied cwd as the Pi edit-snapshot root.
+- **Security:** require `adapter_opts[:gateway_auth]` and an https/loopback `baseUrl` for Codex gateway authentication.
+- Require `arbor_rpc` 1.0.0-rc.2, which ignores relative and empty child `PATH` entries during command lookup.
+- Fix an AdapterBridge crash on bare `{:error, reason}` translation results (ZCode `session/list` with an unauthorized cwd).
+- Add `Client.initialize_result/1` and `agent_meta/1`.
+
 ## ArborACP / Adapters 1.0.0-rc.2 — 2026-10-22
 
 - **Security:** contain Pi edit snapshots to the session workspace and cap their size.

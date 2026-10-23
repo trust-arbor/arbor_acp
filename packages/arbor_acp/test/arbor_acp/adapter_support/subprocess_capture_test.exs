@@ -46,7 +46,11 @@ defmodule Arbor.ACP.AdapterSupport.SubprocessCaptureTest do
                [],
                [
                  cwd: directory,
-                 env: %{"PATH" => ".", "POLICY_VALUE" => "caller", "EXPLICIT_UNSET" => false}
+                 env: %{
+                   "PATH" => directory,
+                   "POLICY_VALUE" => "caller",
+                   "EXPLICIT_UNSET" => false
+                 }
                ],
                PolicyAdapter
              )
