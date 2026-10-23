@@ -65,6 +65,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     prelude_lines: [],
     startup_sent?: false,
     last_session_cwd: nil,
+    # Host-authorized session cwd; never derived from what the agent reports.
     workspace_root: nil,
     settings: %{},
     pending_prompt: nil,
@@ -207,7 +208,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "authenticate"}, state), do: {:reply, %{}, state}
 
   def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
-    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
+    cwd = params["cwd"] || state.workspace_root || Keyword.get(state.opts, :cwd) || File.cwd!()
 
     case Sessions.require_absolute_cwd(cwd) do
       :ok -> start_session_new(acp_id, cwd, state)
@@ -746,7 +747,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   # replayed, which also decides whether `get_messages` joins the control group.
   defp start_session_switch(acp_id, params, replay?, state) do
     session_id = params["sessionId"]
-    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
+    cwd = params["cwd"] || state.workspace_root || Keyword.get(state.opts, :cwd) || File.cwd!()
 
     with :ok <- Sessions.require_absolute_cwd(cwd),
          session_file when is_binary(session_file) <- find_session_file(session_id, state),

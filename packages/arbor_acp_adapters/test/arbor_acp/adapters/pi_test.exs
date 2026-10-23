@@ -445,6 +445,33 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert state.workspace_root == tmp_dir
     end
 
+    test "session/load without cwd falls back to the host root, not the agent-reported cwd", %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_dir: session_dir,
+      session_map_path: session_map_path
+    } do
+      session_file = Path.join(session_dir, "s1.jsonl")
+      File.write!(session_file, "")
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "s1" => %{"sessionId" => "s1", "cwd" => tmp_dir, "sessionFile" => session_file}
+          }
+        })
+      )
+
+      # State after an established session whose agent reported `cwd: "/"`.
+      state = %{state | cwd: "/", workspace_root: tmp_dir, last_session_cwd: "/"}
+      msg = %{"method" => "session/load", "id" => 1, "params" => %{"sessionId" => "s1"}}
+
+      assert {:ok, _data, state} = Pi.translate_outbound(msg, state)
+      assert state.workspace_root == tmp_dir
+    end
+
     test "session/new maps empty model list to auth-required", %{state: state, tmp_dir: tmp_dir} do
       msg = %{"method" => "session/new", "id" => 12, "params" => %{"cwd" => tmp_dir}}
 
