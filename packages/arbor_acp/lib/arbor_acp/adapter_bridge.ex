@@ -578,6 +578,12 @@ defmodule Arbor.ACP.AdapterBridge do
         state = %{state | adapter_state: new_adapter_state}
         state = synthesize_init_response(state, id)
         {:reply, :ok, state}
+
+      {:error, reason, new_adapter_state} ->
+        reply_translation_error(msg, reason, %{state | adapter_state: new_adapter_state})
+
+      {:error, reason} ->
+        reply_translation_error(msg, reason, state)
     end
   end
 
@@ -686,6 +692,11 @@ defmodule Arbor.ACP.AdapterBridge do
 
           {:error, reason, new_adapter_state} ->
             reply_translation_error(msg, reason, %{state | adapter_state: new_adapter_state})
+
+          # An adapter that reports a failed check without its state must not
+          # take the bridge down with a CaseClauseError (#7).
+          {:error, reason} ->
+            reply_translation_error(msg, reason, state)
         end
     end
   end
@@ -1185,6 +1196,8 @@ defmodule Arbor.ACP.AdapterBridge do
     state = %{state | adapter_state: adapter_state}
     write_translation_to_port(state, {:messages_and_write, messages, :sent}, data)
   end
+
+  defp normalize_translated_outbound({:error, reason}, state), do: {:error, reason, state}
 
   defp normalize_translated_outbound({:error, reason, adapter_state}, state),
     do: {:error, reason, %{state | adapter_state: adapter_state}}

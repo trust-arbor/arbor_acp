@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Security:** `Arbor.ACP.AdapterSupport.WorkspacePath.canonical/1` now resolves symlinks before applying `..`, the way the kernel does. A path such as `<root>/link/../secret` where `link` points outside the workspace previously passed `within?/2` (and therefore the client's `fs/*` and `terminal/create` authorization) while the file actually opened lived outside the root.
+- Fix: the AdapterBridge no longer crashes (taking the connection down) when an adapter's `translate_outbound/2` reports a failed check as `{:error, reason}` without its state; such results now produce a JSON-RPC error reply for `initialize`, `session/list` and the generic translation path (#7).
 
 ## 1.0.0-rc.2 — 2026-10-22
 
