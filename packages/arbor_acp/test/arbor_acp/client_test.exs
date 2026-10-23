@@ -177,6 +177,7 @@ defmodule Arbor.ACP.ClientTest do
           ignore_method: ignore_method,
           capabilities: capabilities,
           auth_methods: auth_methods,
+          initialize_meta: Keyword.get(opts, :initialize_meta),
           test_pid: test_pid
         })
       end)
@@ -203,17 +204,19 @@ defmodule Arbor.ACP.ClientTest do
       send(state.test_pid, {:initialize_request, msg["params"] || %{}})
       Process.sleep(state.initialize_delay_ms)
 
-      response =
-        Jason.encode!(%{
-          "jsonrpc" => "2.0",
-          "result" => %{
-            "agentInfo" => %{"name" => "mock_agent", "version" => "1.0.0"},
-            "agentCapabilities" => state.capabilities,
-            "authMethods" => state.auth_methods,
-            "protocolVersion" => state.protocol_version
-          },
-          "id" => id
-        })
+      result = %{
+        "agentInfo" => %{"name" => "mock_agent", "version" => "1.0.0"},
+        "agentCapabilities" => state.capabilities,
+        "authMethods" => state.auth_methods,
+        "protocolVersion" => state.protocol_version
+      }
+
+      result =
+        if state.initialize_meta,
+          do: Map.put(result, "_meta", state.initialize_meta),
+          else: result
+
+      response = Jason.encode!(%{"jsonrpc" => "2.0", "result" => result, "id" => id})
 
       MessageRelay.push(state.to_client, response)
     end
@@ -632,6 +635,25 @@ defmodule Arbor.ACP.ClientTest do
       assert [%{"id" => "api-key"}] = auth_methods
 
       assert Client.status!(client) == :ready
+    end
+
+    test "exposes the complete initialize result and the agent's _meta" do
+      meta = %{"ext" => %{"_session/steering" => true}}
+      {client, _agent} = start_client(initialize_meta: meta)
+
+      assert {:ok, ^meta} = Client.agent_meta(client)
+      assert {:ok, result} = Client.initialize_result(client)
+      assert result["_meta"] == meta
+      assert result["agentInfo"]["name"] == "mock_agent"
+      assert result["agentCapabilities"]["streaming"] == true
+    end
+
+    test "agent_meta is nil when the agent omits _meta" do
+      {client, _agent} = start_client()
+
+      assert {:ok, nil} = Client.agent_meta(client)
+      assert {:ok, result} = Client.initialize_result(client)
+      refute Map.has_key?(result, "_meta")
     end
 
     test "honors a configurable total initialize timeout and closes the transport" do

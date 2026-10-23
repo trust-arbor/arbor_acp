@@ -83,6 +83,7 @@ defmodule Arbor.ACP.Client do
     :transport_actor_monitor,
     :agent_info,
     :agent_capabilities,
+    :initialize_result,
     :client_capabilities,
     :auth_methods,
     :handler_mod,
@@ -404,6 +405,25 @@ defmodule Arbor.ACP.Client do
     Call.call(client, :agent_capabilities)
   end
 
+  @doc """
+  Returns the complete initialize result, including `_meta` and any fields the
+  typed accessors do not cover, or `nil` before the handshake completed.
+  """
+  @spec initialize_result(GenServer.server()) :: {:ok, map() | nil} | {:error, term()}
+  def initialize_result(client) do
+    Call.call(client, :initialize_result)
+  end
+
+  @doc """
+  Returns the agent's `_meta` object from the initialize handshake, or `nil`
+  when the agent omitted it. Agents advertise extension capabilities here;
+  check it before calling `extension_request/4`.
+  """
+  @spec agent_meta(GenServer.server()) :: {:ok, map() | nil} | {:error, term()}
+  def agent_meta(client) do
+    Call.call(client, :agent_meta)
+  end
+
   @doc "Returns the agent's authentication methods from the initialize handshake."
   @spec auth_methods(GenServer.server()) :: {:ok, [map()]} | {:error, term()}
   def auth_methods(client) do
@@ -653,6 +673,20 @@ defmodule Arbor.ACP.Client do
 
   def handle_call(:agent_capabilities, _from, state) do
     {:reply, {:ok, state.agent_capabilities}, state}
+  end
+
+  def handle_call(:initialize_result, _from, state) do
+    {:reply, {:ok, state.initialize_result}, state}
+  end
+
+  def handle_call(:agent_meta, _from, state) do
+    meta =
+      case state.initialize_result do
+        %{"_meta" => meta} when is_map(meta) -> meta
+        _missing -> nil
+      end
+
+    {:reply, {:ok, meta}, state}
   end
 
   def handle_call(:auth_methods, _from, state) do
@@ -1127,7 +1161,8 @@ defmodule Arbor.ACP.Client do
       {:ok,
        %{
          state
-         | agent_info: result["agentInfo"],
+         | initialize_result: result,
+           agent_info: result["agentInfo"],
            agent_capabilities: result["agentCapabilities"],
            client_capabilities: capabilities,
            auth_methods: result["authMethods"] || [],
