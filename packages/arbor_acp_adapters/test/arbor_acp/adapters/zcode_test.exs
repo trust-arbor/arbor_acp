@@ -195,6 +195,15 @@ defmodule Arbor.ACP.Adapters.ZCodeTest do
       assert zcode_msg["params"]["limit"] == 10
       assert new_state.pending_requests[zcode_msg["id"]].acp_id == 1
     end
+
+    test "session/list with an unauthorized cwd returns a translation error, not a crash",
+         %{state: state} do
+      for cwd <- ["relative/path", "/elsewhere/project"] do
+        msg = %{"method" => "session/list", "id" => 1, "params" => %{"cwd" => cwd}}
+        assert {:error, reason, ^state} = ZCode.translate_outbound(msg, state)
+        assert is_binary(reason)
+      end
+    end
   end
 
   describe "workspace authorization" do
