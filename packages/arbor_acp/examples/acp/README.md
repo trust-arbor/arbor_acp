@@ -22,8 +22,9 @@ The controller prints `session/update` notifications containing the echoed
 greeting, followed by a final result with `"stopReason" => "end_turn"`. It then
 disconnects the client. This exercises a real child process without vendor CLIs,
 credentials or network calls. Compile first so the child's `--no-compile`
-entrypoint can load the package; the source build requires the C17 compiler
-described in the ArborRPC README.
+entrypoint can load the package. The child runs through ArborRPC's native
+helper, which needs the C17 compiler described in the ArborRPC README; without
+it, the controller can't start the agent (`:native_helper_unavailable`).
 
 The naming follows the official ACP SDK roles:
 

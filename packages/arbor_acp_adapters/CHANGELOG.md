@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Docs: ArborRPC releases after `1.0.0-rc.2` install without a C compiler, and adapter starts then fail with `:native_helper_unavailable`. The README and usage rules now say so and recommend `config :arbor_rpc, native_helper: :required`.
+
 ## 1.0.0-rc.3 — 2026-10-22
 
 - **Security:** a project's `.pi/settings.json` can no longer choose the executable the Pi adapter spawns. `piCommand` is honored from adapter options (`:cli_path`/`:pi_command`), `PI_ACP_PI_COMMAND`, or the global agent settings only; the project value is ignored. Previously an untrusted repository could run an arbitrary program at `session/new`.

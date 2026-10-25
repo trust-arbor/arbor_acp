@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Fix: the AdapterBridge also accepts a bare `{:error, reason}` from `translate_outbound/2` on the session lifecycle path (`session/new`, `session/load`, `session/resume`), replying with a JSON-RPC error instead of crashing (follow-up to #12).
+- Docs: ArborRPC releases after `1.0.0-rc.2` install without a C compiler, and starting an agent then fails with `:native_helper_unavailable`. The README, usage rules and guides now say so and recommend `config :arbor_rpc, native_helper: :required` for applications that launch agents.
+
 ## 1.0.0-rc.3 — 2026-10-22
 
 - **Security:** `Arbor.ACP.AdapterSupport.WorkspacePath.canonical/1` now resolves symlinks before applying `..`, the way the kernel does. A path such as `<root>/link/../secret` where `link` points outside the workspace previously passed `within?/2` (and therefore the client's `fs/*` and `terminal/create` authorization) while the file actually opened lived outside the root.

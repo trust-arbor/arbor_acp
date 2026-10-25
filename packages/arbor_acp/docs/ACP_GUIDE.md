@@ -282,6 +282,7 @@ memory or the operating system's Port buffers.
 | --- | --- |
 | Hex cannot resolve the RC | Use the explicit `1.0.0-rc.3` prerelease requirement and normal Hex resolution; check the lockfile and registry connectivity |
 | Native helper does not compile | Confirm a C17 compiler, target toolchain and `CC`; see the ArborRPC source-build policy |
+| Starting an agent fails with `:native_helper_unavailable` | RPC was built without a compiler. Install one, run `mix deps.compile arbor_rpc --force`, and set `config :arbor_rpc, native_helper: :required` so the build fails next time |
 | Agent exits or initialization fails | Verify executable/arguments, child working directory/environment and that the command speaks ACP |
 | Invalid JSON or unexpected stdout | Move startup banners, logs and build output away from the agent's stdout |
 | `unsupported_capability` | Inspect the initialized capabilities before using optional lifecycle/content features |

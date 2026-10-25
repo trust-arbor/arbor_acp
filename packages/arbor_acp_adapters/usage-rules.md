@@ -22,9 +22,12 @@ options.
   tagged results, caller deadlines, queued cancellation and bounded stop
   semantics still apply. Use `Arbor.ACP.Client.stop/3` to close and terminate;
   retain cleanup errors. Disconnect only closes the transport.
-- Declare the core and RPC directly if your own code calls their APIs. Native
-  source installation on macOS/Linux requires a C17 compiler through ArborRPC;
-  vendor CLI availability is an additional prerequisite.
+- Declare the core and RPC directly if your own code calls their APIs. Adapters
+  need ArborRPC's native helper, which is built with a C17 compiler on
+  macOS/Linux. Set `config :arbor_rpc, native_helper: :required` so a missing
+  compiler fails the build rather than every adapter start (RPC releases after
+  `1.0.0-rc.2` otherwise install without the helper). Vendor CLI availability is
+  an additional prerequisite.
 
 ## Use returned capabilities and catalogs
 

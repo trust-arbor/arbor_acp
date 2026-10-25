@@ -14,10 +14,13 @@ in `.github/workflows/ci.yml`; use that commit to reproduce a specific CI result
 
 Both packages declare Elixir `~> 1.17`. Use a compatible OTP version from the
 [BEAM compatibility guide](.github/BEAM_CI.md); formatting uses Elixir 1.17.3.
-Source compilation on macOS/Linux requires a C17 compiler for ArborRPC. Set
-`CC` to a compiler executable if needed. Windows native subprocess operations
-are unsupported. Node.js/npm are needed only for the optional SDK interop suite;
-vendor CLIs are needed only for explicitly selected CLI tests.
+The tests need ArborRPC's native helper, which is built with a C17 compiler on
+macOS/Linux. Set `CC` to a compiler executable if needed. An RPC checkout newer
+than `1.0.0-rc.2` only warns when no compiler is found, so export
+`ARBOR_RPC_NATIVE=required` to make that a build error. Windows native
+subprocess operations are unsupported. Node.js/npm are needed only for the
+optional SDK interop suite; vendor CLIs are needed only for explicitly selected
+CLI tests.
 
 For local dependency source development, configure overrides from the workspace root:
 
