@@ -822,48 +822,26 @@ defmodule Arbor.ACP.Adapters.Pi do
       file_commands = SlashCommands.load(cwd, state.opts)
       settings = Settings.load(cwd, state.opts)
 
-      # Built in emission order, so the ids ascend the way they are sent.
-      kinds =
-        [{:switch, RPC.method(:switch_session), %{"sessionPath" => session_file}}] ++
-          if(replay?, do: [{:messages, RPC.method(:get_messages), %{}}], else: []) ++
-          [
-            {:state, RPC.method(:get_state), %{}},
-            {:models, RPC.method(:get_available_models), %{}},
-            {:thinking_levels, RPC.method(:get_available_thinking_levels), %{}},
-            {:commands, RPC.method(:get_commands), %{}}
-          ]
-
-      {requests, state} =
-        Enum.map_reduce(kinds, state, fn {kind, type, fields}, acc ->
-          {id, message, acc} = rpc(acc, type, fields)
-          {{kind, {id, message}}, acc}
-        end)
-
-      [{:switch, {switch_id, _msg}} | _] = requests
+      followups =
+        if(replay?, do: [{:messages, RPC.method(:get_messages), %{}}], else: []) ++
+          session_setup_followups()
 
       group = %{
         type: :session_load,
         acp_id: acp_id,
-        change_id: switch_id,
         session_id: session_id,
         cwd: cwd,
         session_file: session_file,
         file_commands: file_commands,
         settings: settings,
         replay?: replay?,
-        refs: MapSet.new(Enum.map(requests, fn {_kind, {rpc_id, _msg}} -> rpc_id end)),
         responses: %{}
       }
 
-      state =
-        Enum.reduce(requests, put_group(state, group), fn {kind, {rpc_id, _msg}}, acc ->
-          put_control(acc, rpc_id, kind, group)
-        end)
-
-      state = track_session_change(state, switch_id)
-
-      deliver_pending(
-        RPC.encode_many(Enum.map(requests, fn {_kind, {_rpc_id, msg}} -> msg end)),
+      start_session_change(
+        group,
+        {:switch, RPC.method(:switch_session), %{"sessionPath" => session_file}},
+        followups,
         state
       )
     else
@@ -884,37 +862,78 @@ defmodule Arbor.ACP.Adapters.Pi do
     file_commands = SlashCommands.load(cwd, state.opts)
     settings = Settings.load(cwd, state.opts)
 
-    {new_id, new_session, state} = rpc(state, RPC.method(:new_session))
-    {state_id, get_state, state} = rpc(state, RPC.method(:get_state))
-    {models_id, get_models, state} = rpc(state, RPC.method(:get_available_models))
-    {thinking_id, get_thinking, state} = rpc(state, RPC.method(:get_available_thinking_levels))
-    {commands_id, get_commands, state} = rpc(state, RPC.method(:get_commands))
-
     group = %{
       type: :session_new,
       acp_id: acp_id,
-      change_id: new_id,
       cwd: cwd,
       file_commands: file_commands,
       settings: settings,
-      refs: MapSet.new([new_id, state_id, models_id, thinking_id, commands_id]),
       responses: %{}
     }
+
+    start_session_change(
+      group,
+      {:new_session, RPC.method(:new_session), %{}},
+      session_setup_followups(),
+      state
+    )
+  end
+
+  defp session_setup_followups do
+    [
+      {:state, RPC.method(:get_state), %{}},
+      {:models, RPC.method(:get_available_models), %{}},
+      {:thinking_levels, RPC.method(:get_available_thinking_levels), %{}},
+      {:commands, RPC.method(:get_commands), %{}}
+    ]
+  end
+
+  # Pi dispatches each input line without awaiting the previous one, and its
+  # new_session/switch_session replace the session only after several
+  # asynchronous steps. Requests written alongside them would describe the
+  # session Pi is leaving, so a setup group sends the session change alone and
+  # the rest of its requests once Pi has answered it.
+  defp start_session_change(group, {kind, type, fields}, followups, state) do
+    {change_id, change, state} = rpc(state, type, fields)
+
+    group =
+      Map.merge(group, %{
+        change_id: change_id,
+        refs: MapSet.new([change_id]),
+        followups: followups
+      })
 
     state =
       state
       |> put_group(group)
-      |> put_control(new_id, :new_session, group)
-      |> put_control(state_id, :state, group)
-      |> put_control(models_id, :models, group)
-      |> put_control(thinking_id, :thinking_levels, group)
-      |> put_control(commands_id, :commands, group)
-      |> track_session_change(new_id)
+      |> put_control(change_id, kind, group)
+      |> track_session_change(change_id)
 
-    deliver_pending(
-      RPC.encode_many([new_session, get_state, get_models, get_thinking, get_commands]),
-      state
-    )
+    deliver_pending(RPC.line(change), state)
+  end
+
+  # Built in emission order, so the ids ascend the way they are sent.
+  defp send_session_setup_followups(group, state) do
+    {requests, state} =
+      Enum.map_reduce(group.followups, state, fn {kind, type, fields}, acc ->
+        {id, message, acc} = rpc(acc, type, fields)
+        {{kind, id, message}, acc}
+      end)
+
+    group = %{
+      group
+      | followups: [],
+        refs: MapSet.union(group.refs, MapSet.new(requests, fn {_kind, id, _msg} -> id end))
+    }
+
+    state = %{state | control_groups: Map.put(state.control_groups, group.group_id, group)}
+
+    state =
+      Enum.reduce(requests, state, fn {kind, id, _msg}, acc ->
+        put_control(acc, id, kind, group)
+      end)
+
+    {:skip_and_write, RPC.encode_many(Enum.map(requests, fn {_kind, _id, msg} -> msg end)), state}
   end
 
   defp translate_slash_command({:ok, name, args}, acp_id, params, state) do
@@ -1887,7 +1906,10 @@ defmodule Arbor.ACP.Adapters.Pi do
           |> update_in([:refs], &MapSet.delete(&1, rpc_id))
 
         state = %{state | control_groups: Map.put(state.control_groups, group_id, group)}
-        maybe_finish_control_group(group, state)
+
+        if Map.get(group, :followups, []) != [] and kind in [:new_session, :switch],
+          do: send_session_setup_followups(group, state),
+          else: maybe_finish_control_group(group, state)
     end
   end
 

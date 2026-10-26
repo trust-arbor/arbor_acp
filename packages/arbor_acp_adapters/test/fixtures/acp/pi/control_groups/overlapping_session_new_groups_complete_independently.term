@@ -23,16 +23,7 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{"id" => "pi-<1>", "type" => "new_session"},
-        %{"id" => "pi-<2>", "type" => "get_state"},
-        %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<5>", "type" => "get_commands"}
-      ]
-    }
+    result: %{tag: :ok, writes: [%{"id" => "pi-<1>", "type" => "new_session"}]}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -43,16 +34,7 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{"id" => "pi-<6>", "type" => "new_session"},
-        %{"id" => "pi-<7>", "type" => "get_state"},
-        %{"id" => "pi-<8>", "type" => "get_available_models"},
-        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<10>", "type" => "get_commands"}
-      ]
-    }
+    result: %{tag: :ok, writes: [%{"id" => "pi-<2>", "type" => "new_session"}]}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :note, text: "Answer the second group first"},
@@ -64,12 +46,21 @@
       message: %{
         "command" => "new_session",
         "data" => %{},
-        "id" => "pi-<6>",
+        "id" => "pi-<2>",
         "success" => true,
         "type" => "response"
       }
     },
-    result: %{skipped: true, tag: :skip}
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{"id" => "pi-<3>", "type" => "get_state"},
+        %{"id" => "pi-<4>", "type" => "get_available_models"},
+        %{"id" => "pi-<5>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<6>", "type" => "get_commands"}
+      ]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -83,7 +74,7 @@
           "sessionId" => "second",
           "thinkingLevel" => "medium"
         },
-        "id" => "pi-<7>",
+        "id" => "pi-<3>",
         "success" => true,
         "type" => "response"
       }
@@ -101,7 +92,7 @@
             %{"id" => "gpt-5.1", "name" => "GPT-5.1", "provider" => "openai"}
           ]
         },
-        "id" => "pi-<8>",
+        "id" => "pi-<4>",
         "success" => true,
         "type" => "response"
       }
@@ -114,7 +105,7 @@
       message: %{
         "command" => "get_available_thinking_levels",
         "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
-        "id" => "pi-<9>",
+        "id" => "pi-<5>",
         "success" => true,
         "type" => "response"
       }
@@ -127,7 +118,7 @@
       message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<10>",
+        "id" => "pi-<6>",
         "success" => true,
         "type" => "response"
       }
@@ -294,6 +285,13 @@
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
+      kind: :note,
+      text: "The first group's setup requests are written after its new_session reply"
+    },
+    result: %{}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
       kind: :inbound,
       message: %{
         "command" => "new_session",
@@ -303,7 +301,16 @@
         "type" => "response"
       }
     },
-    result: %{skipped: true, tag: :skip}
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{"id" => "pi-<7>", "type" => "get_state"},
+        %{"id" => "pi-<8>", "type" => "get_available_models"},
+        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<10>", "type" => "get_commands"}
+      ]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -317,7 +324,7 @@
           "sessionId" => "first",
           "thinkingLevel" => "medium"
         },
-        "id" => "pi-<2>",
+        "id" => "pi-<7>",
         "success" => true,
         "type" => "response"
       }
@@ -335,7 +342,7 @@
             %{"id" => "gpt-5.1", "name" => "GPT-5.1", "provider" => "openai"}
           ]
         },
-        "id" => "pi-<3>",
+        "id" => "pi-<8>",
         "success" => true,
         "type" => "response"
       }
@@ -348,7 +355,7 @@
       message: %{
         "command" => "get_available_thinking_levels",
         "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
-        "id" => "pi-<4>",
+        "id" => "pi-<9>",
         "success" => true,
         "type" => "response"
       }
@@ -361,7 +368,7 @@
       message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<5>",
+        "id" => "pi-<10>",
         "success" => true,
         "type" => "response"
       }
@@ -536,7 +543,7 @@
       message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<5>",
+        "id" => "pi-<6>",
         "success" => true,
         "type" => "response"
       }

@@ -23,16 +23,7 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{"id" => "pi-<1>", "type" => "new_session"},
-        %{"id" => "pi-<2>", "type" => "get_state"},
-        %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<5>", "type" => "get_commands"}
-      ]
-    }
+    result: %{tag: :ok, writes: [%{"id" => "pi-<1>", "type" => "new_session"}]}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -61,16 +52,7 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{"id" => "pi-<6>", "type" => "new_session"},
-        %{"id" => "pi-<7>", "type" => "get_state"},
-        %{"id" => "pi-<8>", "type" => "get_available_models"},
-        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<10>", "type" => "get_commands"}
-      ]
-    }
+    result: %{tag: :ok, writes: [%{"id" => "pi-<2>", "type" => "new_session"}]}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -78,7 +60,7 @@
       message: %{
         "command" => "new_session",
         "error" => nil,
-        "id" => "pi-<6>",
+        "id" => "pi-<2>",
         "success" => false,
         "type" => "response"
       }
@@ -99,21 +81,34 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
+    result: %{tag: :ok, writes: [%{"id" => "pi-<3>", "type" => "new_session"}]}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "new_session",
+        "data" => %{},
+        "id" => "pi-<3>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
     result: %{
-      tag: :ok,
+      skipped: true,
+      tag: :skip_and_write,
       writes: [
-        %{"id" => "pi-<11>", "type" => "new_session"},
-        %{"id" => "pi-<12>", "type" => "get_state"},
-        %{"id" => "pi-<13>", "type" => "get_available_models"},
-        %{"id" => "pi-<14>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<15>", "type" => "get_commands"}
+        %{"id" => "pi-<4>", "type" => "get_state"},
+        %{"id" => "pi-<5>", "type" => "get_available_models"},
+        %{"id" => "pi-<6>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<7>", "type" => "get_commands"}
       ]
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
       kind: :inbound,
-      message: %{"id" => "pi-<12>", "success" => false, "type" => "response"}
+      message: %{"id" => "pi-<4>", "success" => false, "type" => "response"}
     },
     result: %{
       messages: [

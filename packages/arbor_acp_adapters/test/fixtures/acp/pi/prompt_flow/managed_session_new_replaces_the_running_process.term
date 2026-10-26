@@ -26,13 +26,7 @@
     result: %{
       pending: true,
       port: :spawned,
-      port_writes: [
-        %{"id" => "pi-<1>", "type" => "new_session"},
-        %{"id" => "pi-<2>", "type" => "get_state"},
-        %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<5>", "type" => "get_commands"}
-      ],
+      port_writes: [%{"id" => "pi-<1>", "type" => "new_session"}],
       tag: :ok
     }
   },
@@ -47,7 +41,16 @@
         "type" => "response"
       }
     },
-    result: %{skipped: true, tag: :skip}
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{"id" => "pi-<2>", "type" => "get_state"},
+        %{"id" => "pi-<3>", "type" => "get_available_models"},
+        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<5>", "type" => "get_commands"}
+      ]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -297,13 +300,7 @@
     result: %{
       pending: true,
       port: :respawned,
-      port_writes: [
-        %{"id" => "pi-<6>", "type" => "new_session"},
-        %{"id" => "pi-<7>", "type" => "get_state"},
-        %{"id" => "pi-<8>", "type" => "get_available_models"},
-        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<10>", "type" => "get_commands"}
-      ],
+      port_writes: [%{"id" => "pi-<6>", "type" => "new_session"}],
       tag: :ok
     }
   },
@@ -318,7 +315,16 @@
         "type" => "response"
       }
     },
-    result: %{skipped: true, tag: :skip}
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{"id" => "pi-<7>", "type" => "get_state"},
+        %{"id" => "pi-<8>", "type" => "get_available_models"},
+        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<10>", "type" => "get_commands"}
+      ]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{

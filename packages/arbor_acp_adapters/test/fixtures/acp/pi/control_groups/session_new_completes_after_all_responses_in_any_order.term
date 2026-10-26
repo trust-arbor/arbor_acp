@@ -23,10 +23,23 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
+    result: %{tag: :ok, writes: [%{"id" => "pi-<1>", "type" => "new_session"}]}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "new_session",
+        "data" => %{},
+        "id" => "pi-<1>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
     result: %{
-      tag: :ok,
+      skipped: true,
+      tag: :skip_and_write,
       writes: [
-        %{"id" => "pi-<1>", "type" => "new_session"},
         %{"id" => "pi-<2>", "type" => "get_state"},
         %{"id" => "pi-<3>", "type" => "get_available_models"},
         %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
@@ -91,19 +104,6 @@
           "thinkingLevel" => "medium"
         },
         "id" => "pi-<2>",
-        "success" => true,
-        "type" => "response"
-      }
-    },
-    result: %{skipped: true, tag: :skip}
-  },
-  %Arbor.ACP.Test.PiGolden.Entry{
-    step: %{
-      kind: :inbound,
-      message: %{
-        "command" => "new_session",
-        "data" => %{},
-        "id" => "pi-<1>",
         "success" => true,
         "type" => "response"
       }

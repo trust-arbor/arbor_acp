@@ -322,8 +322,8 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
       msg = %{"method" => "session/load", "id" => 1, "params" => %{"sessionId" => "s1"}}
 
-      assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
-      requests = decode_many(data)
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      {requests, _state} = confirm_session_change(data, state)
 
       assert Enum.map(requests, & &1["type"]) == [
                "switch_session",
@@ -358,8 +358,8 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
       msg = %{"method" => "session/resume", "id" => 1, "params" => %{"sessionId" => "s1"}}
 
-      assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
-      requests = decode_many(data)
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      {requests, _state} = confirm_session_change(data, state)
 
       assert Enum.map(requests, & &1["type"]) == [
                "switch_session",
@@ -379,7 +379,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
       msg = %{"method" => "session/new", "id" => 11, "params" => %{"cwd" => tmp_dir}}
 
       assert {:ok, data, state} = Pi.translate_outbound(msg, state)
-      requests = decode_many(data)
+      {requests, state} = confirm_session_change(data, state)
 
       assert Enum.map(requests, & &1["type"]) == [
                "new_session",
@@ -392,7 +392,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
       ids_by_type = Map.new(requests, &{&1["type"], &1["id"]})
 
       state =
-        respond(state, ids_by_type["new_session"], "new_session", %{})
+        state
         |> respond(ids_by_type["get_state"], "get_state", %{
           "sessionId" => "pi-session",
           "sessionFile" => Path.join(tmp_dir, "pi-session.jsonl"),
@@ -505,7 +505,8 @@ defmodule Arbor.ACP.Adapters.PiTest do
           ] do
         msg = %{"method" => method, "id" => 21, "params" => params}
         assert {:ok, data, state} = Pi.translate_outbound(msg, state)
-        ids_by_type = Map.new(decode_many(data), &{&1["type"], &1["id"]})
+        {requests, state} = confirm_session_change(data, state)
+        ids_by_type = Map.new(requests, &{&1["type"], &1["id"]})
 
         # Pi before 0.81.0 answers the command it does not know with this reply.
         assert {:skip, state} =
@@ -562,10 +563,11 @@ defmodule Arbor.ACP.Adapters.PiTest do
       msg = %{"method" => "session/new", "id" => 13, "params" => %{"cwd" => tmp_dir}}
 
       assert {:ok, data, state} = Pi.translate_outbound(msg, state)
-      ids_by_type = Map.new(decode_many(data), &{&1["type"], &1["id"]})
+      {requests, state} = confirm_session_change(data, state)
+      ids_by_type = Map.new(requests, &{&1["type"], &1["id"]})
 
       state =
-        respond(state, ids_by_type["new_session"], "new_session", %{})
+        state
         |> respond(ids_by_type["get_state"], "get_state", %{
           "sessionId" => "pi-session",
           "sessionFile" => Path.join(tmp_dir, "pi-session.jsonl"),
@@ -623,10 +625,11 @@ defmodule Arbor.ACP.Adapters.PiTest do
       msg = %{"method" => "session/new", "id" => 12, "params" => %{"cwd" => tmp_dir}}
 
       assert {:ok, data, state} = Pi.translate_outbound(msg, state)
-      ids_by_type = data |> decode_many() |> Map.new(&{&1["type"], &1["id"]})
+      {requests, state} = confirm_session_change(data, state)
+      ids_by_type = Map.new(requests, &{&1["type"], &1["id"]})
 
       state =
-        respond(state, ids_by_type["new_session"], "new_session", %{})
+        state
         |> respond(ids_by_type["get_state"], "get_state", %{
           "sessionId" => "pi-session",
           "cwd" => tmp_dir
@@ -680,12 +683,12 @@ defmodule Arbor.ACP.Adapters.PiTest do
       }
 
       assert {:ok, data, state} = Pi.translate_outbound(msg, state)
-      requests = decode_many(data)
+      {requests, state} = confirm_session_change(data, state)
       assert Enum.find(requests, &(&1["type"] == "switch_session"))["sessionPath"] == session_file
       ids_by_type = Map.new(requests, &{&1["type"], &1["id"]})
 
       state =
-        respond(state, ids_by_type["switch_session"], "switch_session", %{})
+        state
         |> respond(ids_by_type["get_state"], "get_state", %{
           "sessionId" => "mapped-session",
           "cwd" => tmp_dir
@@ -749,12 +752,12 @@ defmodule Arbor.ACP.Adapters.PiTest do
       }
 
       assert {:ok, data, state} = Pi.translate_outbound(msg, state)
-      requests = decode_many(data)
+      {requests, state} = confirm_session_change(data, state)
       refute Enum.any?(requests, &(&1["type"] == "get_messages"))
       ids_by_type = Map.new(requests, &{&1["type"], &1["id"]})
 
       state =
-        respond(state, ids_by_type["switch_session"], "switch_session", %{})
+        state
         |> respond(ids_by_type["get_state"], "get_state", %{
           "sessionId" => "mapped-session",
           "cwd" => tmp_dir
@@ -1367,6 +1370,44 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert {:messages, [usage], _rejected} = stats.(rejected)
       assert usage["params"]["sessionId"] == "s1"
       assert usage["params"]["update"]["sessionUpdate"] == "usage_update"
+    end
+
+    for method <- ["session/load", "session/resume", "session/new"] do
+      @setup_method method
+      test "#{method} setup replies describe the session Pi switched to", ctx do
+        method = @setup_method
+        state = switch_ready_state(ctx.state)
+        pi = session_pi(ctx)
+
+        assert {:ok, data, state} = Pi.translate_outbound(session_change(method, ctx), state)
+
+        # Pi replaces its session asynchronously. Whatever it reads before the
+        # change completes is answered from the session it is leaving.
+        {replies, pi} = session_pi_answer(decode_many(data), pi)
+        {state, pi, early} = drive_session_pi(replies, state, pi)
+        {change_reply, pi} = finish_session_pi_change(pi)
+        {state, _pi, late} = drive_session_pi([change_reply], state, pi)
+
+        assert %{"result" => result} = Enum.find(early ++ late, &(&1["id"] == 70))
+        expected = if method == "session/new", do: "fresh", else: "s2"
+        %{level: level, levels: levels, model: model} = pi.sessions[expected]
+
+        assert result["sessionId"] == expected
+        assert result["models"]["currentModelId"] == "#{model["provider"]}/#{model["id"]}"
+
+        assert result["modes"]["currentModeId"] == level,
+               "#{method} reported the previous session's thinking level"
+
+        assert Enum.map(result["modes"]["availableModes"], & &1["id"]) == levels
+        assert state.session_id == expected
+        assert state.session_file == pi.sessions[expected].file
+
+        replayed =
+          for %{"params" => %{"update" => %{"content" => %{"text" => text}}}} <- early ++ late,
+              do: text
+
+        assert replayed == if(method == "session/load", do: ["from s2"], else: [])
+      end
     end
 
     test "thinking_level_changed events publish the level Pi applied", %{state: state} do
@@ -2321,15 +2362,11 @@ defmodule Arbor.ACP.Adapters.PiTest do
     end)
   end
 
-  # Pi answers the rest of the setup group, then rejects the session change
-  # itself (Pi's new_session/switch_session answers last).
-  defp reject_session_setup(setup, state, ctx, outcome \\ :rejected) do
-    {[change], others} =
-      setup
-      |> decode_many()
-      |> Enum.split_with(&(&1["type"] in ["new_session", "switch_session"]))
-
-    {state, []} = answer_session_setup(others, state, ctx)
+  # Pi rejects the session change, or an extension cancels it; the rest of the
+  # setup group is never sent.
+  defp reject_session_setup(setup, state, _ctx, outcome \\ :rejected) do
+    assert [%{"type" => type} = change] = decode_many(setup)
+    assert type in ["new_session", "switch_session"]
     Pi.translate_inbound(Jason.encode!(change_failure(change, outcome)), state)
   end
 
@@ -2354,9 +2391,11 @@ defmodule Arbor.ACP.Adapters.PiTest do
     }
   end
 
-  # Answers a session setup group for s2.
-  defp finish_session_setup(setup, state, ctx),
-    do: answer_session_setup(decode_many(setup), state, ctx)
+  # Pi confirms the session change, then answers the setup group for s2.
+  defp finish_session_setup(setup, state, ctx) do
+    {[_change | followups], state} = confirm_session_change(setup, state)
+    answer_session_setup(followups, state, ctx)
+  end
 
   defp answer_session_setup(requests, state, ctx) do
     data = %{
@@ -2487,6 +2526,121 @@ defmodule Arbor.ACP.Adapters.PiTest do
     {events ++ [fake_pi_response(request, true, %{})], %{pi | level: level}}
   end
 
+  # A fake Pi that holds several sessions. Like Pi, it answers each line as it
+  # reads it, except new_session/switch_session, which replace the session
+  # only after asynchronous steps: lines read meanwhile describe the session
+  # Pi is leaving.
+  defp session_pi(ctx) do
+    session = fn id, level, levels, model, messages ->
+      {id,
+       %{
+         level: level,
+         levels: levels,
+         model: model,
+         file: Path.join(ctx.session_dir, "#{id}.jsonl"),
+         messages: messages
+       }}
+    end
+
+    %{
+      cwd: ctx.tmp_dir,
+      active: "s1",
+      pending_change: nil,
+      sessions:
+        Map.new([
+          session.(
+            "s1",
+            "high",
+            ["off", "medium", "high"],
+            %{"provider" => "anthropic", "id" => "claude-sonnet-4"},
+            [%{"role" => "user", "content" => "from s1"}]
+          ),
+          session.(
+            "s2",
+            "low",
+            ["off", "minimal", "low"],
+            %{"provider" => "openai", "id" => "gpt-5.1"},
+            [%{"role" => "user", "content" => "from s2"}]
+          ),
+          session.(
+            "fresh",
+            "xhigh",
+            ~w(off low medium high xhigh),
+            %{"provider" => "anthropic", "id" => "claude-opus-4"},
+            []
+          )
+        ])
+    }
+  end
+
+  defp session_pi_answer(requests, pi) do
+    Enum.flat_map_reduce(requests, pi, fn
+      %{"type" => "switch_session", "sessionPath" => path} = request, pi ->
+        {[], %{pi | pending_change: {request, Path.basename(path, ".jsonl")}}}
+
+      %{"type" => "new_session"} = request, pi ->
+        {[], %{pi | pending_change: {request, "fresh"}}}
+
+      request, pi ->
+        {[session_pi_reply(request, pi)], pi}
+    end)
+  end
+
+  defp finish_session_pi_change(%{pending_change: {request, target}} = pi) do
+    reply = fake_pi_response(request, true, %{"data" => %{"cancelled" => false}})
+    {reply, %{pi | active: target, pending_change: nil}}
+  end
+
+  defp session_pi_reply(%{"type" => type} = request, pi) do
+    session = pi.sessions[pi.active]
+
+    data =
+      case type do
+        "get_state" ->
+          %{
+            "sessionId" => pi.active,
+            "sessionFile" => session.file,
+            "cwd" => pi.cwd,
+            "thinkingLevel" => session.level,
+            "model" => session.model
+          }
+
+        "get_available_models" ->
+          %{"models" => Enum.map(pi.sessions, fn {_id, s} -> s.model end) |> Enum.uniq()}
+
+        "get_available_thinking_levels" ->
+          %{"levels" => session.levels}
+
+        "get_messages" ->
+          %{"messages" => session.messages}
+
+        "get_commands" ->
+          %{"commands" => []}
+      end
+
+    fake_pi_response(request, true, %{"data" => data})
+  end
+
+  defp drive_session_pi(replies, state, pi, messages \\ []) do
+    Enum.reduce(replies, {state, pi, messages}, fn reply, {state, pi, messages} ->
+      case Pi.translate_inbound(Jason.encode!(reply), state) do
+        {:skip, state} ->
+          {state, pi, messages}
+
+        {:messages, new, state} ->
+          {state, pi, messages ++ new}
+
+        {:skip_and_write, data, state} ->
+          {replies, pi} = session_pi_answer(decode_many(data), pi)
+          drive_session_pi(replies, state, pi, messages)
+
+        {:messages_and_write, new, data, state} ->
+          {replies, pi} = session_pi_answer(decode_many(data), pi)
+          drive_session_pi(replies, state, pi, messages ++ new)
+      end
+    end)
+  end
+
   defp fake_pi_response(request, success, fields) do
     Map.merge(
       %{
@@ -2515,6 +2669,18 @@ defmodule Arbor.ACP.Adapters.PiTest do
         {:messages_and_write, new, more, state} -> drive_fake_pi(more, state, pi, messages ++ new)
       end
     end)
+  end
+
+  # Pi answers the session change, and the adapter writes the rest of the
+  # setup group. Returns every request of the group, in emission order.
+  defp confirm_session_change(data, state, reply \\ %{}) do
+    assert [%{"type" => type, "id" => id} = change] = decode_many(data)
+    assert type in ["new_session", "switch_session"]
+
+    assert {:skip_and_write, followups, state} =
+             Pi.translate_inbound(response_line(id, type, reply), state)
+
+    {[change | decode_many(followups)], state}
   end
 
   defp respond(state, id, command, data) do

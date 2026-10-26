@@ -8,14 +8,16 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/control_groups/`. The fixtures pin:
 
-    * a `session/new` group completing only once all four correlated
-      responses arrived, in whatever order Pi answers, and the emitted
-      order `response`, `available_commands_update`;
+    * a `session/new` group writing `new_session` alone and its four
+      correlated requests only after Pi answered it (Pi replaces the session
+      asynchronously and does not await one input line before the next),
+      completing only once all four responses arrived, in whatever order Pi
+      answers, and the emitted order `response`, `available_commands_update`;
     * the first failed member answering the ACP request at once with
       `-32603 <error>` (or the `-32000` auth-required error when the text
       looks like an authentication failure, or when the model list is
       empty) and every later response for that group being dropped as
-      untracked;
+      untracked; a failed or cancelled session change writing nothing more;
     * the fallbacks applied to a sparse `get_state` (minted `pi-<n>` session
       id, first catalog entry as current model, default thinking level,
       no session-map entry without a session file), a current model that
@@ -55,17 +57,6 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
 
   @area "control_groups"
 
-  defp late_responses do
-    [
-      {:note, "Responses for the failed group are untracked and skipped"},
-      {:respond, "get_state", Flows.state_data()},
-      {:respond, "get_available_models", %{"models" => Flows.models()}},
-      {:respond, "get_available_thinking_levels",
-       %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
-      {:respond, "get_commands", %{"commands" => []}}
-    ]
-  end
-
   defp only_error_result(transcript) do
     transcript
     |> Enum.map(& &1.result)
@@ -76,12 +67,12 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
     test "session_new_completes_after_all_responses_in_any_order" do
       steps = [
         Flows.session_new(1),
+        {:respond, "new_session", %{}},
         {:respond, "get_available_thinking_levels",
          %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
-        {:respond, "get_state", Flows.state_data()},
-        {:respond, "new_session", %{}}
+        {:respond, "get_state", Flows.state_data()}
       ]
 
       transcript =
@@ -92,29 +83,57 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         )
 
       assert [
-               %{tag: :skip},
+               %{tag: :ok, writes: [%{"type" => "new_session"}]},
+               %{
+                 tag: :skip_and_write,
+                 writes: [
+                   %{"type" => "get_state"},
+                   %{"type" => "get_available_models"},
+                   %{"type" => "get_available_thinking_levels"},
+                   %{"type" => "get_commands"}
+                 ]
+               },
                %{tag: :skip},
                %{tag: :skip},
                %{tag: :skip},
                %{tag: :messages, messages: [_, _]}
              ] =
-               Enum.map(Enum.drop(transcript, 2), & &1.result)
+               Enum.map(Enum.drop(transcript, 1), & &1.result)
     end
 
-    test "failed_new_session_errors_at_once_and_drops_later_responses" do
-      steps = [Flows.session_new(1), {:respond_error, "new_session", "boom"}] ++ late_responses()
+    test "failed_or_cancelled_new_session_errors_and_writes_nothing_more" do
+      steps = [
+        Flows.session_new(1),
+        {:respond_error, "new_session", "boom"},
+        {:note, "An extension cancelling the switch leaves Pi on its session"},
+        Flows.session_new(2),
+        {:respond, "new_session", %{"cancelled" => true}}
+      ]
 
       transcript =
         PiGolden.assert_golden(
           @area,
-          "failed_new_session_errors_at_once_and_drops_later_responses",
+          "failed_or_cancelled_new_session_errors_and_writes_nothing_more",
           steps
         )
 
-      assert [%{messages: [%{"error" => %{"code" => -32_603, "message" => "boom"}, "id" => 1}]}] =
-               only_error_result(transcript)
+      assert [
+               %{messages: [%{"error" => %{"code" => -32_603, "message" => "boom"}, "id" => 1}]},
+               %{
+                 messages: [
+                   %{
+                     "error" => %{
+                       "code" => -32_603,
+                       "message" => "Pi cancelled the session change"
+                     },
+                     "id" => 2
+                   }
+                 ]
+               }
+             ] = only_error_result(transcript)
 
-      assert Enum.all?(Enum.take(transcript, -3), &match?(%{tag: :skip}, &1.result))
+      assert ["new_session", "new_session"] =
+               transcript |> PiGolden.writes() |> Enum.map(& &1["type"])
     end
 
     test "failed_get_state_after_partial_success_errors" do
@@ -163,7 +182,11 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
 
       steps =
         Enum.flat_map(Enum.with_index(texts, 1), fn {text, acp_id} ->
-          [Flows.session_new(acp_id), {:respond_error, "get_available_models", text}]
+          [
+            Flows.session_new(acp_id),
+            {:respond, "new_session", %{}},
+            {:respond_error, "get_available_models", text}
+          ]
         end)
 
       transcript =
@@ -337,18 +360,13 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "get_available_thinking_levels",
          %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
+        {:note, "The first group's setup requests are written after its new_session reply"},
         {:inbound, fn t -> success(t, "new_session", 0, %{}) end},
-        {:inbound,
-         fn t -> success(t, "get_state", 0, Flows.state_data(%{"sessionId" => "first"})) end},
-        {:inbound,
-         fn t -> success(t, "get_available_models", 0, %{"models" => Flows.models()}) end},
-        {:inbound,
-         fn t ->
-           success(t, "get_available_thinking_levels", 0, %{
-             "levels" => ~w(off minimal low medium high xhigh)
-           })
-         end},
-        {:inbound, fn t -> success(t, "get_commands", 0, %{"commands" => []}) end},
+        {:respond, "get_state", Flows.state_data(%{"sessionId" => "first"})},
+        {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ~w(off minimal low medium high xhigh)}},
+        {:respond, "get_commands", %{"commands" => []}},
         {:note, "A duplicate response after completion is untracked"},
         {:inbound, fn t -> success(t, "get_commands", 0, %{"commands" => []}) end}
       ]
@@ -375,6 +393,7 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         Flows.session_new(2),
         {:respond_error, "new_session", nil},
         Flows.session_new(3),
+        {:respond, "new_session", %{}},
         {:inbound,
          fn t ->
            %{
@@ -397,24 +416,33 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
   end
 
   describe "session/load groups" do
-    test "failed_switch_session_errors_and_drops_later_responses" do
-      steps =
-        [
-          Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
-          Flows.session_load(1, "mapped"),
-          {:respond_error, "switch_session", "no such session"},
-          {:respond, "get_messages", %{"messages" => []}}
-        ] ++ late_responses()
+    test "failed_or_cancelled_switch_session_errors_and_writes_nothing_more" do
+      steps = [
+        Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+        Flows.session_load(1, "mapped"),
+        {:respond_error, "switch_session", "no such session"},
+        Flows.session_resume(2, "mapped"),
+        {:respond, "switch_session", %{"cancelled" => true}}
+      ]
 
       transcript =
         PiGolden.assert_golden(
           @area,
-          "failed_switch_session_errors_and_drops_later_responses",
+          "failed_or_cancelled_switch_session_errors_and_writes_nothing_more",
           steps
         )
 
-      assert [%{messages: [%{"error" => %{"message" => "no such session"}, "id" => 1}]}] =
-               only_error_result(transcript)
+      assert [
+               %{messages: [%{"error" => %{"message" => "no such session"}, "id" => 1}]},
+               %{
+                 messages: [
+                   %{"error" => %{"message" => "Pi cancelled the session change"}, "id" => 2}
+                 ]
+               }
+             ] = only_error_result(transcript)
+
+      assert ["switch_session", "switch_session"] =
+               transcript |> PiGolden.writes() |> Enum.map(& &1["type"])
     end
 
     test "managed_failed_load_drops_model_work_for_the_replaced_process" do
@@ -427,8 +455,7 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
             Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
             Flows.session_load(2, "mapped"),
             Flows.set_model(3, "openai/gpt-5.1"),
-            {:respond_error, "switch_session", "no such session"},
-            {:respond, "get_state", Flows.state_data(%{"sessionId" => "mapped"})}
+            {:respond_error, "switch_session", "no such session"}
           ]
 
       transcript =
@@ -438,8 +465,7 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
           steps
         )
 
-      [set_model, rejection, _late_state] =
-        transcript |> Enum.take(-3) |> Enum.map(& &1.result)
+      [set_model, rejection] = transcript |> Enum.take(-2) |> Enum.map(& &1.result)
 
       # The switch waits for the pending load and is never written.
       assert %{tag: :messages_and_reply} = set_model

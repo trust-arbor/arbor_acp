@@ -10,10 +10,13 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
   `test/fixtures/acp/pi/rpc/`. The fixtures pin:
 
     * the five `new_session` / `get_state` / `get_available_models` /
-      `get_available_thinking_levels` / `get_commands` requests written by `session/new`, the `cwd` fallback
-      to the init option, and the absolute-`cwd` validation errors;
+      `get_available_thinking_levels` / `get_commands` requests written by
+      `session/new` (`new_session` alone, the other four after its reply),
+      the `cwd` fallback to the init option, and the absolute-`cwd`
+      validation errors;
     * the `switch_session` (+ `get_messages` for load only) + catalog
-      requests written by `session/load` and `session/resume`, the session
+      requests written by `session/load` and `session/resume`, again with
+      `switch_session` alone until Pi answers it, the session
       file resolution through the session map or a JSONL scan, the
       `Unknown sessionId` error, and the replay-before-response ordering;
     * `session/fork` being skipped, `session/close` and `session/delete`
@@ -117,7 +120,8 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
     test "session_load_writes_switch_replay_and_catalog_requests" do
       steps = [
         Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
-        Flows.session_load(1, "mapped")
+        Flows.session_load(1, "mapped"),
+        {:respond, "switch_session", %{}}
       ]
 
       transcript =
@@ -128,13 +132,24 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
         )
 
       assert [
-               %{"type" => "switch_session", "sessionPath" => "<sandbox>/sessions/mapped.jsonl"},
-               %{"type" => "get_messages"},
-               %{"type" => "get_state"},
-               %{"type" => "get_available_models"},
-               %{"type" => "get_available_thinking_levels"},
-               %{"type" => "get_commands"}
-             ] = PiGolden.writes(transcript)
+               %{
+                 writes: [
+                   %{
+                     "type" => "switch_session",
+                     "sessionPath" => "<sandbox>/sessions/mapped.jsonl"
+                   }
+                 ]
+               },
+               %{
+                 writes: [
+                   %{"type" => "get_messages"},
+                   %{"type" => "get_state"},
+                   %{"type" => "get_available_models"},
+                   %{"type" => "get_available_thinking_levels"},
+                   %{"type" => "get_commands"}
+                 ]
+               }
+             ] = transcript |> Enum.take(-2) |> Enum.map(& &1.result)
     end
 
     test "session_load_replays_history_before_the_response" do

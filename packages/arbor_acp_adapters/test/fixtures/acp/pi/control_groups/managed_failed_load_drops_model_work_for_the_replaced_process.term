@@ -26,13 +26,7 @@
     result: %{
       pending: true,
       port: :spawned,
-      port_writes: [
-        %{"id" => "pi-<1>", "type" => "new_session"},
-        %{"id" => "pi-<2>", "type" => "get_state"},
-        %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<5>", "type" => "get_commands"}
-      ],
+      port_writes: [%{"id" => "pi-<1>", "type" => "new_session"}],
       tag: :ok
     }
   },
@@ -47,7 +41,16 @@
         "type" => "response"
       }
     },
-    result: %{skipped: true, tag: :skip}
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{"id" => "pi-<2>", "type" => "get_state"},
+        %{"id" => "pi-<3>", "type" => "get_available_models"},
+        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<5>", "type" => "get_commands"}
+      ]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -304,12 +307,7 @@
           "id" => "pi-<6>",
           "sessionPath" => "<sandbox>/sessions/mapped.jsonl",
           "type" => "switch_session"
-        },
-        %{"id" => "pi-<7>", "type" => "get_messages"},
-        %{"id" => "pi-<8>", "type" => "get_state"},
-        %{"id" => "pi-<9>", "type" => "get_available_models"},
-        %{"id" => "pi-<10>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<11>", "type" => "get_commands"}
+        }
       ],
       tag: :ok
     }
@@ -522,24 +520,5 @@
       ],
       tag: :messages
     }
-  },
-  %Arbor.ACP.Test.PiGolden.Entry{
-    step: %{
-      kind: :inbound,
-      message: %{
-        "command" => "get_state",
-        "data" => %{
-          "cwd" => "<sandbox>/project",
-          "model" => %{"id" => "claude-sonnet-4", "provider" => "anthropic"},
-          "sessionFile" => "<sandbox>/sessions/pi-session.jsonl",
-          "sessionId" => "mapped",
-          "thinkingLevel" => "medium"
-        },
-        "id" => "pi-<8>",
-        "success" => true,
-        "type" => "response"
-      }
-    },
-    result: %{skipped: true, tag: :skip}
   }
 ]

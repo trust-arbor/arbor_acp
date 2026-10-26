@@ -67,11 +67,7 @@
           "id" => "pi-<1>",
           "sessionPath" => "<sandbox>/sessions/mapped.jsonl",
           "type" => "switch_session"
-        },
-        %{"id" => "pi-<2>", "type" => "get_state"},
-        %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<5>", "type" => "get_commands"}
+        }
       ]
     }
   },
@@ -99,14 +95,10 @@
       tag: :ok,
       writes: [
         %{
-          "id" => "pi-<6>",
+          "id" => "pi-<2>",
           "sessionPath" => "<sandbox>/sessions/scanned.jsonl",
           "type" => "switch_session"
-        },
-        %{"id" => "pi-<7>", "type" => "get_state"},
-        %{"id" => "pi-<8>", "type" => "get_available_models"},
-        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<10>", "type" => "get_commands"}
+        }
       ]
     }
   },
@@ -131,14 +123,10 @@
       tag: :ok,
       writes: [
         %{
-          "id" => "pi-<11>",
+          "id" => "pi-<3>",
           "sessionPath" => "<sandbox>/sessions/scanned.jsonl",
           "type" => "switch_session"
-        },
-        %{"id" => "pi-<12>", "type" => "get_state"},
-        %{"id" => "pi-<13>", "type" => "get_available_models"},
-        %{"id" => "pi-<14>", "type" => "get_available_thinking_levels"},
-        %{"id" => "pi-<15>", "type" => "get_commands"}
+        }
       ]
     }
   }
