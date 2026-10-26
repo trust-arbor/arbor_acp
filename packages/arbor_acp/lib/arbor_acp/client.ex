@@ -42,6 +42,9 @@ defmodule Arbor.ACP.Client do
   - `:max_update_queue_bytes` — aggregate encoded size cutoff for queued
     handler/listener session updates (default: 8 MiB)
   - `:name` — GenServer name registration
+  - `:mcp_providers` — UNSTABLE map of MCP `serverId` to `:handler`, a
+    `Arbor.ACP.Client.McpProvider` module, or a local pid. See
+    `docs/MCP_OVER_ACP.md`.
   """
 
   use GenServer
@@ -59,7 +62,7 @@ defmodule Arbor.ACP.Client do
   alias Arbor.ACP.Client.HandlerRunner
   alias Arbor.ACP.Protocol
   alias Arbor.RPC.LogSummary
-  alias Arbor.ACP.Internal.{Call, Options}
+  alias Arbor.ACP.Internal.{Call, Mcp, Options}
   alias Arbor.ACP.AdapterSupport.WorkspacePath
   alias Arbor.ACP.Transport.Stdio
 
@@ -105,7 +108,11 @@ defmodule Arbor.ACP.Client do
     # Only explicit prompt_text calls retain bounded streamed message text.
     prompt_text: %{},
     cleanup_result: :ok,
-    status: :connecting
+    status: :connecting,
+    mcp: %Arbor.ACP.Internal.Mcp{},
+    mcp_providers: %{},
+    mcp_provider_monitors: %{},
+    mcp_plans: %{}
   ]
 
   # Public API
@@ -468,6 +475,60 @@ defmodule Arbor.ACP.Client do
   @spec stop(GenServer.server(), term(), keyword()) :: :ok | {:error, term()}
   def stop(client, reason \\ :normal, opts \\ []), do: Call.stop(client, reason, opts)
 
+  @doc """
+  UNSTABLE. Registers the MCP provider for one `serverId`.
+
+  The provider is `:handler`, a module implementing `Arbor.ACP.Client.McpProvider`,
+  or a live local pid. A server id reserved for a session that is opening, or
+  bound to a live session, cannot be registered or replaced and returns
+  `{:error, :mcp_server_id_in_use}`. The design note is `docs/MCP_OVER_ACP.md`.
+  """
+  @spec register_mcp_provider(GenServer.server(), String.t(), term(), keyword()) ::
+          :ok | {:error, term()}
+  def register_mcp_provider(client, server_id, provider, opts \\ [])
+      when is_binary(server_id) do
+    Call.call(client, {:register_mcp_provider, server_id, provider}, Call.timeout!(opts))
+  end
+
+  @doc """
+  UNSTABLE. Drops the provider for `serverId` when no live or pending session
+  owns that id. The design note is `docs/MCP_OVER_ACP.md`.
+  """
+  @spec unregister_mcp_provider(GenServer.server(), String.t(), keyword()) ::
+          :ok | {:error, term()}
+  def unregister_mcp_provider(client, server_id, opts \\ []) when is_binary(server_id) do
+    Call.call(client, {:unregister_mcp_provider, server_id}, Call.timeout!(opts))
+  end
+
+  @doc """
+  UNSTABLE. Sends an `mcp/message` notification for an in-flight MCP request.
+
+  Returns `{:error, :unknown_mcp_request}` when that server and request id are
+  not active. `:params` and `:meta` are string-keyed JSON objects or `nil`.
+  Calling this from the client process raises `ArgumentError`. The design note
+  is `docs/MCP_OVER_ACP.md`.
+  """
+  @spec mcp_notify(GenServer.server(), String.t(), String.t(), String.t(), keyword()) ::
+          :ok | {:error, term()}
+  def mcp_notify(client, server_id, request_id, method, opts \\ [])
+      when is_binary(server_id) and is_binary(request_id) and is_binary(method) do
+    if client == self() do
+      raise ArgumentError, "mcp_notify/5 cannot be called from the client process"
+    end
+
+    opts = Keyword.validate!(opts, [:params, :meta, :timeout])
+
+    with :ok <- json_object_option(Keyword.get(opts, :params)),
+         :ok <- json_object_option(Keyword.get(opts, :meta)) do
+      Call.call(
+        client,
+        {:mcp_notify, server_id, request_id, method, Keyword.get(opts, :params),
+         Keyword.get(opts, :meta)},
+        Call.timeout!(opts)
+      )
+    end
+  end
+
   # GenServer callbacks
 
   @impl true
@@ -486,8 +547,14 @@ defmodule Arbor.ACP.Client do
   def handle_call({:new_session, cwd, lifecycle_opts}, from, %{status: :ready} = state) do
     with :ok <- LifecycleParams.validate_cwd(cwd),
          :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
-      msg = Protocol.encode_session_new(cwd, lifecycle_opts)
-      send_request(msg, from, state, {:new_session, session_roots(cwd, lifecycle_opts)})
+      open_mcp_session(
+        &Protocol.encode_session_new(cwd, &1),
+        from,
+        state,
+        {:new_session, session_roots(cwd, lifecycle_opts)},
+        lifecycle_opts,
+        :new
+      )
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -529,13 +596,13 @@ defmodule Arbor.ACP.Client do
       :ok ->
         with :ok <- LifecycleParams.validate_cwd(cwd),
              :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
-          msg = Protocol.encode_session_load(session_id, cwd, lifecycle_opts)
-
-          send_request(
-            msg,
+          open_mcp_session(
+            &Protocol.encode_session_load(session_id, cwd, &1),
             from,
             state,
-            {:load_session, session_id, session_roots(cwd, lifecycle_opts)}
+            {:load_session, session_id, session_roots(cwd, lifecycle_opts)},
+            lifecycle_opts,
+            {:existing, session_id}
           )
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
@@ -555,13 +622,13 @@ defmodule Arbor.ACP.Client do
       :ok ->
         with :ok <- LifecycleParams.validate_cwd(cwd),
              :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
-          msg = Protocol.encode_session_resume(session_id, cwd, lifecycle_opts)
-
-          send_request(
-            msg,
+          open_mcp_session(
+            &Protocol.encode_session_resume(session_id, cwd, &1),
             from,
             state,
-            {:resume_session, session_id, session_roots(cwd, lifecycle_opts)}
+            {:resume_session, session_id, session_roots(cwd, lifecycle_opts)},
+            lifecycle_opts,
+            {:existing, session_id}
           )
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
@@ -581,8 +648,14 @@ defmodule Arbor.ACP.Client do
       :ok ->
         with :ok <- LifecycleParams.validate_cwd(cwd),
              :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
-          msg = Protocol.encode_session_fork(session_id, cwd, lifecycle_opts)
-          send_request(msg, from, state, {:fork_session, session_roots(cwd, lifecycle_opts)})
+          open_mcp_session(
+            &Protocol.encode_session_fork(session_id, cwd, &1),
+            from,
+            state,
+            {:fork_session, session_roots(cwd, lifecycle_opts)},
+            lifecycle_opts,
+            :new
+          )
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -727,7 +800,8 @@ defmodule Arbor.ACP.Client do
 
       {:error, {:unsupported_capability, :session_close}} ->
         emit_session_ended(session_id)
-        {:reply, :ok, %{state | sessions: Map.delete(state.sessions, session_id)}}
+        state = %{state | sessions: Map.delete(state.sessions, session_id)}
+        {:reply, :ok, release_mcp_session(state, session_id)}
     end
   end
 
@@ -739,6 +813,59 @@ defmodule Arbor.ACP.Client do
   def handle_call(:disconnect, _from, state) do
     state = do_disconnect(state)
     {:reply, state.cleanup_result, state}
+  end
+
+  def handle_call({:register_mcp_provider, server_id, provider}, _from, state) do
+    cond do
+      not valid_server_id?(server_id) ->
+        {:reply, {:error, :invalid_params}, state}
+
+      mcp_server_in_use?(state, server_id) ->
+        {:reply, {:error, :mcp_server_id_in_use}, state}
+
+      true ->
+        case normalize_provider(provider) do
+          {:ok, provider} ->
+            state = state |> drop_provider_monitor(server_id) |> put_provider(server_id, provider)
+            {:reply, :ok, state}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+    end
+  end
+
+  def handle_call({:unregister_mcp_provider, server_id}, _from, state) do
+    cond do
+      not valid_server_id?(server_id) ->
+        {:reply, {:error, :invalid_params}, state}
+
+      mcp_server_in_use?(state, server_id) ->
+        {:reply, {:error, :mcp_server_id_in_use}, state}
+
+      true ->
+        state = drop_provider_monitor(state, server_id)
+        {:reply, :ok, %{state | mcp_providers: Map.delete(state.mcp_providers, server_id)}}
+    end
+  end
+
+  def handle_call({:mcp_notify, server_id, request_id, method, params, meta}, _from, state) do
+    case Mcp.lookup(state.mcp, server_id, request_id) do
+      nil ->
+        {:reply, {:error, :unknown_mcp_request}, state}
+
+      _entry ->
+        message =
+          Protocol.encode_mcp_message_notification(server_id, request_id, method,
+            params: params,
+            meta: meta
+          )
+
+        case do_send(message, state) do
+          {:ok, state} -> {:reply, :ok, state}
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
+    end
   end
 
   # Not ready
@@ -793,6 +920,10 @@ defmodule Arbor.ACP.Client do
     {:noreply, state}
   end
 
+  def handle_info({:acp_mcp_provider_result, ref, outcome}, state) do
+    {:noreply, handle_handler_result(ref, {:mcp, outcome}, state)}
+  end
+
   def handle_info({:pending_request_timeout, request_id}, state) do
     case PendingRequests.pop(state.pending_requests, request_id) do
       {nil, _pending} ->
@@ -809,6 +940,7 @@ defmodule Arbor.ACP.Client do
         }
 
         state = clear_abandoned_prompt_text(request, state)
+        state = abort_mcp_plan(state, request_id)
         emit_resolve_telemetry(telemetry_tag, {:error, :request_timeout})
 
         if state.status == :ready do
@@ -825,9 +957,16 @@ defmodule Arbor.ACP.Client do
         {:noreply, state}
 
       {request, pending} ->
-        response = Protocol.encode_error(-32603, "Client handler timed out", nil, request.id)
+        state = finish_mcp_request(%{state | pending_agent_requests: pending}, request)
+
+        message =
+          if request.kind == :mcp,
+            do: "MCP provider unavailable",
+            else: "Client handler timed out"
+
+        response = Protocol.encode_error(-32603, message, nil, request.id)
         send_to_transport(response, state)
-        {:noreply, %{state | pending_agent_requests: pending}}
+        {:noreply, state}
     end
   end
 
@@ -850,25 +989,38 @@ defmodule Arbor.ACP.Client do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    case Map.fetch(state.pending_caller_monitors, ref) do
-      :error ->
-        subscribers =
-          Map.reject(state.extension_subscribers, fn {_pid, entry} -> entry.monitor == ref end)
+    case Map.pop(state.mcp_provider_monitors, ref) do
+      {server_id, monitors} when is_binary(server_id) ->
+        state = %{
+          state
+          | mcp_provider_monitors: monitors,
+            mcp_providers: Map.delete(state.mcp_providers, server_id)
+        }
 
-        {:noreply, %{state | extension_subscribers: subscribers}}
+        {:noreply, fail_provider_requests(state, server_id)}
 
-      {:ok, request_id} ->
-        monitors = Map.delete(state.pending_caller_monitors, ref)
-        {pending, requests} = PendingRequests.pop(state.pending_requests, request_id)
-        cancel_pending_timer(pending)
-        state = %{state | pending_requests: requests, pending_caller_monitors: monitors}
-        state = clear_abandoned_prompt_text(pending, state)
+      {nil, _monitors} ->
+        case Map.fetch(state.pending_caller_monitors, ref) do
+          :error ->
+            subscribers =
+              Map.reject(state.extension_subscribers, fn {_pid, entry} -> entry.monitor == ref end)
 
-        if state.status == :ready do
-          send_to_transport(Protocol.encode_cancel_request(request_id), state)
+            {:noreply, %{state | extension_subscribers: subscribers}}
+
+          {:ok, request_id} ->
+            monitors = Map.delete(state.pending_caller_monitors, ref)
+            {pending, requests} = PendingRequests.pop(state.pending_requests, request_id)
+            cancel_pending_timer(pending)
+            state = %{state | pending_requests: requests, pending_caller_monitors: monitors}
+            state = clear_abandoned_prompt_text(pending, state)
+            state = abort_mcp_plan(state, request_id)
+
+            if state.status == :ready do
+              send_to_transport(Protocol.encode_cancel_request(request_id), state)
+            end
+
+            {:noreply, state}
         end
-
-        {:noreply, state}
     end
   end
 
@@ -999,6 +1151,13 @@ defmodule Arbor.ACP.Client do
   # Private helpers
 
   defp init_client(opts, scope, scope_monitor) do
+    case normalize_provider_map(Keyword.get(opts, :mcp_providers, %{})) do
+      {:ok, providers} -> start_client(opts, scope, scope_monitor, providers)
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  defp start_client(opts, scope, scope_monitor, providers) do
     handler_mod = Keyword.get(opts, :handler, DefaultHandler)
     handler_opts = Keyword.get(opts, :handler_opts, [])
 
@@ -1039,6 +1198,11 @@ defmodule Arbor.ACP.Client do
               @default_max_update_queue_bytes
             )
         }
+
+        state =
+          Enum.reduce(providers, state, fn {id, provider}, state ->
+            put_provider(state, id, provider)
+          end)
 
         # Allow skipping connection for tests
         if Keyword.get(opts, :_skip_connect) do
@@ -1220,6 +1384,7 @@ defmodule Arbor.ACP.Client do
     :max_update_queue,
     :max_update_queue_bytes,
     :transport_mod,
+    :mcp_providers,
     :_skip_connect,
     :_connection_scope
   ]
@@ -1400,6 +1565,7 @@ defmodule Arbor.ACP.Client do
         cancel_timer(timer_ref)
         Process.demonitor(monitor_ref, [:flush])
         state = apply_session_resolution(telemetry_tag, reply, state)
+        state = settle_mcp_plan(id, telemetry_tag, reply, state)
         emit_resolve_telemetry(telemetry_tag, reply)
         {reply, state} = finish_prompt_collection(telemetry_tag, reply, state)
         GenServer.reply(from, reply)
@@ -1637,7 +1803,9 @@ defmodule Arbor.ACP.Client do
         pending_caller_monitors: %{},
         pending_agent_requests: %{},
         prompt_text: %{},
-        sessions: %{}
+        sessions: %{},
+        mcp: Mcp.new(),
+        mcp_plans: %{}
     }
   end
 
@@ -2066,6 +2234,10 @@ defmodule Arbor.ACP.Client do
     end
   end
 
+  defp handle_agent_request("mcp/message", params, id, state) do
+    dispatch_mcp_message(params, id, state)
+  end
+
   defp handle_agent_request(method, _params, id, state) do
     Logger.debug("ACP client received unknown agent request",
       method_hash: LogSummary.fingerprint(method)
@@ -2096,7 +2268,7 @@ defmodule Arbor.ACP.Client do
 
       {request, pending} ->
         cancel_timer(request.timer_ref)
-        state = %{state | pending_agent_requests: pending}
+        state = finish_mcp_request(%{state | pending_agent_requests: pending}, request)
         response = encode_handler_response(request, result)
         send_to_transport(response, state)
         state
@@ -2151,6 +2323,31 @@ defmodule Arbor.ACP.Client do
     Protocol.encode_response(result, id)
   end
 
+  defp encode_handler_response(%{kind: :mcp, id: id}, {:mcp, {:ok, result}}) do
+    if Extensions.json?(result) do
+      Protocol.encode_mcp_result(id, result)
+    else
+      Protocol.encode_error(-32603, "MCP provider unavailable", nil, id)
+    end
+  end
+
+  defp encode_handler_response(%{kind: :mcp, id: id}, {:mcp, {:mcp_error, error}}) do
+    if Mcp.mcp_error?(error) do
+      Protocol.encode_mcp_error(id, error)
+    else
+      Protocol.encode_error(-32603, "MCP provider unavailable", nil, id)
+    end
+  end
+
+  defp encode_handler_response(%{kind: :mcp, id: id}, {:mcp, {:error, reason}}) do
+    Logger.warning("ACP MCP provider failed", reason: safe_error_class(reason))
+    Protocol.encode_error(-32603, "MCP provider unavailable", nil, id)
+  end
+
+  defp encode_handler_response(%{kind: :mcp, id: id}, {:mcp, _outcome}) do
+    Protocol.encode_error(-32603, "MCP provider unavailable", nil, id)
+  end
+
   defp encode_handler_response(%{id: id}, {_kind, {:error, reason}}) do
     Logger.warning("ACP client handler failed", reason: safe_error_class(reason))
     Protocol.encode_error(-32603, "Client handler failed", nil, id)
@@ -2174,11 +2371,13 @@ defmodule Arbor.ACP.Client do
   end
 
   defp fail_pending_agent_requests(reason, state) do
-    Enum.each(state.pending_agent_requests, fn {_ref, request} ->
-      cancel_timer(request.timer_ref)
-      response = Protocol.encode_error(-32603, reason, nil, request.id)
-      send_to_transport(response, state)
-    end)
+    state =
+      Enum.reduce(state.pending_agent_requests, state, fn {_ref, request}, state ->
+        cancel_timer(request.timer_ref)
+        response = Protocol.encode_error(-32603, reason, nil, request.id)
+        send_to_transport(response, state)
+        finish_mcp_request(state, request)
+      end)
 
     %{state | pending_agent_requests: %{}}
   end
@@ -2213,11 +2412,13 @@ defmodule Arbor.ACP.Client do
         request.id == request_id
       end)
 
-    Enum.each(to_cancel, fn {_ref, request} ->
-      cancel_timer(request.timer_ref)
-      response = Protocol.encode_request_cancelled_error(request.id)
-      send_to_transport(response, state)
-    end)
+    state =
+      Enum.reduce(to_cancel, state, fn {_ref, request}, state ->
+        cancel_timer(request.timer_ref)
+        response = Protocol.encode_request_cancelled_error(request.id)
+        send_to_transport(response, state)
+        finish_mcp_request(state, request)
+      end)
 
     %{state | pending_agent_requests: Map.new(keep)}
   end
@@ -2332,6 +2533,348 @@ defmodule Arbor.ACP.Client do
     :exit, {:noproc, _call} -> :ok
     kind, reason -> {:error, {:close_failed, kind, reason}}
   end
+
+  defp open_mcp_session(encoder, from, state, telemetry_tag, lifecycle_opts, mcp_kind) do
+    case gate_acp_servers(lifecycle_opts, state) do
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+
+      {:ok, lifecycle_opts, ids} ->
+        message = encoder.(lifecycle_opts)
+
+        case reserve_mcp(state, message["id"], mcp_kind, ids) do
+          {:error, reason} ->
+            {:reply, {:error, {:invalid_params, reason}}, state}
+
+          {:ok, state} ->
+            state = put_mcp_plan(state, message["id"], mcp_kind, ids)
+
+            case send_request(message, from, state, telemetry_tag) do
+              {:reply, {:error, _reason} = error, state} ->
+                {:reply, error, abort_mcp_plan(state, message["id"])}
+
+              other ->
+                other
+            end
+        end
+    end
+  end
+
+  defp gate_acp_servers(lifecycle_opts, state) do
+    case LifecycleParams.select_acp_servers(
+           LifecycleParams.mcp_servers(lifecycle_opts),
+           state.agent_capabilities,
+           state.mcp_providers
+         ) do
+      {:ok, %{servers: servers, server_ids: ids, omitted: omitted}} ->
+        log_mcp_omissions(omitted)
+        {:ok, Keyword.put(lifecycle_opts, :mcp_servers, servers), ids}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp log_mcp_omissions([]), do: :ok
+
+  defp log_mcp_omissions(omitted) do
+    Enum.each(omitted, fn %{id: id, reason: reason} ->
+      Logger.info("ACP client omitted an MCP-over-ACP server",
+        reason: reason,
+        server_id_hash: LogSummary.fingerprint(id)
+      )
+    end)
+  end
+
+  defp reserve_mcp(state, token, :new, ids) do
+    case Mcp.begin_new(state.mcp, token, ids) do
+      {:ok, mcp} -> {:ok, %{state | mcp: mcp}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp reserve_mcp(state, token, {:existing, session_id}, ids) do
+    case Mcp.begin_existing(state.mcp, session_id, token, ids) do
+      {:ok, mcp} -> {:ok, %{state | mcp: mcp}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp put_mcp_plan(state, token, kind, ids) do
+    %{state | mcp_plans: Map.put(state.mcp_plans, token, %{kind: kind, ids: ids})}
+  end
+
+  defp abort_mcp_plan(state, token) do
+    {plan, plans} = Map.pop(state.mcp_plans, token)
+    state = %{state | mcp_plans: plans}
+    if plan, do: %{state | mcp: Mcp.abort(state.mcp, token)}, else: state
+  end
+
+  defp settle_mcp_plan(token, tag, reply, state) do
+    {plan, plans} = Map.pop(state.mcp_plans, token)
+    state = %{state | mcp_plans: plans}
+
+    cond do
+      plan == nil and success_close?(tag, reply) ->
+        release_mcp_session(state, elem(tag, 1))
+
+      plan == nil ->
+        state
+
+      match?({:ok, _result}, reply) and plan.kind == :new ->
+        commit_mcp_new(state, token, reply, plan.ids)
+
+      match?({:ok, _result}, reply) and match?({:existing, _session_id}, plan.kind) ->
+        {_kind, session_id} = plan.kind
+        commit_mcp_existing(state, token, session_id, plan.ids)
+
+      true ->
+        %{state | mcp: Mcp.abort(state.mcp, token)}
+    end
+  end
+
+  defp success_close?({kind, session_id}, {:ok, _result})
+       when kind in [:close_session, :delete_session] and is_binary(session_id),
+       do: true
+
+  defp success_close?(_tag, _reply), do: false
+
+  defp commit_mcp_new(state, token, {:ok, %{"sessionId" => session_id}}, ids)
+       when is_binary(session_id) and session_id != "" do
+    %{state | mcp: Mcp.commit_new(state.mcp, token, session_id, ids)}
+  end
+
+  defp commit_mcp_new(state, token, _reply, _ids) do
+    %{state | mcp: Mcp.abort(state.mcp, token)}
+  end
+
+  defp commit_mcp_existing(state, token, session_id, ids) do
+    {mcp, dropped} = Mcp.commit_existing(state.mcp, token, session_id, ids)
+    fail_mcp_entries(%{state | mcp: mcp}, dropped)
+  end
+
+  defp release_mcp_session(state, session_id) do
+    {mcp, dropped} = Mcp.release_session(state.mcp, session_id)
+    fail_mcp_entries(%{state | mcp: mcp}, dropped)
+  end
+
+  defp fail_mcp_entries(state, entries) do
+    Enum.reduce(entries, state, fn entry, state ->
+      cancel_mcp_provider_work(state, entry)
+    end)
+  end
+
+  defp cancel_mcp_provider_work(state, %{ref: ref, outer_id: outer_id}) when is_reference(ref) do
+    case PendingRequests.pop(state.pending_agent_requests, ref) do
+      {nil, pending} ->
+        %{state | pending_agent_requests: pending}
+
+      {request, pending} ->
+        cancel_timer(request.timer_ref)
+        send_to_transport(Protocol.encode_request_cancelled_error(outer_id), state)
+        %{state | pending_agent_requests: pending}
+    end
+  end
+
+  defp cancel_mcp_provider_work(state, _entry), do: state
+
+  defp dispatch_mcp_message(params, id, state) do
+    server_id = params["serverId"]
+
+    case Mcp.session_id(state.mcp, server_id) do
+      {:ok, session_id} ->
+        if Map.has_key?(state.sessions, session_id) do
+          accept_mcp_message(state, session_id, params, id)
+        else
+          send_agent_request_error(state, id, -32_602, "Unknown session")
+        end
+
+      _pending_or_missing ->
+        send_agent_request_error(state, id, -32_602, "Unknown MCP server")
+    end
+  end
+
+  defp accept_mcp_message(state, session_id, params, id) do
+    server_id = params["serverId"]
+    request_id = params["requestId"]
+    provider = Map.get(state.mcp_providers, server_id)
+
+    if provider_available?(provider, state) do
+      ref = make_ref()
+
+      entry = %{
+        session_id: session_id,
+        server_id: server_id,
+        request_id: request_id,
+        outer_id: id,
+        ref: ref
+      }
+
+      case Mcp.track(state.mcp, entry, true) do
+        {:ok, mcp} ->
+          state = %{state | mcp: mcp}
+          dispatch_provider(state, ref, provider, session_id, params)
+
+          track_agent_request(state, ref, :mcp, id, session_id, %{
+            server_id: server_id,
+            request_id: request_id
+          })
+
+        {:error, :duplicate_request_id} ->
+          send_agent_request_error(state, id, -32_600, "Request id is already in use")
+
+        {:error, :too_many_pending_requests} ->
+          send_agent_request_error(state, id, -32_000, "Too many pending requests")
+
+        {:error, :unknown_mcp_server} ->
+          send_agent_request_error(state, id, -32_602, "Unknown MCP server")
+      end
+    else
+      send_agent_request_error(state, id, -32_603, "MCP provider unavailable")
+    end
+  end
+
+  defp dispatch_provider(state, ref, pid, session_id, params) when is_pid(pid) do
+    send(pid, {:acp_mcp_request, ref, mcp_context(state, session_id, params), params})
+  end
+
+  defp dispatch_provider(state, ref, provider, session_id, params) do
+    HandlerRunner.mcp_request(
+      state.handler_pid,
+      ref,
+      provider,
+      mcp_context(state, session_id, params),
+      params
+    )
+  end
+
+  defp mcp_context(_state, session_id, params) do
+    %{
+      client: self(),
+      session_id: session_id,
+      server_id: params["serverId"],
+      request_id: params["requestId"]
+    }
+  end
+
+  defp provider_available?(:handler, state) do
+    is_pid(state.handler_pid) and
+      function_exported?(state.handler_mod, :handle_mcp_request, 4)
+  end
+
+  defp provider_available?(module, state) when is_atom(module) do
+    is_pid(state.handler_pid) and module_provider?(module)
+  end
+
+  defp provider_available?(pid, _state) when is_pid(pid), do: Process.alive?(pid)
+  defp provider_available?(_provider, _state), do: false
+
+  defp finish_mcp_request(state, %{kind: :mcp, server_id: server_id, request_id: request_id}) do
+    {_entry, mcp} = Mcp.finish(state.mcp, server_id, request_id)
+    %{state | mcp: mcp}
+  end
+
+  defp finish_mcp_request(state, _request), do: state
+
+  defp fail_provider_requests(state, server_id) do
+    {to_fail, keep} =
+      Enum.split_with(state.pending_agent_requests, fn {_ref, request} ->
+        request.kind == :mcp and request.server_id == server_id
+      end)
+
+    state =
+      Enum.reduce(to_fail, state, fn {_ref, request}, state ->
+        cancel_timer(request.timer_ref)
+
+        send_to_transport(
+          Protocol.encode_error(-32_603, "MCP provider unavailable", nil, request.id),
+          state
+        )
+
+        finish_mcp_request(state, request)
+      end)
+
+    %{state | pending_agent_requests: Map.new(keep)}
+  end
+
+  defp normalize_provider_map(providers) when is_map(providers) do
+    Enum.reduce_while(providers, {:ok, %{}}, fn {id, provider}, {:ok, acc} ->
+      cond do
+        not valid_server_id?(id) ->
+          {:halt, {:error, {:invalid_params, :mcp_provider}}}
+
+        true ->
+          case normalize_provider(provider) do
+            {:ok, provider} -> {:cont, {:ok, Map.put(acc, id, provider)}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+      end
+    end)
+  end
+
+  defp normalize_provider_map(_providers), do: {:error, {:invalid_params, :mcp_provider}}
+
+  defp normalize_provider(:handler), do: {:ok, :handler}
+
+  defp normalize_provider(module) when is_atom(module) do
+    if module_provider?(module),
+      do: {:ok, module},
+      else: {:error, {:invalid_params, :mcp_provider}}
+  end
+
+  defp normalize_provider(pid) when is_pid(pid) do
+    if node(pid) == node() and Process.alive?(pid),
+      do: {:ok, pid},
+      else: {:error, {:invalid_params, :mcp_provider}}
+  end
+
+  defp normalize_provider(_provider), do: {:error, {:invalid_params, :mcp_provider}}
+
+  defp module_provider?(module) when module in [nil, true, false], do: false
+
+  defp module_provider?(module) do
+    Code.ensure_loaded?(module) and function_exported?(module, :handle_mcp_request, 2)
+  end
+
+  defp put_provider(state, server_id, provider) do
+    monitors =
+      if is_pid(provider) do
+        Map.put(state.mcp_provider_monitors, Process.monitor(provider), server_id)
+      else
+        state.mcp_provider_monitors
+      end
+
+    %{
+      state
+      | mcp_providers: Map.put(state.mcp_providers, server_id, provider),
+        mcp_provider_monitors: monitors
+    }
+  end
+
+  defp drop_provider_monitor(state, server_id) do
+    case Enum.find(state.mcp_provider_monitors, fn {_ref, id} -> id == server_id end) do
+      {ref, ^server_id} ->
+        Process.demonitor(ref, [:flush])
+        %{state | mcp_provider_monitors: Map.delete(state.mcp_provider_monitors, ref)}
+
+      nil ->
+        state
+    end
+  end
+
+  defp mcp_server_in_use?(state, server_id) do
+    Mcp.session_id(state.mcp, server_id) != :error
+  end
+
+  defp valid_server_id?(id), do: is_binary(id) and id != "" and String.valid?(id)
+
+  defp json_object_option(nil), do: :ok
+
+  defp json_object_option(value) when is_map(value) do
+    if Extensions.json?(value), do: :ok, else: {:error, :invalid_params}
+  end
+
+  defp json_object_option(_value), do: {:error, :invalid_params}
 
   defp terminal_cleanup({:cleanup_failed, _reason, {:error, _} = result}), do: result
   defp terminal_cleanup({:connection_error, reason}), do: terminal_cleanup(reason)

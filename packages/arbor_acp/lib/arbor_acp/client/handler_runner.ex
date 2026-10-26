@@ -118,6 +118,10 @@ defmodule Arbor.ACP.Client.HandlerRunner do
     GenServer.cast(pid, {:elicitation_complete, elicitation_id})
   end
 
+  def mcp_request(pid, ref, provider, context, params) do
+    GenServer.cast(pid, {:mcp_request, ref, provider, context, params})
+  end
+
   # Each of these has a legacy arity and a context-aware arity that also takes
   # the decoded JSON-RPC message. Both are optional on the behaviour so a
   # handler can implement just one, but it must export at least one of each
@@ -342,6 +346,12 @@ defmodule Arbor.ACP.Client.HandlerRunner do
     {:noreply, state}
   end
 
+  def handle_cast({:mcp_request, ref, provider, context, params}, state) do
+    {outcome, state} = invoke_mcp(provider, context, params, state)
+    send(state.owner, {:acp_handler_result, ref, {:mcp, outcome}})
+    {:noreply, state}
+  end
+
   @impl true
   def terminate(reason, state) do
     if function_exported?(state.handler_mod, :terminate, 2) do
@@ -358,6 +368,42 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
   defp call_with_context(state, callback, args, message),
     do: apply(state.handler_mod, callback, args ++ [message, state.handler_state])
+
+  defp invoke_mcp(:handler, context, params, state) do
+    case safe_call(fn ->
+           state.handler_mod.handle_mcp_request(
+             context.session_id,
+             params,
+             context,
+             state.handler_state
+           )
+         end) do
+      {:ok, {:ok, result, handler_state}} ->
+        {{:ok, result}, %{state | handler_state: handler_state}}
+
+      {:ok, {:mcp_error, error, handler_state}} ->
+        {{:mcp_error, error}, %{state | handler_state: handler_state}}
+
+      {:ok, {:error, reason, handler_state}} ->
+        {{:error, reason}, %{state | handler_state: handler_state}}
+
+      {:ok, other} ->
+        {{:error, {:invalid_return, other}}, state}
+
+      {:error, reason} ->
+        {{:error, reason}, state}
+    end
+  end
+
+  defp invoke_mcp(module, context, params, state) when is_atom(module) do
+    case safe_call(fn -> module.handle_mcp_request(context, params) end) do
+      {:ok, {:ok, result}} -> {{:ok, result}, state}
+      {:ok, {:mcp_error, error}} -> {{:mcp_error, error}, state}
+      {:ok, {:error, reason}} -> {{:error, reason}, state}
+      {:ok, other} -> {{:error, {:invalid_return, other}}, state}
+      {:error, reason} -> {{:error, reason}, state}
+    end
+  end
 
   defp safe_call(fun) do
     {:ok, fun.()}
