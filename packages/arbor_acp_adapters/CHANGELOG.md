@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Claude SDK: render Write tool calls that use Claude Code's `path`/`file_text` input aliases as file diffs.
+- Codex: resume newly created app-server threads before their first prompt by reading the live thread when no rollout exists yet.
+- Pi: discover thinking levels during session setup and after model switches, publish context-window usage from session stats, and forward live session rename events to ACP clients.
+
 ## 1.0.0-rc.4 — 2026-10-26
 
 - Require `arbor_rpc` 1.0.0-rc.3. Its `Subprocess.close/1` closes a child's stdin and waits `:eof_grace` before signalling it, and its C compiler is optional.
