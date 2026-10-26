@@ -1547,6 +1547,7 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp handle_control_response(%{group_id: group_id, kind: kind, rpc_id: rpc_id}, event, state) do
     group = Map.fetch!(state.control_groups, group_id)
+    event = tolerate_optional_control_failure(kind, event)
 
     cond do
       event["success"] == false and auth_error?(event["error"]) ->
@@ -1569,6 +1570,21 @@ defmodule Arbor.ACP.Adapters.Pi do
         maybe_finish_control_group(group, state)
     end
   end
+
+  # Pi added `get_available_thinking_levels` in 0.81.0, and older Pi rejects it
+  # as an unknown command. The reply only narrows the advertised levels, so a
+  # failed reply means "no model-specific levels": the session falls back to
+  # the static levels instead of failing setup.
+  defp tolerate_optional_control_failure(:thinking_levels, %{"success" => false} = event) do
+    Logger.debug(
+      "[Pi Adapter] get_available_thinking_levels failed; using the static levels: " <>
+        inspect(event["error"])
+    )
+
+    %{event | "success" => true} |> Map.put("data", %{})
+  end
+
+  defp tolerate_optional_control_failure(_kind, event), do: event
 
   defp maybe_finish_control_group(%{refs: refs} = group, state) do
     if MapSet.size(refs) == 0 do

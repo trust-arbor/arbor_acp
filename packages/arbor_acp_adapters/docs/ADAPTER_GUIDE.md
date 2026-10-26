@@ -176,6 +176,9 @@ exclusive native ownership.
 prompts at Pi's `agent_settled` boundary. The implementation requires Pi 0.80.4
 or newer for that event; the credential-free CLI suite records its reviewed
 version separately. Thinking levels and models come from session configuration.
+Pi 0.81.0 and newer report the thinking levels the selected model supports; with
+Pi 0.80.x, which lacks that command, the adapter offers the static levels
+(`off` through `xhigh`).
 
 Session discovery combines Pi JSONL files with the preserved
 `~/.ex_mcp/pi/session-map.json`. `session_map_path`, `session_dir` and

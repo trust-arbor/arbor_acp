@@ -457,6 +457,82 @@ defmodule Arbor.ACP.Adapters.PiTest do
              ]
     end
 
+    test "Pi 0.80.x rejecting get_available_thinking_levels falls back to the static levels", %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_dir: session_dir,
+      session_map_path: session_map_path
+    } do
+      session_file = Path.join(session_dir, "s1.jsonl")
+      File.write!(session_file, "")
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "s1" => %{"sessionId" => "s1", "cwd" => tmp_dir, "sessionFile" => session_file}
+          }
+        })
+      )
+
+      for {method, params, extra} <- [
+            {"session/new", %{"cwd" => tmp_dir}, %{"new_session" => %{}}},
+            {"session/load", %{"sessionId" => "s1", "cwd" => tmp_dir},
+             %{"switch_session" => %{}, "get_messages" => %{"messages" => []}}}
+          ] do
+        msg = %{"method" => method, "id" => 21, "params" => params}
+        assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+        ids_by_type = Map.new(decode_many(data), &{&1["type"], &1["id"]})
+
+        # Pi before 0.81.0 answers the command it does not know with this reply.
+        assert {:skip, state} =
+                 Pi.translate_inbound(
+                   Jason.encode!(%{
+                     "type" => "response",
+                     "id" => ids_by_type["get_available_thinking_levels"],
+                     "command" => "get_available_thinking_levels",
+                     "success" => false,
+                     "error" => "Unknown command: get_available_thinking_levels"
+                   }),
+                   state
+                 )
+
+        state =
+          Enum.reduce(extra, state, fn {type, data}, state ->
+            respond(state, ids_by_type[type], type, data)
+          end)
+          |> respond(ids_by_type["get_state"], "get_state", %{
+            "sessionId" => "s1",
+            "sessionFile" => session_file,
+            "cwd" => tmp_dir,
+            "thinkingLevel" => "xhigh",
+            "model" => %{"provider" => "openai", "id" => "gpt-5.1"}
+          })
+          |> respond(ids_by_type["get_available_models"], "get_available_models", %{
+            "models" => [%{"provider" => "openai", "id" => "gpt-5.1"}]
+          })
+
+        assert {:messages, messages, state} =
+                 Pi.translate_inbound(
+                   response_line(ids_by_type["get_commands"], "get_commands", %{"commands" => []}),
+                   state
+                 )
+
+        assert %{"result" => result} = Enum.find(messages, &(&1["id"] == 21))
+        refute Enum.any?(messages, &Map.has_key?(&1, "error"))
+        assert result["sessionId"] == "s1"
+        assert result["modes"]["currentModeId"] == "xhigh"
+
+        assert Enum.map(result["modes"]["availableModes"], & &1["id"]) ==
+                 ~w(off minimal low medium high xhigh)
+
+        assert state.available_thinking_levels == ~w(off minimal low medium high xhigh)
+        assert map_size(state.control_groups) == 0
+        assert map_size(state.pending_controls) == 0
+      end
+    end
+
     test "session/new keeps the host cwd when the agent reports another", %{
       state: state,
       tmp_dir: tmp_dir
