@@ -60,6 +60,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       {:note, "Responses for the failed group are untracked and skipped"},
       {:respond, "get_state", Flows.state_data()},
       {:respond, "get_available_models", %{"models" => Flows.models()}},
+      {:respond, "get_available_thinking_levels",
+       %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
       {:respond, "get_commands", %{"commands" => []}}
     ]
   end
@@ -74,6 +76,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
     test "session_new_completes_after_all_responses_in_any_order" do
       steps = [
         Flows.session_new(1),
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
         {:respond, "get_state", Flows.state_data()},
@@ -87,7 +91,13 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
           steps
         )
 
-      assert [%{tag: :skip}, %{tag: :skip}, %{tag: :skip}, %{tag: :messages, messages: [_, _]}] =
+      assert [
+               %{tag: :skip},
+               %{tag: :skip},
+               %{tag: :skip},
+               %{tag: :skip},
+               %{tag: :messages, messages: [_, _]}
+             ] =
                Enum.map(Enum.drop(transcript, 2), & &1.result)
     end
 
@@ -113,6 +123,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "new_session", %{}},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
         {:respond_error, "get_state", "state unavailable"},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}}
       ]
 
@@ -180,6 +192,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         Flows.session_new(1),
         {:respond, "new_session", %{}},
         {:respond, "get_state", Flows.state_data()},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:respond, "get_available_models", %{"models" => []}},
         {:note, "The failed session left no map entry"},
@@ -205,6 +219,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "new_session", %{}},
         {:respond, "get_state", %{}},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:read_file, "<sandbox>/session-map.json"},
         Flows.prompt(2, "hi", %{"sessionId" => nil}),
@@ -216,14 +232,14 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       assert %{
                "id" => 1,
                "result" => %{
-                 "sessionId" => "pi-<5>",
+                 "sessionId" => "pi-<6>",
                  "models" => %{"currentModelId" => "anthropic/claude-sonnet-4"},
                  "modes" => %{"currentModeId" => "medium"},
                  "_meta" => %{"ex_mcp" => %{"pi" => %{}}}
                }
              } = transcript |> PiGolden.messages() |> Enum.find(&(&1["id"] == 1))
 
-      assert %{exists: false} = Enum.at(transcript, 6).result
+      assert %{exists: false} = Enum.at(transcript, 7).result
     end
 
     test "current_model_outside_catalog_and_malformed_catalog_entries" do
@@ -243,6 +259,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
            "thinkingLevel" => "ultra"
          })},
         {:respond, "get_available_models", %{"models" => models}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}}
       ]
 
@@ -276,11 +294,15 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "new_session", %{}},
         {:respond, "get_state", Flows.state_data(%{"model" => nil})},
         {:respond, "get_available_models", %{}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         Flows.session_new(2),
         {:respond, "new_session", %{}},
         {:respond, "get_state", Flows.state_data(%{"model" => nil, "thinkingLevel" => "xhigh"})},
         {:respond, "get_available_models", %{"other" => 1}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}}
       ]
 
@@ -312,12 +334,20 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "new_session", %{}},
         {:respond, "get_state", Flows.state_data(%{"sessionId" => "second"})},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:inbound, fn t -> success(t, "new_session", 0, %{}) end},
         {:inbound,
          fn t -> success(t, "get_state", 0, Flows.state_data(%{"sessionId" => "first"})) end},
         {:inbound,
          fn t -> success(t, "get_available_models", 0, %{"models" => Flows.models()}) end},
+        {:inbound,
+         fn t ->
+           success(t, "get_available_thinking_levels", 0, %{
+             "levels" => ~w(off minimal low medium high xhigh)
+           })
+         end},
         {:inbound, fn t -> success(t, "get_commands", 0, %{"commands" => []}) end},
         {:note, "A duplicate response after completion is untracked"},
         {:inbound, fn t -> success(t, "get_commands", 0, %{"commands" => []}) end}
@@ -394,6 +424,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "switch_session", %{}},
         {:respond, "get_messages", %{"messages" => [%{"role" => "user", "content" => "hi"}]}},
         {:respond, "get_state", Flows.state_data(%{"sessionId" => "mapped"})},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:respond, "get_available_models", %{"models" => []}}
       ]
@@ -416,6 +448,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
            "cwd" => "<sandbox>/elsewhere"
          })},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:read_file, "<sandbox>/session-map.json"}
       ]
@@ -492,7 +526,7 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
                %{"type" => "get_state"},
                %{"type" => "set_auto_compaction", "enabled" => true},
                %{"type" => "get_state"}
-             ] = transcript |> PiGolden.writes() |> Enum.drop(4)
+             ] = transcript |> PiGolden.writes() |> Enum.drop(5)
 
       assert [
                %{"id" => 2, "result" => %{"stopReason" => "end_turn"}},

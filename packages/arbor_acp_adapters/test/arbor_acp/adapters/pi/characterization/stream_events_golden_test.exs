@@ -660,7 +660,7 @@ defmodule Arbor.ACP.Adapters.Pi.StreamEventsGoldenTest do
       transcript =
         PiGolden.assert_golden(@area, "lifecycle_and_unknown_events_are_skipped", steps)
 
-      assert Enum.all?(Enum.drop(transcript, 7), &match?(%{tag: :skip}, &1.result))
+      assert Enum.all?(Enum.drop(transcript, 8), &match?(%{tag: :skip}, &1.result))
     end
   end
 

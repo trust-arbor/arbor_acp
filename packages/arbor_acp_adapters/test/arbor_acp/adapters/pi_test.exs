@@ -187,6 +187,20 @@ defmodule Arbor.ACP.Adapters.PiTest do
     end
   end
 
+  test "Pi session rename events update the ACP session title", %{state: state} do
+    state = %{state | session_id: "s1"}
+
+    assert {:messages, [update], ^state} =
+             Pi.translate_inbound(
+               Jason.encode!(%{"type" => "session_info_changed", "name" => "  New title  "}),
+               state
+             )
+
+    assert update["params"]["sessionId"] == "s1"
+    assert update["params"]["update"]["title"] == "New title"
+    assert update["params"]["update"]["sessionUpdate"] == "session_info_update"
+  end
+
   describe "config_options/0" do
     test "returns Pi static runtime config options and the thinking selector" do
       ids = Pi.config_options() |> Enum.map(& &1["id"])
@@ -294,6 +308,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
                "get_messages",
                "get_state",
                "get_available_models",
+               "get_available_thinking_levels",
                "get_commands"
              ]
 
@@ -328,6 +343,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
                "switch_session",
                "get_state",
                "get_available_models",
+               "get_available_thinking_levels",
                "get_commands"
              ]
 
@@ -347,6 +363,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
                "new_session",
                "get_state",
                "get_available_models",
+               "get_available_thinking_levels",
                "get_commands"
              ]
 
@@ -366,6 +383,13 @@ defmodule Arbor.ACP.Adapters.PiTest do
             %{"provider" => "anthropic", "id" => "claude-sonnet-4", "name" => "Claude Sonnet 4"}
           ]
         })
+        |> respond(
+          ids_by_type["get_available_thinking_levels"],
+          "get_available_thinking_levels",
+          %{
+            "levels" => ["off", "low", "medium", "high"]
+          }
+        )
 
       assert {:messages, [response, commands_update], state} =
                Pi.translate_inbound(
@@ -384,6 +408,14 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert response["id"] == 11
       assert response["result"]["sessionId"] == "pi-session"
       assert response["result"]["modes"]["currentModeId"] == "high"
+
+      assert Enum.map(response["result"]["modes"]["availableModes"], & &1["id"]) == [
+               "off",
+               "low",
+               "medium",
+               "high"
+             ]
+
       assert response["result"]["models"]["currentModelId"] == "anthropic/claude-sonnet-4"
 
       assert Enum.map(response["result"]["configOptions"], & &1["id"]) == [
@@ -405,6 +437,16 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
       assert commands_update["params"]["update"]["sessionUpdate"] == "available_commands_update"
       assert state.session_id == "pi-session"
+      assert state.available_thinking_levels == ["off", "low", "medium", "high"]
+
+      assert {:error, "Unknown modeId: \"xhigh\"", ^state} =
+               Pi.translate_outbound(
+                 %{
+                   "method" => "session/set_mode",
+                   "params" => %{"sessionId" => "pi-session", "modeId" => "xhigh"}
+                 },
+                 state
+               )
 
       assert state.available_models == [
                %{
@@ -434,6 +476,13 @@ defmodule Arbor.ACP.Adapters.PiTest do
         |> respond(ids_by_type["get_available_models"], "get_available_models", %{
           "models" => []
         })
+        |> respond(
+          ids_by_type["get_available_thinking_levels"],
+          "get_available_thinking_levels",
+          %{
+            "levels" => ["off", "medium"]
+          }
+        )
 
       assert {:messages, [response | _], state} =
                Pi.translate_inbound(
@@ -485,6 +534,13 @@ defmodule Arbor.ACP.Adapters.PiTest do
           "cwd" => tmp_dir
         })
         |> respond(ids_by_type["get_commands"], "get_commands", %{"commands" => []})
+        |> respond(
+          ids_by_type["get_available_thinking_levels"],
+          "get_available_thinking_levels",
+          %{
+            "levels" => ["off", "medium"]
+          }
+        )
 
       assert {:messages, [error], _state} =
                Pi.translate_inbound(
@@ -540,6 +596,13 @@ defmodule Arbor.ACP.Adapters.PiTest do
           "models" => [%{"provider" => "openai", "id" => "gpt-5.1"}]
         })
         |> respond(ids_by_type["get_commands"], "get_commands", %{"commands" => []})
+        |> respond(
+          ids_by_type["get_available_thinking_levels"],
+          "get_available_thinking_levels",
+          %{
+            "levels" => ["off", "medium"]
+          }
+        )
 
       assert {:messages, messages, _state} =
                Pi.translate_inbound(
@@ -601,6 +664,13 @@ defmodule Arbor.ACP.Adapters.PiTest do
         |> respond(ids_by_type["get_available_models"], "get_available_models", %{
           "models" => [%{"provider" => "openai", "id" => "gpt-5.1"}]
         })
+        |> respond(
+          ids_by_type["get_available_thinking_levels"],
+          "get_available_thinking_levels",
+          %{
+            "levels" => ["off", "medium"]
+          }
+        )
 
       assert {:messages, messages, _state} =
                Pi.translate_inbound(
@@ -672,6 +742,77 @@ defmodule Arbor.ACP.Adapters.PiTest do
   end
 
   describe "translate_outbound/2 — model, mode, and config" do
+    test "a model switch refreshes its thinking levels and selected mode", %{state: state} do
+      state = %{
+        state
+        | session_id: "s1",
+          thinking_level: "high",
+          available_thinking_levels: ["off", "medium", "high"]
+      }
+
+      assert {:messages_and_write, [_update], data, state} =
+               Pi.translate_outbound(
+                 %{
+                   "method" => "session/set_model",
+                   "params" => %{"sessionId" => "s1", "modelId" => "anthropic/claude-sonnet-4"}
+                 },
+                 state
+               )
+
+      assert [set_model, get_state, get_levels] = decode_many(data)
+      assert set_model["type"] == "set_model"
+      assert get_state["type"] == "get_state"
+      assert get_levels["type"] == "get_available_thinking_levels"
+
+      assert {:skip, state} =
+               Pi.translate_inbound(
+                 response_line(get_levels["id"], "get_available_thinking_levels", %{
+                   "levels" => ["off", "minimal", "low"]
+                 }),
+                 state
+               )
+
+      assert {:messages, [mode_update, config_update], state} =
+               Pi.translate_inbound(
+                 response_line(get_state["id"], "get_state", %{"thinkingLevel" => "low"}),
+                 state
+               )
+
+      assert mode_update["params"]["update"]["currentModeId"] == "low"
+      assert state.available_thinking_levels == ["off", "minimal", "low"]
+      assert state.thinking_level == "low"
+
+      options = config_update["params"]["update"]["configOptions"]
+      thought = Enum.find(options, &(&1["id"] == "thought_level"))
+      assert Enum.map(thought["options"], & &1["value"]) == ["off", "minimal", "low"]
+    end
+
+    test "an old model refresh cannot repoint a newer session selection", %{state: state} do
+      state = %{state | session_id: "s1", available_thinking_levels: ["off", "medium"]}
+
+      request = fn model ->
+        %{"method" => "session/set_model", "params" => %{"modelId" => model}}
+      end
+
+      assert {:messages_and_write, _, first_data, state} =
+               Pi.translate_outbound(request.("openai/gpt-5.1"), state)
+
+      assert [_, old_state_request, _] = decode_many(first_data)
+
+      assert {:messages_and_write, _, _second_data, state} =
+               Pi.translate_outbound(request.("anthropic/claude-sonnet-4"), state)
+
+      assert {:skip, state} =
+               Pi.translate_inbound(
+                 response_line(old_state_request["id"], "get_state", %{
+                   "sessionId" => "wrong-session"
+                 }),
+                 state
+               )
+
+      assert state.session_id == "s1"
+    end
+
     test "session/set_model routes full ACP model IDs to Pi set_model", %{state: state} do
       msg = %{
         "method" => "session/set_model",
@@ -941,11 +1082,13 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert {:messages, [_notice, _info], queued_state} = Pi.translate_outbound(msg, state)
       assert PromptQueue.len(queued_state.prompt_queue) == 1
 
-      assert {:skip, queued_state} =
+      assert {:skip_and_write, usage_request, queued_state} =
                Pi.translate_inbound(
                  Jason.encode!(%{"type" => "agent_end", "messages" => []}),
                  queued_state
                )
+
+      assert decode_one(usage_request)["type"] == "get_session_stats"
 
       assert {:messages_and_write, [first_response, _start_notice, _queue_info], data, next_state} =
                Pi.translate_inbound(Jason.encode!(%{"type" => "agent_settled"}), queued_state)
@@ -1113,6 +1256,20 @@ defmodule Arbor.ACP.Adapters.PiTest do
   end
 
   describe "translate_inbound/2 — agent settlement" do
+    test "unreliable context counts do not become ACP usage updates", %{state: state} do
+      state = %{state | session_id: "s1", pending_usage_request: {"pi-1", "s1"}}
+
+      assert {:skip, state} =
+               Pi.translate_inbound(
+                 response_line("pi-1", "get_session_stats", %{
+                   "contextUsage" => %{"tokens" => nil, "contextWindow" => 200_000}
+                 }),
+                 state
+               )
+
+      assert state.pending_usage_request == nil
+    end
+
     test "agent_end records usage and agent_settled produces the prompt response", %{state: state} do
       state = %{
         state
@@ -1127,8 +1284,23 @@ defmodule Arbor.ACP.Adapters.PiTest do
           "messages" => [%{"role" => "assistant", "usage" => %{"input" => 10, "output" => 2}}]
         })
 
-      assert {:skip, state} = Pi.translate_inbound(line, state)
+      assert {:skip_and_write, usage_request, state} = Pi.translate_inbound(line, state)
+      assert %{"type" => "get_session_stats", "id" => usage_id} = decode_one(usage_request)
       assert state.pending_prompt.acp_id == 5
+
+      assert {:messages, [usage_update], state} =
+               Pi.translate_inbound(
+                 response_line(usage_id, "get_session_stats", %{
+                   "contextUsage" => %{"tokens" => 120, "contextWindow" => 200_000}
+                 }),
+                 state
+               )
+
+      assert usage_update["params"]["update"] == %{
+               "sessionUpdate" => "usage_update",
+               "used" => 120,
+               "size" => 200_000
+             }
 
       assert {:messages, [response], new_state} =
                Pi.translate_inbound(Jason.encode!(%{"type" => "agent_settled"}), state)

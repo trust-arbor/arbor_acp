@@ -29,7 +29,8 @@
         %{"id" => "pi-<1>", "type" => "new_session"},
         %{"id" => "pi-<2>", "type" => "get_state"},
         %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_commands"}
+        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<5>", "type" => "get_commands"}
       ]
     }
   },
@@ -89,10 +90,11 @@
     result: %{
       tag: :ok,
       writes: [
-        %{"id" => "pi-<5>", "type" => "new_session"},
-        %{"id" => "pi-<6>", "type" => "get_state"},
-        %{"id" => "pi-<7>", "type" => "get_available_models"},
-        %{"id" => "pi-<8>", "type" => "get_commands"}
+        %{"id" => "pi-<6>", "type" => "new_session"},
+        %{"id" => "pi-<7>", "type" => "get_state"},
+        %{"id" => "pi-<8>", "type" => "get_available_models"},
+        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<10>", "type" => "get_commands"}
       ]
     }
   },
@@ -102,7 +104,7 @@
       message: %{
         "command" => "get_available_models",
         "error" => "no key configured",
-        "id" => "pi-<7>",
+        "id" => "pi-<8>",
         "success" => false,
         "type" => "response"
       }
@@ -152,10 +154,11 @@
     result: %{
       tag: :ok,
       writes: [
-        %{"id" => "pi-<9>", "type" => "new_session"},
-        %{"id" => "pi-<10>", "type" => "get_state"},
-        %{"id" => "pi-<11>", "type" => "get_available_models"},
-        %{"id" => "pi-<12>", "type" => "get_commands"}
+        %{"id" => "pi-<11>", "type" => "new_session"},
+        %{"id" => "pi-<12>", "type" => "get_state"},
+        %{"id" => "pi-<13>", "type" => "get_available_models"},
+        %{"id" => "pi-<14>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<15>", "type" => "get_commands"}
       ]
     }
   },
@@ -165,7 +168,7 @@
       message: %{
         "command" => "get_available_models",
         "error" => "Not Configured",
-        "id" => "pi-<11>",
+        "id" => "pi-<13>",
         "success" => false,
         "type" => "response"
       }
@@ -215,10 +218,11 @@
     result: %{
       tag: :ok,
       writes: [
-        %{"id" => "pi-<13>", "type" => "new_session"},
-        %{"id" => "pi-<14>", "type" => "get_state"},
-        %{"id" => "pi-<15>", "type" => "get_available_models"},
-        %{"id" => "pi-<16>", "type" => "get_commands"}
+        %{"id" => "pi-<16>", "type" => "new_session"},
+        %{"id" => "pi-<17>", "type" => "get_state"},
+        %{"id" => "pi-<18>", "type" => "get_available_models"},
+        %{"id" => "pi-<19>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<20>", "type" => "get_commands"}
       ]
     }
   },
@@ -228,7 +232,7 @@
       message: %{
         "command" => "get_available_models",
         "error" => "HTTP 403 forbidden",
-        "id" => "pi-<15>",
+        "id" => "pi-<18>",
         "success" => false,
         "type" => "response"
       }
@@ -278,10 +282,11 @@
     result: %{
       tag: :ok,
       writes: [
-        %{"id" => "pi-<17>", "type" => "new_session"},
-        %{"id" => "pi-<18>", "type" => "get_state"},
-        %{"id" => "pi-<19>", "type" => "get_available_models"},
-        %{"id" => "pi-<20>", "type" => "get_commands"}
+        %{"id" => "pi-<21>", "type" => "new_session"},
+        %{"id" => "pi-<22>", "type" => "get_state"},
+        %{"id" => "pi-<23>", "type" => "get_available_models"},
+        %{"id" => "pi-<24>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<25>", "type" => "get_commands"}
       ]
     }
   },
@@ -291,7 +296,7 @@
       message: %{
         "command" => "get_available_models",
         "error" => "permission denied",
-        "id" => "pi-<19>",
+        "id" => "pi-<23>",
         "success" => false,
         "type" => "response"
       }
@@ -341,10 +346,11 @@
     result: %{
       tag: :ok,
       writes: [
-        %{"id" => "pi-<21>", "type" => "new_session"},
-        %{"id" => "pi-<22>", "type" => "get_state"},
-        %{"id" => "pi-<23>", "type" => "get_available_models"},
-        %{"id" => "pi-<24>", "type" => "get_commands"}
+        %{"id" => "pi-<26>", "type" => "new_session"},
+        %{"id" => "pi-<27>", "type" => "get_state"},
+        %{"id" => "pi-<28>", "type" => "get_available_models"},
+        %{"id" => "pi-<29>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<30>", "type" => "get_commands"}
       ]
     }
   },
@@ -354,7 +360,7 @@
       message: %{
         "command" => "get_available_models",
         "error" => "Authentication failed",
-        "id" => "pi-<23>",
+        "id" => "pi-<28>",
         "success" => false,
         "type" => "response"
       }

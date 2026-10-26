@@ -56,6 +56,7 @@ defmodule Arbor.ACP.Adapters.Pi.Sessions do
         session_file: fields.session_file,
         cwd: fields.cwd,
         thinking_level: fields.modes["currentModeId"],
+        available_thinking_levels: Enum.map(fields.modes["availableModes"], & &1["id"]),
         current_model_id: get_in(fields.models, ["currentModelId"]),
         available_models: Map.get(fields.models || %{}, "availableModels", []),
         file_commands: fields.file_commands,

@@ -9,8 +9,8 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/rpc/`. The fixtures pin:
 
-    * the four `new_session` / `get_state` / `get_available_models` /
-      `get_commands` requests written by `session/new`, the `cwd` fallback
+    * the five `new_session` / `get_state` / `get_available_models` /
+      `get_available_thinking_levels` / `get_commands` requests written by `session/new`, the `cwd` fallback
       to the init option, and the absolute-`cwd` validation errors;
     * the `switch_session` (+ `get_messages` for load only) + catalog
       requests written by `session/load` and `session/resume`, the session
@@ -38,7 +38,7 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
 
   Mutation check (2026-09-20): dropping `get_commands` from the
   `session/new` batch in `do_start_session_new/3` fails
-  `session_new_writes_four_control_requests_and_completes`.
+  `session_new_writes_five_control_requests_and_completes`.
 
   To regenerate a fixture after an intentional behavior change, run the test
   with `PI_GOLDEN=update mix test <this file>[:line]`; that run rewrites the
@@ -54,15 +54,21 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
   @area "rpc"
 
   describe "session/new" do
-    test "session_new_writes_four_control_requests_and_completes" do
+    test "session_new_writes_five_control_requests_and_completes" do
       transcript =
         PiGolden.assert_golden(
           @area,
-          "session_new_writes_four_control_requests_and_completes",
+          "session_new_writes_five_control_requests_and_completes",
           Flows.open_session(1)
         )
 
-      assert ["new_session", "get_state", "get_available_models", "get_commands"] =
+      assert [
+               "new_session",
+               "get_state",
+               "get_available_models",
+               "get_available_thinking_levels",
+               "get_commands"
+             ] =
                transcript |> PiGolden.writes() |> Enum.map(& &1["type"])
 
       assert %{messages: [%{"id" => 1, "result" => %{"sessionId" => "pi-session"}}, _commands]} =
@@ -75,6 +81,8 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
         {:respond, "new_session", %{}},
         {:respond, "get_state", Flows.state_data(%{"cwd" => nil, "sessionFile" => nil})},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:list_sessions, %{}}
       ]
@@ -124,6 +132,7 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
                %{"type" => "get_messages"},
                %{"type" => "get_state"},
                %{"type" => "get_available_models"},
+               %{"type" => "get_available_thinking_levels"},
                %{"type" => "get_commands"}
              ] = PiGolden.writes(transcript)
     end
@@ -135,6 +144,8 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
         {:respond, "switch_session", %{}},
         {:respond, "get_state", Flows.state_data(%{"sessionId" => "mapped"})},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:respond, "get_messages",
          %{
@@ -195,6 +206,8 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
         {:respond, "get_messages", %{"messages" => []}},
         {:respond, "get_state", Flows.state_data(%{"sessionId" => "scan-1"})},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}}
       ]
 
@@ -226,6 +239,8 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
         {:respond, "switch_session", %{}},
         {:respond, "get_state", Flows.state_data(%{"sessionId" => "mapped"})},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}}
       ]
 
@@ -236,7 +251,13 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
           steps
         )
 
-      assert ["switch_session", "get_state", "get_available_models", "get_commands"] =
+      assert [
+               "switch_session",
+               "get_state",
+               "get_available_models",
+               "get_available_thinking_levels",
+               "get_commands"
+             ] =
                transcript |> PiGolden.writes() |> Enum.map(& &1["type"])
 
       assert %{messages: [%{"id" => 1, "result" => %{"sessionId" => "mapped"}}, _]} =

@@ -100,7 +100,8 @@
         },
         %{"id" => "pi-<2>", "type" => "get_state"},
         %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_commands"}
+        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<5>", "type" => "get_commands"}
       ]
     }
   },
@@ -158,9 +159,22 @@
     step: %{
       kind: :inbound,
       message: %{
+        "command" => "get_available_thinking_levels",
+        "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
+        "id" => "pi-<4>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<4>",
+        "id" => "pi-<5>",
         "success" => true,
         "type" => "response"
       }

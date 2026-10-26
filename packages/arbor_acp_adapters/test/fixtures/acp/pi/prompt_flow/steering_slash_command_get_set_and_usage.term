@@ -29,7 +29,8 @@
         %{"id" => "pi-<1>", "type" => "new_session"},
         %{"id" => "pi-<2>", "type" => "get_state"},
         %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_commands"}
+        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<5>", "type" => "get_commands"}
       ]
     }
   },
@@ -87,9 +88,22 @@
     step: %{
       kind: :inbound,
       message: %{
+        "command" => "get_available_thinking_levels",
+        "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
+        "id" => "pi-<4>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<4>",
+        "id" => "pi-<5>",
         "success" => true,
         "type" => "response"
       }
@@ -263,7 +277,7 @@
         "params" => %{"prompt" => "/steering", "sessionId" => "pi-session"}
       }
     },
-    result: %{tag: :ok, writes: [%{"id" => "pi-<5>", "type" => "get_state"}]}
+    result: %{tag: :ok, writes: [%{"id" => "pi-<6>", "type" => "get_state"}]}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -271,7 +285,7 @@
       message: %{
         "command" => "get_state",
         "data" => %{"steeringMode" => "one-at-a-time"},
-        "id" => "pi-<5>",
+        "id" => "pi-<6>",
         "success" => true,
         "type" => "response"
       }
@@ -303,7 +317,7 @@
         "params" => %{"prompt" => "/steering", "sessionId" => "pi-session"}
       }
     },
-    result: %{tag: :ok, writes: [%{"id" => "pi-<6>", "type" => "get_state"}]}
+    result: %{tag: :ok, writes: [%{"id" => "pi-<7>", "type" => "get_state"}]}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -311,7 +325,7 @@
       message: %{
         "command" => "get_state",
         "data" => %{},
-        "id" => "pi-<6>",
+        "id" => "pi-<7>",
         "success" => true,
         "type" => "response"
       }
@@ -345,7 +359,7 @@
     },
     result: %{
       tag: :ok,
-      writes: [%{"id" => "pi-<7>", "mode" => "one-at-a-time", "type" => "set_steering_mode"}]
+      writes: [%{"id" => "pi-<8>", "mode" => "one-at-a-time", "type" => "set_steering_mode"}]
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
@@ -354,7 +368,7 @@
       message: %{
         "command" => "set_steering_mode",
         "data" => %{},
-        "id" => "pi-<7>",
+        "id" => "pi-<8>",
         "success" => true,
         "type" => "response"
       }
@@ -388,7 +402,7 @@
     },
     result: %{
       tag: :ok,
-      writes: [%{"id" => "pi-<8>", "mode" => "all", "type" => "set_steering_mode"}]
+      writes: [%{"id" => "pi-<9>", "mode" => "all", "type" => "set_steering_mode"}]
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
@@ -397,7 +411,7 @@
       message: %{
         "command" => "set_steering_mode",
         "data" => %{},
-        "id" => "pi-<8>",
+        "id" => "pi-<9>",
         "success" => true,
         "type" => "response"
       }

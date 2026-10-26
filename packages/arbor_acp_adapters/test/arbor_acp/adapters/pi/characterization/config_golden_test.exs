@@ -286,11 +286,19 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
       assert [
                %{
                  tag: :messages_and_write,
-                 writes: [%{"type" => "set_model", "provider" => "openai"}]
+                 writes: [
+                   %{"type" => "set_model", "provider" => "openai"},
+                   %{"type" => "get_state"},
+                   %{"type" => "get_available_thinking_levels"}
+                 ]
                },
                %{
                  tag: :messages_and_write,
-                 writes: [%{"type" => "set_model", "provider" => "anthropic"}]
+                 writes: [
+                   %{"type" => "set_model", "provider" => "anthropic"},
+                   %{"type" => "get_state"},
+                   %{"type" => "get_available_thinking_levels"}
+                 ]
                },
                %{tag: :error, error: "Unknown modelId: nope"},
                %{tag: :error, error: "session/set_model requires modelId"}
@@ -458,6 +466,8 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
         {:respond, "get_state",
          Flows.state_data(%{"sessionId" => "mapped", "thinkingLevel" => "off"})},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         Flows.set_config(2, "thought_level", "high", %{"sessionId" => "ignored-by-config-options"}),
         Flows.set_config(3, "auto_retry", false, %{"sessionId" => "ignored"})
@@ -468,7 +478,7 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
 
       assert ["mapped", "mapped"] =
                transcript
-               |> Enum.at(7)
+               |> Enum.at(8)
                |> Map.fetch!(:result)
                |> Map.fetch!(:messages)
                |> Enum.map(& &1["params"]["sessionId"])
@@ -501,7 +511,11 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
       assert %{
                tag: :messages_and_reply,
                reply: %{"configOptions" => confirmation},
-               port_writes: [%{"type" => "set_model"}]
+               port_writes: [
+                 %{"type" => "set_model"},
+                 %{"type" => "get_state"},
+                 %{"type" => "get_available_thinking_levels"}
+               ]
              } =
                model_reply
 
@@ -529,7 +543,11 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
       assert %{
                tag: :messages_and_reply,
                reply: %{"configOptions" => _},
-               port_writes: [%{"type" => "set_model"}]
+               port_writes: [
+                 %{"type" => "set_model"},
+                 %{"type" => "get_state"},
+                 %{"type" => "get_available_thinking_levels"}
+               ]
              } =
                set_model_reply
     end
@@ -583,7 +601,7 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
                %{tag: :error, error: ":no_active_pi_session"}
              ] =
                transcript
-               |> Enum.slice(6..8)
+               |> Enum.slice(7..9)
                |> Enum.map(&Map.take(&1.result, [:tag, :error, :port]))
 
       assert %{tag: :reply, reply: %{}, port_writes: [%{"type" => "set_auto_compaction"}]} =

@@ -58,6 +58,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     managed?: true,
     delete_session_files?: false,
     available_models: [],
+    available_thinking_levels: [],
     file_commands: [],
     available_commands: [],
     text_acc: [],
@@ -75,6 +76,9 @@ defmodule Arbor.ACP.Adapters.Pi do
     edit_snapshots: %{},
     pending_extension_ui: %{},
     last_usage: %{},
+    pending_usage_request: nil,
+    pending_model_refresh: nil,
+    ignored_refresh_ids: MapSet.new(),
     pending_controls: %{},
     control_groups: %{},
     msg_counter: 0,
@@ -291,6 +295,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "session/set_model", "params" => params}, state) do
     case Config.set_model_plan(params["modelId"], params["sessionId"], state) do
       {:ok, messages, data, state} ->
+        {data, state} = refresh_model_configuration(data, state)
         deliver_messages_and_config_result(messages, data, state)
 
       {:error, reason} ->
@@ -555,7 +560,10 @@ defmodule Arbor.ACP.Adapters.Pi do
         current_tool_calls: %{},
         edit_snapshots: %{},
         pending_extension_ui: %{},
-        last_usage: %{}
+        last_usage: %{},
+        pending_usage_request: nil,
+        pending_model_refresh: nil,
+        ignored_refresh_ids: MapSet.new()
     }
   end
 
@@ -762,6 +770,7 @@ defmodule Arbor.ACP.Adapters.Pi do
           [
             {:state, RPC.method(:get_state), %{}},
             {:models, RPC.method(:get_available_models), %{}},
+            {:thinking_levels, RPC.method(:get_available_thinking_levels), %{}},
             {:commands, RPC.method(:get_commands), %{}}
           ]
 
@@ -814,6 +823,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     {new_id, new_session, state} = rpc(state, RPC.method(:new_session))
     {state_id, get_state, state} = rpc(state, RPC.method(:get_state))
     {models_id, get_models, state} = rpc(state, RPC.method(:get_available_models))
+    {thinking_id, get_thinking, state} = rpc(state, RPC.method(:get_available_thinking_levels))
     {commands_id, get_commands, state} = rpc(state, RPC.method(:get_commands))
 
     group = %{
@@ -822,7 +832,7 @@ defmodule Arbor.ACP.Adapters.Pi do
       cwd: cwd,
       file_commands: file_commands,
       settings: settings,
-      refs: MapSet.new([new_id, state_id, models_id, commands_id]),
+      refs: MapSet.new([new_id, state_id, models_id, thinking_id, commands_id]),
       responses: %{}
     }
 
@@ -832,9 +842,13 @@ defmodule Arbor.ACP.Adapters.Pi do
       |> put_control(new_id, :new_session, group)
       |> put_control(state_id, :state, group)
       |> put_control(models_id, :models, group)
+      |> put_control(thinking_id, :thinking_levels, group)
       |> put_control(commands_id, :commands, group)
 
-    deliver_pending(RPC.encode_many([new_session, get_state, get_models, get_commands]), state)
+    deliver_pending(
+      RPC.encode_many([new_session, get_state, get_models, get_thinking, get_commands]),
+      state
+    )
   end
 
   defp translate_slash_command({:ok, name, args}, acp_id, params, state) do
@@ -1090,18 +1104,123 @@ defmodule Arbor.ACP.Adapters.Pi do
     {:messages_and_reply, [message], %{"stopReason" => "end_turn"}, state}
   end
 
-  defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
-    if PromptFlow.response_error?(id, event, state) do
-      finish_prompt_error(event, state)
-    else
-      case Map.pop(state.pending_controls, id) do
-        {nil, pending_controls} ->
-          process_untracked_response(event, %{state | pending_controls: pending_controls})
+  defp context_usage_update(%{"contextUsage" => usage}, session_id) when is_map(usage) do
+    used = usage["tokens"]
+    size = usage["contextWindow"]
 
-        {control, pending_controls} ->
-          state = %{state | pending_controls: pending_controls}
-          handle_control_response(control, event, state)
+    if is_integer(used) and used >= 0 and used <= 9_007_199_254_740_991 and
+         is_integer(size) and size > 0 and size <= 9_007_199_254_740_991 do
+      AdapterEvents.session_update_type(session_id, "usage_update", %{
+        "used" => used,
+        "size" => size
+      })
+    end
+  end
+
+  defp context_usage_update(_data, _session_id), do: nil
+
+  defp refresh_model_configuration(data, %{session_id: session_id} = state)
+       when is_binary(session_id) and session_id != "" do
+    state =
+      case state.pending_model_refresh do
+        %{state_id: old_state_id, levels_id: old_levels_id} = pending ->
+          outstanding_ids =
+            [
+              if(is_nil(pending.state_data), do: old_state_id),
+              if(is_nil(pending.levels_data), do: old_levels_id)
+            ]
+            |> Enum.reject(&is_nil/1)
+
+          %{
+            state
+            | ignored_refresh_ids:
+                MapSet.union(state.ignored_refresh_ids, MapSet.new(outstanding_ids))
+          }
+
+        _ ->
+          state
       end
+
+    {state_id, get_state, state} = rpc(state, RPC.method(:get_state))
+    {levels_id, get_levels, state} = rpc(state, RPC.method(:get_available_thinking_levels))
+
+    refresh = %{
+      state_id: state_id,
+      levels_id: levels_id,
+      session_id: session_id,
+      state_data: nil,
+      levels_data: nil
+    }
+
+    {data <> RPC.encode_many([get_state, get_levels]), %{state | pending_model_refresh: refresh}}
+  end
+
+  defp refresh_model_configuration(data, state), do: {data, state}
+
+  defp handle_model_refresh(event, %{pending_model_refresh: refresh} = state) do
+    if event["success"] == false do
+      {:skip, %{state | pending_model_refresh: nil}}
+    else
+      refresh =
+        cond do
+          event["id"] == refresh.state_id -> %{refresh | state_data: event["data"] || %{}}
+          event["id"] == refresh.levels_id -> %{refresh | levels_data: event["data"] || %{}}
+        end
+
+      if is_map(refresh.state_data) and is_map(refresh.levels_data) do
+        modes = Config.thinking_state(refresh.state_data, refresh.levels_data)
+        levels = Enum.map(modes["availableModes"], & &1["id"])
+
+        state = %{
+          state
+          | pending_model_refresh: nil,
+            available_thinking_levels: levels,
+            thinking_level: modes["currentModeId"]
+        }
+
+        {:messages,
+         [
+           AdapterEvents.current_mode_update(refresh.session_id, state.thinking_level),
+           Config.config_options_update(refresh.session_id, state)
+         ], state}
+      else
+        {:skip, %{state | pending_model_refresh: refresh}}
+      end
+    end
+  end
+
+  defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
+    cond do
+      MapSet.member?(state.ignored_refresh_ids, id) ->
+        {:skip, %{state | ignored_refresh_ids: MapSet.delete(state.ignored_refresh_ids, id)}}
+
+      is_map(state.pending_model_refresh) and
+          id in [state.pending_model_refresh.state_id, state.pending_model_refresh.levels_id] ->
+        handle_model_refresh(event, state)
+
+      match?({^id, _}, state.pending_usage_request) ->
+        {^id, session_id} = state.pending_usage_request
+        state = %{state | pending_usage_request: nil}
+
+        data = if event["success"] == false, do: nil, else: event["data"]
+
+        case context_usage_update(data, session_id) do
+          nil -> {:skip, state}
+          update -> {:messages, [update], state}
+        end
+
+      PromptFlow.response_error?(id, event, state) ->
+        finish_prompt_error(event, state)
+
+      true ->
+        case Map.pop(state.pending_controls, id) do
+          {nil, pending_controls} ->
+            process_untracked_response(event, %{state | pending_controls: pending_controls})
+
+          {control, pending_controls} ->
+            state = %{state | pending_controls: pending_controls}
+            handle_control_response(control, event, state)
+        end
     end
   end
 
@@ -1197,7 +1316,28 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   defp process_event(%{"type" => "agent_end"} = event, state) do
-    {:skip, %{state | last_usage: Events.usage_from_agent_end(event)}}
+    state = %{state | last_usage: Events.usage_from_agent_end(event)}
+
+    if state.pending_prompt do
+      {id, request, state} = rpc(state, RPC.method(:get_session_stats))
+      state = %{state | pending_usage_request: {id, state.session_id}}
+      {:skip_and_write, RPC.line(request), state}
+    else
+      {:skip, state}
+    end
+  end
+
+  defp process_event(%{"type" => "session_info_changed", "name" => name}, state)
+       when is_binary(name) or is_nil(name) do
+    title = if is_binary(name), do: String.trim(name), else: nil
+
+    notification =
+      AdapterEvents.session_info_update(state.session_id, %{
+        "title" => title,
+        "updatedAt" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+      })
+
+    {:messages, [notification], state}
   end
 
   defp process_event(%{"type" => "agent_settled"}, %{pending_prompt: nil} = state) do
@@ -1503,7 +1643,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     cwd = state_data["cwd"] || group.cwd
     session_file = state_data["sessionFile"] || group[:session_file]
     models = Config.model_state(models_data, state_data)
-    modes = Config.thinking_state(state_data)
+    modes = Config.thinking_state(state_data, group.responses[:thinking_levels] || %{})
     settings = group[:settings] || state.settings || %{}
     commands = command_state(group.responses[:commands], group.file_commands, settings)
 
@@ -1983,9 +2123,19 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp translate_config_option(config_id, value, state) do
     case Config.update_plan(config_id, value, state) do
-      {:ack, data} -> deliver_ack(data, state)
-      {:ok, messages, data, state} -> deliver_messages_and_config_result(messages, data, state)
-      {:error, reason} -> {:error, reason, state}
+      {:ack, data} ->
+        deliver_ack(data, state)
+
+      {:ok, messages, data, state} ->
+        {data, state} =
+          if config_id == Config.model_config_id(),
+            do: refresh_model_configuration(data, state),
+            else: {data, state}
+
+        deliver_messages_and_config_result(messages, data, state)
+
+      {:error, reason} ->
+        {:error, reason, state}
     end
   end
 

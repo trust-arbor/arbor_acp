@@ -59,7 +59,8 @@
         %{"id" => "pi-<2>", "type" => "get_messages"},
         %{"id" => "pi-<3>", "type" => "get_state"},
         %{"id" => "pi-<4>", "type" => "get_available_models"},
-        %{"id" => "pi-<5>", "type" => "get_commands"}
+        %{"id" => "pi-<5>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<6>", "type" => "get_commands"}
       ]
     }
   },
@@ -130,9 +131,22 @@
     step: %{
       kind: :inbound,
       message: %{
+        "command" => "get_available_thinking_levels",
+        "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
+        "id" => "pi-<5>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
         "command" => "get_commands",
         "data" => %{"commands" => [%{"description" => "from pi", "name" => "pi-cmd"}]},
-        "id" => "pi-<5>",
+        "id" => "pi-<6>",
         "success" => true,
         "type" => "response"
       }
@@ -312,13 +326,14 @@
       tag: :ok,
       writes: [
         %{
-          "id" => "pi-<6>",
+          "id" => "pi-<7>",
           "sessionPath" => "<sandbox>/sessions/pi-session.jsonl",
           "type" => "switch_session"
         },
-        %{"id" => "pi-<7>", "type" => "get_state"},
-        %{"id" => "pi-<8>", "type" => "get_available_models"},
-        %{"id" => "pi-<9>", "type" => "get_commands"}
+        %{"id" => "pi-<8>", "type" => "get_state"},
+        %{"id" => "pi-<9>", "type" => "get_available_models"},
+        %{"id" => "pi-<10>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<11>", "type" => "get_commands"}
       ]
     }
   },
@@ -328,7 +343,7 @@
       message: %{
         "command" => "switch_session",
         "data" => %{},
-        "id" => "pi-<6>",
+        "id" => "pi-<7>",
         "success" => true,
         "type" => "response"
       }
@@ -347,7 +362,7 @@
           "sessionId" => "mapped",
           "thinkingLevel" => "medium"
         },
-        "id" => "pi-<7>",
+        "id" => "pi-<8>",
         "success" => true,
         "type" => "response"
       }
@@ -365,7 +380,20 @@
             %{"id" => "gpt-5.1", "name" => "GPT-5.1", "provider" => "openai"}
           ]
         },
-        "id" => "pi-<8>",
+        "id" => "pi-<9>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "get_available_thinking_levels",
+        "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
+        "id" => "pi-<10>",
         "success" => true,
         "type" => "response"
       }
@@ -378,7 +406,7 @@
       message: %{
         "command" => "get_commands",
         "data" => %{},
-        "id" => "pi-<9>",
+        "id" => "pi-<11>",
         "success" => true,
         "type" => "response"
       }

@@ -80,11 +80,12 @@ defmodule Arbor.ACP.Test.PiGolden.Flows do
   end
 
   @doc """
-  Steps that open a session through `session/new` and answer all four
+  Steps that open a session through `session/new` and answer all five
   control requests, leaving the adapter with an established session.
 
   Options: `:state` (get_state overrides), `:models` (catalog list),
-  `:commands` (Pi command list), `:params` (session/new params).
+  `:thinking_levels` (the selected model's levels), `:commands` (Pi command
+  list), `:params` (session/new params).
   """
   @spec open_session(term(), keyword()) :: [Arbor.ACP.Test.PiGolden.step()]
   def open_session(acp_id \\ 1, opts \\ []) do
@@ -94,6 +95,8 @@ defmodule Arbor.ACP.Test.PiGolden.Flows do
       {:respond, "get_state", state_data(Keyword.get(opts, :state, %{}))},
       {:respond, "get_available_models",
        %{"models" => Keyword.get(opts, :models, @default_models)}},
+      {:respond, "get_available_thinking_levels",
+       %{"levels" => Keyword.get(opts, :thinking_levels, ~w(off minimal low medium high xhigh))}},
       {:respond, "get_commands", %{"commands" => Keyword.get(opts, :commands, [])}}
     ]
   end

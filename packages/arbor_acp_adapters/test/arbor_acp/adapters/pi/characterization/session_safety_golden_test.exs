@@ -73,6 +73,8 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
        )},
       {:respond, "get_available_models",
        %{"models" => Keyword.get(opts, :models, Flows.models())}},
+      {:respond, "get_available_thinking_levels",
+       %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
       {:respond, "get_commands", %{"commands" => []}}
     ]
   end
@@ -103,6 +105,8 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
             {:respond, "get_state",
              Flows.state_data(%{"sessionId" => "third", "sessionFile" => nil})},
             {:respond, "get_available_models", %{"models" => Flows.models()}},
+            {:respond, "get_available_thinking_levels",
+             %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
             {:respond, "get_commands", %{"commands" => []}},
             {:read_file, @map}
           ]
@@ -403,6 +407,8 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
             {:respond, "get_state",
              Flows.state_data(%{"sessionFile" => "<sandbox>/project/outside.jsonl"})},
             {:respond, "get_available_models", %{"models" => []}},
+            {:respond, "get_available_thinking_levels",
+             %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
             {:respond, "get_commands", %{"commands" => []}},
             {:read_file, "<sandbox>/project/outside.jsonl"},
             {:init, delete_session_files: false},
@@ -441,6 +447,8 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
            "sessionFile" => "<sandbox>/agent/alt-sessions/alt.jsonl"
          })},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         delete(2, "alt"),
         {:read_file, "<sandbox>/agent/alt-sessions/alt.jsonl"},

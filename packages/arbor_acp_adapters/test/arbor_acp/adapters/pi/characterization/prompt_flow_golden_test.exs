@@ -224,7 +224,7 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
         PiGolden.assert_golden(@area, "cancel_with_active_prompt_settles_as_cancelled", steps)
 
       assert %{tag: :messages_and_write, messages: [], writes: [%{"type" => "abort"}]} =
-               Enum.at(transcript, 8).result
+               Enum.at(transcript, 9).result
 
       assert [
                %{
@@ -274,10 +274,10 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
                  }
                ],
                writes: [%{"type" => "abort"}]
-             } = Enum.at(transcript, 9).result
+             } = Enum.at(transcript, 10).result
 
       assert %{messages: [%{"id" => 2, "result" => %{"stopReason" => "cancelled"}}]} =
-               Enum.at(transcript, 10).result
+               Enum.at(transcript, 11).result
 
       assert %{tag: :messages_and_write, messages: [], writes: [%{"type" => "abort"}]} =
                PiGolden.last_result(transcript)
@@ -443,7 +443,7 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
                  %{"id" => 3, "result" => %{"stopReason" => "cancelled"}},
                  %{"id" => 4, "result" => %{"stopReason" => "cancelled"}}
                ]
-             } = Enum.at(transcript, 11).result
+             } = Enum.at(transcript, 12).result
 
       assert Enum.all?(Enum.take(transcript, -3), &match?(%{tag: :skip}, &1.result))
     end
@@ -502,19 +502,19 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
                messages: [%{"id" => 2, "error" => %{"message" => "Pi process exited: 3"}}],
                port: :closed
              } =
-               Enum.at(transcript, 8).result
+               Enum.at(transcript, 9).result
 
       assert [
                %{tag: :error, error: ":no_active_pi_session"},
                %{tag: :error, error: ":no_active_pi_session"},
                %{tag: :error, error: ":no_active_pi_session"}
-             ] = Enum.map(Enum.slice(transcript, 9..11), & &1.result)
+             ] = Enum.map(Enum.slice(transcript, 10..12), & &1.result)
 
       assert %{port: :spawned, pending: true, port_writes: [%{"type" => "new_session"} | _]} =
-               Enum.at(transcript, 12).result
+               Enum.at(transcript, 13).result
 
       assert %{messages: [%{"id" => 6, "result" => %{"stopReason" => "end_turn"}}]} =
-               Enum.at(transcript, 18).result
+               Enum.at(transcript, 20).result
 
       assert %{port: :closed} = PiGolden.last_result(transcript)
     end
@@ -533,7 +533,7 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
       transcript =
         PiGolden.assert_golden(@area, "managed_session_new_replaces_the_running_process", steps)
 
-      assert %{port: :respawned, pending: true} = Enum.at(transcript, 7).result
+      assert %{port: :respawned, pending: true} = Enum.at(transcript, 8).result
       assert %{tag: :skip} = PiGolden.last_result(transcript)
     end
   end
