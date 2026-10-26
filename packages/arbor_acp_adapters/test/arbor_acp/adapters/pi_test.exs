@@ -1083,44 +1083,85 @@ defmodule Arbor.ACP.Adapters.PiTest do
          ctx do
       for method <- ["session/load", "session/resume", "session/new"] do
         state = switch_ready_state(ctx.state)
-        pi = fake_pi()
-
-        assert {:messages_and_write, _, first, state} =
-                 Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
-
-        {[level_event, switch_reply], pi} = fake_pi_answer(decode_many(first), pi)
-        assert {:skip, state} = Pi.translate_inbound(Jason.encode!(level_event), state)
-
-        assert {:skip_and_write, refresh, state} =
-                 Pi.translate_inbound(Jason.encode!(switch_reply), state)
-
-        # s1 asks for another model while the refresh is outstanding.
-        assert {:messages_and_write, _, "", state} =
-                 Pi.translate_outbound(set_model_request("anthropic/claude-opus-4"), state)
+        {refresh, state, pi} = refresh_with_waiting_switch(state)
 
         assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
-        assert state.queued_model_switch == nil, "#{method} kept s1's waiting switch"
 
-        # Pi answers the refresh it read before the session change. Nothing is
-        # sent to Pi and nothing is published for either session.
-        {replies, _pi} = fake_pi_answer(decode_many(refresh), pi)
-
-        state =
-          Enum.reduce(replies, state, fn reply, state ->
-            assert {:skip, state} = Pi.translate_inbound(Jason.encode!(reply), state),
-                   "#{method}: a reply to s1's refresh acted on the next session"
-
-            state
-          end)
-
+        # Pi answers the refresh it read before the session change. While the
+        # change is pending nothing is sent and nothing is published.
+        state = feed_without_effect(refresh, state, pi, method)
         assert state.pending_model_refresh == nil
-        assert state.pending_model_switch == nil
 
+        # Pi confirms the change: s1's waiting switch is dropped, not sent.
         {state, messages} = finish_session_setup(setup, state, ctx)
+        assert state.queued_model_switch == nil, "#{method} kept s1's waiting switch"
+        assert state.pending_model_switch == nil
         assert state.session_id == "s2"
         assert state.current_model_id == "anthropic/claude-sonnet-4"
         assert state.available_thinking_levels == ["off", "high"]
         refute Enum.any?(messages, &(&1["params"]["sessionId"] == "s1"))
+      end
+    end
+
+    for method <- ["session/load", "session/resume", "session/new"] do
+      @rejected_method method
+      test "a rejected #{method} still sends s1's waiting switch", ctx do
+        method = @rejected_method
+        state = switch_ready_state(ctx.state)
+        {refresh, state, pi} = refresh_with_waiting_switch(state)
+
+        assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
+        state = feed_without_effect(refresh, state, pi, method)
+
+        assert {:messages_and_write, [error], next, state} =
+                 reject_session_setup(setup, state, ctx)
+
+        assert error["id"] == 70
+        assert error["error"]["message"] =~ "Session file is locked"
+
+        assert [%{"type" => "set_model", "modelId" => "claude-opus-4"}] = decode_many(next),
+               "#{method}: s1's waiting switch was not sent after the rejected change"
+
+        {state, pi, messages} = drive_fake_pi(next, state, pi)
+        assert pi.applied == ["openai/gpt-5.1", "anthropic/claude-opus-4"]
+        assert state.session_id == "s1"
+        assert state.current_model_id == "anthropic/claude-opus-4"
+        assert state.available_thinking_levels == ~w(off low medium high xhigh)
+        assert [mode_update, config_update] = messages
+        assert mode_update["params"]["sessionId"] == "s1"
+        assert config_update["params"]["sessionId"] == "s1"
+      end
+    end
+
+    # Pi may answer the switch before or after it rejects the session change.
+    for method <- ["session/load", "session/resume", "session/new"],
+        order <- [:switch_reply_first, :rejection_first] do
+      @rejected_method method
+      @switch_order order
+      test "a rejected #{method} lets s1's outstanding switch refresh (#{order})", ctx do
+        method = @rejected_method
+        order = @switch_order
+        state = switch_ready_state(ctx.state)
+        pi = %{fake_pi() | hold_switches?: true}
+
+        assert {:messages_and_write, _, first, state} =
+                 Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+        {state, pi, []} = drive_fake_pi(first, state, pi)
+        assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
+
+        {state, pi, messages} = reject_with_switch_outstanding(order, setup, state, pi, ctx)
+
+        assert state.session_id == "s1"
+        assert state.current_model_id == "openai/gpt-5.1"
+        assert state.available_thinking_levels == ["off", "minimal", "low"]
+
+        assert [mode_update, config_update] = messages,
+               "#{method}/#{order}: s1's switch was not refreshed"
+
+        assert mode_update["params"]["sessionId"] == "s1"
+        assert config_update["params"]["sessionId"] == "s1"
+        assert pi.applied == ["openai/gpt-5.1"]
       end
     end
 
@@ -1194,21 +1235,29 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert config_update["params"]["sessionId"] == "s2"
     end
 
-    test "a usage request outstanding when the session changes is not published", ctx do
+    test "a usage request is published unless the session change took effect", ctx do
+      stats = fn state ->
+        Pi.translate_inbound(
+          response_line("pi-90", "get_session_stats", %{
+            "contextUsage" => %{"tokens" => 120, "contextWindow" => 200_000}
+          }),
+          state
+        )
+      end
+
       state = %{switch_ready_state(ctx.state) | pending_usage_request: {"pi-90", "s1"}}
 
-      assert {:ok, _setup, state} =
+      assert {:ok, setup, state} =
                Pi.translate_outbound(session_change("session/load", ctx), state)
 
-      assert {:skip, state} =
-               Pi.translate_inbound(
-                 response_line("pi-90", "get_session_stats", %{
-                   "contextUsage" => %{"tokens" => 120, "contextWindow" => 200_000}
-                 }),
-                 state
-               )
+      {confirmed, _messages} = finish_session_setup(setup, state, ctx)
+      assert {:skip, confirmed} = stats.(confirmed)
+      assert confirmed.pending_usage_request == nil
 
-      assert state.pending_usage_request == nil
+      assert {:messages, [_error], rejected} = reject_session_setup(setup, state, ctx)
+      assert {:messages, [usage], _rejected} = stats.(rejected)
+      assert usage["params"]["sessionId"] == "s1"
+      assert usage["params"]["update"]["sessionUpdate"] == "usage_update"
     end
 
     test "thinking_level_changed events publish the level Pi applied", %{state: state} do
@@ -2115,8 +2164,78 @@ defmodule Arbor.ACP.Adapters.PiTest do
     %{"method" => method, "id" => 70, "params" => %{"sessionId" => "s2", "cwd" => ctx.tmp_dir}}
   end
 
+  # s1 switches to gpt-5.1; Pi answers, so the adapter writes the refresh,
+  # and s1 asks for claude-opus-4 while that refresh is outstanding.
+  defp refresh_with_waiting_switch(state) do
+    pi = fake_pi()
+
+    assert {:messages_and_write, _, first, state} =
+             Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+    {[level_event, switch_reply], pi} = fake_pi_answer(decode_many(first), pi)
+    assert {:skip, state} = Pi.translate_inbound(Jason.encode!(level_event), state)
+
+    assert {:skip_and_write, refresh, state} =
+             Pi.translate_inbound(Jason.encode!(switch_reply), state)
+
+    assert {:messages_and_write, _, "", state} =
+             Pi.translate_outbound(set_model_request("anthropic/claude-opus-4"), state)
+
+    {refresh, state, pi}
+  end
+
+  defp reject_with_switch_outstanding(:switch_reply_first, setup, state, pi, ctx) do
+    {state, pi, []} = settle_fake_pi(state, pi, :oldest_first)
+
+    assert {:messages_and_write, [_error], refresh, state} =
+             reject_session_setup(setup, state, ctx)
+
+    drive_fake_pi(refresh, state, pi)
+  end
+
+  defp reject_with_switch_outstanding(:rejection_first, setup, state, pi, ctx) do
+    assert {:messages, [_error], state} = reject_session_setup(setup, state, ctx)
+    settle_fake_pi(state, pi, :oldest_first)
+  end
+
+  defp feed_without_effect(data, state, pi, label) do
+    {replies, _pi} = fake_pi_answer(decode_many(data), pi)
+
+    Enum.reduce(replies, state, fn reply, state ->
+      assert {:skip, state} = Pi.translate_inbound(Jason.encode!(reply), state),
+             "#{label}: a reply acted while the session change was pending"
+
+      state
+    end)
+  end
+
+  # Pi answers the rest of the setup group, then rejects the session change
+  # itself (Pi's new_session/switch_session answers last).
+  defp reject_session_setup(setup, state, ctx) do
+    {[change], others} =
+      setup
+      |> decode_many()
+      |> Enum.split_with(&(&1["type"] in ["new_session", "switch_session"]))
+
+    {state, []} = answer_session_setup(others, state, ctx)
+
+    Pi.translate_inbound(
+      Jason.encode!(%{
+        "type" => "response",
+        "id" => change["id"],
+        "command" => change["type"],
+        "success" => false,
+        "error" => "Session file is locked"
+      }),
+      state
+    )
+  end
+
   # Answers a session setup group for s2.
-  defp finish_session_setup(setup, state, ctx) do
+  defp finish_session_setup(setup, state, ctx),
+    do: answer_session_setup(decode_many(setup), state, ctx)
+
+  defp answer_session_setup(requests, state, ctx) do
     data = %{
       "new_session" => %{},
       "switch_session" => %{},
@@ -2139,7 +2258,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
       "get_commands" => %{"commands" => []}
     }
 
-    Enum.reduce(decode_many(setup), {state, []}, fn request, {state, messages} ->
+    Enum.reduce(requests, {state, []}, fn request, {state, messages} ->
       line = response_line(request["id"], request["type"], Map.fetch!(data, request["type"]))
 
       case Pi.translate_inbound(line, state) do

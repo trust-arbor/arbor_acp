@@ -84,6 +84,10 @@ defmodule Arbor.ACP.Adapters.Pi do
     pending_model_switch: nil,
     pending_model_refresh: nil,
     queued_model_switch: nil,
+    # Ids of new_session/switch_session requests Pi has not answered. Model
+    # work waits while any is pending, since Pi would apply it to whichever
+    # session ends up active.
+    pending_session_changes: MapSet.new(),
     pending_controls: %{},
     control_groups: %{},
     msg_counter: 0,
@@ -474,7 +478,6 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp prepare_session_process(cwd, _session_file, %{managed?: false} = state) do
     settings = Settings.load(cwd, state.opts)
-    state = abandon_session_requests(state)
 
     {:ok,
      %{
@@ -538,16 +541,23 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp close_session(state), do: close_active_session(state)
 
-  # The session the requests below were made for is going away while Pi keeps
-  # running. A waiting model switch is dropped; an outstanding switch or
-  # refresh stays tracked, so model switches stay serialized and its replies
-  # are consumed, but they are marked stale: they no longer refresh or publish
+  # The session the requests below were made for has been replaced or closed
+  # while Pi keeps running. A waiting model switch, and the follow-up of a
+  # switch Pi already answered, are dropped. An outstanding switch or refresh
+  # stays tracked, so model switches stay serialized and its replies are
+  # consumed, but it is marked stale: it no longer refreshes or publishes
   # anything, because the next session's state comes from its own setup. The
   # usage request is dropped, so its reply is untracked and ignored.
   defp abandon_session_requests(state) do
+    switch =
+      case state.pending_model_switch do
+        %{replied?: true} -> nil
+        switch -> mark_stale(switch)
+      end
+
     %{
       state
-      | pending_model_switch: mark_stale(state.pending_model_switch),
+      | pending_model_switch: switch,
         pending_model_refresh: mark_stale(state.pending_model_refresh),
         queued_model_switch: nil,
         pending_usage_request: nil
@@ -602,7 +612,8 @@ defmodule Arbor.ACP.Adapters.Pi do
         pending_usage_request: nil,
         pending_model_switch: nil,
         pending_model_refresh: nil,
-        queued_model_switch: nil
+        queued_model_switch: nil,
+        pending_session_changes: MapSet.new()
     }
   end
 
@@ -843,6 +854,9 @@ defmodule Arbor.ACP.Adapters.Pi do
           put_control(acc, rpc_id, kind, group)
         end)
 
+      [{:switch, {switch_id, _msg}} | _] = requests
+      state = track_session_change(state, switch_id)
+
       deliver_pending(
         RPC.encode_many(Enum.map(requests, fn {_kind, {_rpc_id, msg}} -> msg end)),
         state
@@ -889,6 +903,7 @@ defmodule Arbor.ACP.Adapters.Pi do
       |> put_control(models_id, :models, group)
       |> put_control(thinking_id, :thinking_levels, group)
       |> put_control(commands_id, :commands, group)
+      |> track_session_change(new_id)
 
     deliver_pending(
       RPC.encode_many([new_session, get_state, get_models, get_thinking, get_commands]),
@@ -1196,7 +1211,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp request_model_switch(fields, state) do
     switch = %{fields: fields, session_id: state.session_id}
 
-    if model_switch_in_flight?(state) do
+    if model_switch_in_flight?(state) or session_change_pending?(state) do
       {"", %{state | queued_model_switch: switch}}
     else
       send_model_switch(switch, state)
@@ -1231,28 +1246,87 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   # A rejected switch leaves Pi on its previous model, so the refresh runs
-  # either way: it also corrects the optimistically reported model. When a
-  # newer switch is waiting it goes first, and the refresh follows it.
+  # either way: it also corrects the optimistically reported model.
   defp handle_model_switch_reply(event, %{pending_model_switch: switch} = state) do
     if event["success"] == false do
       Logger.warning("[Pi Adapter] set_model failed: #{inspect(event["error"])}")
     end
 
-    state = %{state | pending_model_switch: nil}
+    state
+    |> Map.put(:pending_model_switch, Map.put(switch, :replied?, true))
+    |> continue_model_work()
+    |> write_or_skip()
+  end
+
+  # Sends the next step of the model work once nothing blocks it: the waiting
+  # switch, which goes first, or else the refresh after the switch Pi answered.
+  # Nothing is sent while a session change is pending; a switch Pi answered
+  # meanwhile keeps `replied?` until the change resolves.
+  defp continue_model_work(state) do
+    switch = state.pending_model_switch
 
     cond do
-      state.queued_model_switch != nil ->
-        {data, state} = send_model_switch(state.queued_model_switch, state)
-        {:skip_and_write, data, state}
+      session_change_pending?(state) ->
+        {nil, state}
 
-      Map.get(switch, :stale?, false) ->
-        {:skip, state}
+      match?(%{replied?: true}, switch) ->
+        state = %{state | pending_model_switch: nil}
+
+        cond do
+          state.queued_model_switch != nil -> send_model_switch(state.queued_model_switch, state)
+          Map.get(switch, :stale?, false) -> {nil, state}
+          true -> send_model_refresh(switch.session_id, state)
+        end
+
+      model_switch_in_flight?(state) ->
+        {nil, state}
+
+      state.queued_model_switch != nil ->
+        send_model_switch(state.queued_model_switch, state)
 
       true ->
-        {data, state} = send_model_refresh(switch.session_id, state)
-        {:skip_and_write, data, state}
+        {nil, state}
     end
   end
+
+  defp write_or_skip({nil, state}), do: {:skip, state}
+  defp write_or_skip({data, state}), do: {:skip_and_write, data, state}
+
+  defp track_session_change(state, rpc_id),
+    do: %{state | pending_session_changes: MapSet.put(state.pending_session_changes, rpc_id)}
+
+  defp session_change_pending?(state), do: MapSet.size(state.pending_session_changes) > 0
+
+  # Requests made for the current session are abandoned only once Pi has
+  # actually replaced it. When Pi rejects the change, the session stays active
+  # and its held model work goes ahead.
+  defp resolve_session_change(id, event, state) do
+    state = %{state | pending_session_changes: MapSet.delete(state.pending_session_changes, id)}
+
+    if event["success"] == false, do: state, else: abandon_session_requests(state)
+  end
+
+  # Appends the model work a resolved session change released to the result
+  # of the reply that resolved it.
+  defp continue_model_work_after(result) do
+    last = tuple_size(result) - 1
+
+    case continue_model_work(elem(result, last)) do
+      {nil, state} -> put_elem(result, last, state)
+      {data, state} -> result |> put_elem(last, state) |> add_write(data)
+    end
+  end
+
+  defp add_write({:skip, state}, data), do: {:skip_and_write, data, state}
+
+  defp add_write({:messages, messages, state}, data),
+    do: {:messages_and_write, messages, data, state}
+
+  defp add_write({:skip_and_write, written, state}, data),
+    do: {:skip_and_write, IO.iodata_to_binary([written, data]), state}
+
+  defp add_write({:messages_and_write, messages, written, state}, data),
+    do: {:messages_and_write, messages, IO.iodata_to_binary([written, data]), state}
 
   defp send_model_refresh(session_id, state) do
     {state_id, get_state, state} = rpc(state, RPC.method(:get_state))
@@ -1292,8 +1366,7 @@ defmodule Arbor.ACP.Adapters.Pi do
       # A switch requested during the refresh makes it stale: send the switch,
       # and the refresh after it publishes the result.
       state.queued_model_switch != nil ->
-        {data, state} = send_model_switch(state.queued_model_switch, state)
-        {:skip_and_write, data, state}
+        %{state | pending_model_refresh: nil} |> continue_model_work() |> write_or_skip()
 
       # The refresh was for a session that has since been replaced or closed.
       Map.get(refresh, :stale?, false) ->
@@ -1339,7 +1412,7 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp override_refresh_level(state), do: state
 
-  defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
+  defp process_response(event, id, state) do
     cond do
       match?(%{rpc_id: ^id}, state.pending_model_switch) ->
         handle_model_switch_reply(event, state)
@@ -1371,6 +1444,15 @@ defmodule Arbor.ACP.Adapters.Pi do
             state = %{state | pending_controls: pending_controls}
             handle_control_response(control, event, state)
         end
+    end
+  end
+
+  defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
+    if MapSet.member?(state.pending_session_changes, id) do
+      state = resolve_session_change(id, event, state)
+      event |> process_response(id, state) |> continue_model_work_after()
+    else
+      process_response(event, id, state)
     end
   end
 
