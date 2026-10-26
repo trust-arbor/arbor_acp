@@ -92,13 +92,13 @@ a session:
 
 - `:handler` calls `c:Arbor.ACP.Client.Handler.handle_mcp_request/4`
   `(session_id, request, context, state)`. The handler module must export it.
-- A module exports `handle_mcp_request/2` `(context, request)` and is invoked
-  on the client handler runner. See `Arbor.ACP.Client.McpProvider`.
+- A module exports `handle_mcp_request/2` `(context, request)`. See
+  `Arbor.ACP.Client.McpProvider`. The callback runs in its own process.
 - A pid receives `{:acp_mcp_request, ref, context, request}` and replies with
   `send(context.client, {:acp_mcp_provider_result, ref, outcome})`.
 
 `request` is the validated `mcp/message` params. `context` includes `:client`,
-`:session_id`, `:server_id`, and `:request_id`.
+`:session_id`, `:server_id`, `:request_id`, and `:token`.
 
 Outcomes:
 
@@ -113,13 +113,22 @@ While the request is in flight, the provider sends notifications with
 `Arbor.ACP.Client.mcp_notify/5`:
 
 ```elixir
-Arbor.ACP.Client.mcp_notify(context.client, server_id, request_id, "notifications/progress",
+Arbor.ACP.Client.mcp_notify(
+  context.client,
+  context.server_id,
+  context.request_id,
+  "notifications/progress",
+  token: context.token,
   params: %{"progress" => 1}
 )
 ```
 
-The client sends the notification only when that server and request id are
-still active. Otherwise it returns `{:error, :unknown_mcp_request}`.
+`:token` is the reference in `context`. The client sends the notification
+only when that token still identifies the active request. A missing token, a
+finished or cancelled request, or a token from another session returns
+`{:error, :unknown_mcp_request}`. Pass `:session_id` to require that session
+as well. Reusing `serverId` and `requestId` on a later session does not
+accept the previous request's token.
 
 `unregister_mcp_provider/2` drops a provider that no live or pending session
 owns.
@@ -132,16 +141,27 @@ The client includes a `type: "acp"` server only when the agent's initialize
 result has `mcpCapabilities.acp == true` **and** a provider is registered for
 that `serverId`. Otherwise the entry is left out of `mcpServers` and the
 session call still succeeds. Stdio, HTTP, and SSE entries are unchanged.
-Malformed `type: "acp"` entries (missing `name` or `serverId`) are
-`{:error, {:invalid_params, :mcp_server}}`.
+Malformed `type: "acp"` entries (missing `name` or `serverId`, or invalid
+UTF-8) are `{:error, {:invalid_params, :mcp_server}}`. Empty `name`,
+`serverId`, `requestId`, and `method` strings are valid, matching the SDK
+schema.
 
 The client does not reject a session solely because the caller passed a
 `type: "acp"` server with no provider. That refusal is intentionally not
-implemented. Omission is logged with a hash of the server id, not the id itself.
+implemented. Each omitted server is logged with a hash of the server id, not
+the id itself, and emitted as `[:arbor_acp, :mcp, :server, :omitted]` with
+measurements `%{count: 1}` and metadata `%{reason: reason, server_id_hash: hash}`.
+A successful session result also includes `"omittedMcpServers"`, a
+list of `%{"serverId" => id, "reason" => reason}`. The reasons are
+`"mcp_acp_not_advertised"` and `"mcp_provider_not_configured"`. The key is
+absent when nothing was omitted. The id is in the result because the caller
+supplied it. It is not in the telemetry metadata.
 
-The agent accepts `Arbor.ACP.Agent.mcp_request/5` only when its own capabilities include
-`mcpCapabilities.acp == true` and that `serverId` was declared on that session.
-Anything else returns `{:error, {:unsupported_capability, :acp_mcp}}` or
+The agent accepts `Arbor.ACP.Agent.mcp_request/5` only when the
+`agentCapabilities` it actually sent include `mcpCapabilities.acp == true`,
+including a `handle_initialize/3` override, and that `serverId` was declared
+on that session. Anything else returns
+`{:error, {:unsupported_capability, :acp_mcp}}` or
 `{:error, :unknown_mcp_server}` and sends nothing.
 
 ## Ownership
@@ -155,8 +175,13 @@ time (SDK requirement).
   session, is rejected with `{:error, {:invalid_params, :mcp_server_id_in_use}}`.
   The agent answers the same case with JSON-RPC `-32602`.
 - `session/load` and `session/resume` may repeat the ids already bound to that
-  same session. Ids removed from the new list are released when the call
-  succeeds. A failed load leaves the previous binding in place.
+  same session. The call holds every id that session owns, including ids the
+  new list removes, until it commits or aborts. Another lifecycle call that
+  needs one of those ids gets
+  `{:error, {:invalid_params, :mcp_server_id_in_use}}`. In-flight MCP requests
+  on a held id continue, because the id stays bound to the session. Ids
+  removed from the new list are released when the call succeeds. A failed
+  load leaves the previous binding in place.
 - `session/new` and `session/fork` bind ids to the **new** session id. A fork
   cannot reuse an id the source session still holds. The caller supplies new
   ids for the forked session.
@@ -182,6 +207,12 @@ the encoded JSON-RPC frame. A larger request or notification returns
 The agent deadline is `:timeout`, capped by `:pending_request_timeout` (both
 default to 30 seconds). The client bounds the provider callback with
 `:handler_request_timeout` and answers a stalled provider with `-32603`.
+A module or `:handler` provider runs outside the handler runner. When that
+timeout fires, the client stops the provider process, so later handler work
+is not queued behind it. Those processes are bounded by
+`:max_pending_requests`. A provider result that exceeds `:max_frame_bytes`
+is not sent. The client answers that request with the same outer `-32603`,
+`"MCP provider unavailable"`, and then finishes it.
 
 When a session closes or is deleted, or the close-equivalent `end_session/2`
 forgets it:

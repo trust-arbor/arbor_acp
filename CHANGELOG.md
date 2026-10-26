@@ -3,10 +3,11 @@
 ## Unreleased
 
 - Fix: the ACP client rejected `notice` and context compaction session updates as invalid even when the application had opted in with `clientCapabilities.session.notices` or `.compaction`. It now validates them against the ACP SDK 1.9.0 v1 schema and delivers them; without the capability it still drops them.
+- Fix: MCP-over-ACP notifications are bound to the in-flight request's token. Provider timeouts stop the provider process. Lifecycle calls keep ownership of the server ids they touch. The agent uses the capabilities it sent. Oversized provider results return a visible error. Omitted ACP servers appear on the session result. Empty SDK string ids are accepted.
 
 ### Added
 
-- **UNSTABLE:** ArborACP speaks MCP-over-ACP on protocol version 1 (ACP SDK 1.9 v1). An agent that advertises `mcpCapabilities.acp: true` can call MCP methods on a `type: "acp"` server the client provides, and the client can notify the agent while that request is in flight. A server without that advertisement or without a registered provider is left off the session. Bridging an Arbor MCP server onto this channel is a follow-up. See `packages/arbor_acp/docs/MCP_OVER_ACP.md`.
+- **UNSTABLE:** ArborACP speaks MCP-over-ACP on protocol version 1 (ACP SDK 1.9 v1). An agent that advertises `mcpCapabilities.acp: true` can call MCP methods on a `type: "acp"` server the client provides, and the client can notify the agent while that request is in flight. A server without that advertisement or without a registered provider is left off the session and listed on the result as `omittedMcpServers`. Bridging an Arbor MCP server onto this channel is a follow-up. See `packages/arbor_acp/docs/MCP_OVER_ACP.md`.
 
 ## ArborACP / Adapters 1.0.0-rc.4 — 2026-10-26
 

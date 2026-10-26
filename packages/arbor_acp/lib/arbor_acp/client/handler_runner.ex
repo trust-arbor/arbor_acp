@@ -5,7 +5,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
   require Logger
 
-  defstruct [:handler_mod, :handler_state, :owner]
+  defstruct [:handler_mod, :handler_state, :owner, mcp_workers: %{}]
 
   def start_link(handler_mod, handler_opts, owner, scope \\ nil) do
     GenServer.start_link(__MODULE__, {handler_mod, handler_opts, owner, scope})
@@ -347,13 +347,43 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   end
 
   def handle_cast({:mcp_request, ref, provider, context, params}, state) do
-    {outcome, state} = invoke_mcp(provider, context, params, state)
-    send(state.owner, {:acp_handler_result, ref, {:mcp, outcome}})
-    {:noreply, state}
+    start_mcp_worker(state, ref, provider, context, params)
   end
 
   @impl true
+  def handle_info({:mcp_worker_done, ref, snapshot, outcome, new_state}, state) do
+    case Map.pop(state.mcp_workers, ref) do
+      {nil, _workers} ->
+        {:noreply, state}
+
+      {%{monitor: monitor}, workers} ->
+        Process.demonitor(monitor, [:flush])
+        state = %{state | mcp_workers: workers}
+        state = apply_mcp_state(state, snapshot, new_state)
+        send(state.owner, {:acp_handler_result, ref, {:mcp, outcome}})
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:DOWN, monitor, :process, _pid, reason}, state) do
+    case pop_mcp_worker(state, monitor) do
+      {nil, state} ->
+        {:noreply, state}
+
+      {{ref, _worker}, state} ->
+        send(state.owner, {:acp_handler_result, ref, {:mcp, {:error, {:exit, reason}}}})
+        {:noreply, state}
+    end
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
+
+  @impl true
   def terminate(reason, state) do
+    Enum.each(state.mcp_workers, fn {_ref, %{pid: pid}} ->
+      Process.exit(pid, :kill)
+    end)
+
     if function_exported?(state.handler_mod, :terminate, 2) do
       _ = safe_call(fn -> state.handler_mod.terminate(reason, state.handler_state) end)
     end
@@ -369,39 +399,67 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   defp call_with_context(state, callback, args, message),
     do: apply(state.handler_mod, callback, args ++ [message, state.handler_state])
 
-  defp invoke_mcp(:handler, context, params, state) do
-    case safe_call(fn ->
-           state.handler_mod.handle_mcp_request(
-             context.session_id,
-             params,
-             context,
-             state.handler_state
-           )
-         end) do
-      {:ok, {:ok, result, handler_state}} ->
-        {{:ok, result}, %{state | handler_state: handler_state}}
+  # Unlinked so a stalled or crashed provider cannot take the runner down.
+  # The client kills the worker when its handler timeout or a cancel fires.
+  # In-flight workers stay bounded by the client's pending-request cap, which
+  # rejects a new mcp/message before this cast.
+  defp start_mcp_worker(state, ref, provider, context, params) do
+    runner = self()
+    owner = state.owner
+    handler_mod = state.handler_mod
+    snapshot = state.handler_state
 
-      {:ok, {:mcp_error, error, handler_state}} ->
-        {{:mcp_error, error}, %{state | handler_state: handler_state}}
+    {:ok, pid} =
+      Task.start(fn ->
+        send(owner, {:acp_mcp_worker, ref, self()})
+        {outcome, new_state} = run_mcp(provider, context, params, handler_mod, snapshot)
+        send(runner, {:mcp_worker_done, ref, snapshot, outcome, new_state})
+      end)
 
-      {:ok, {:error, reason, handler_state}} ->
-        {{:error, reason}, %{state | handler_state: handler_state}}
+    monitor = Process.monitor(pid)
+    workers = Map.put(state.mcp_workers, ref, %{pid: pid, monitor: monitor})
+    {:noreply, %{state | mcp_workers: workers}}
+  end
 
-      {:ok, other} ->
-        {{:error, {:invalid_return, other}}, state}
+  defp apply_mcp_state(state, _snapshot, :unchanged), do: state
 
-      {:error, reason} ->
-        {{:error, reason}, state}
+  defp apply_mcp_state(state, snapshot, new_state) do
+    if state.handler_state == snapshot do
+      %{state | handler_state: new_state}
+    else
+      state
     end
   end
 
-  defp invoke_mcp(module, context, params, state) when is_atom(module) do
+  defp pop_mcp_worker(state, monitor) do
+    case Enum.find(state.mcp_workers, fn {_ref, worker} -> worker.monitor == monitor end) do
+      nil ->
+        {nil, state}
+
+      {ref, worker} ->
+        {{ref, worker}, %{state | mcp_workers: Map.delete(state.mcp_workers, ref)}}
+    end
+  end
+
+  defp run_mcp(:handler, context, params, handler_mod, handler_state) do
+    case safe_call(fn ->
+           handler_mod.handle_mcp_request(context.session_id, params, context, handler_state)
+         end) do
+      {:ok, {:ok, result, new_state}} -> {{:ok, result}, new_state}
+      {:ok, {:mcp_error, error, new_state}} -> {{:mcp_error, error}, new_state}
+      {:ok, {:error, reason, new_state}} -> {{:error, reason}, new_state}
+      {:ok, other} -> {{:error, {:invalid_return, other}}, handler_state}
+      {:error, reason} -> {{:error, reason}, handler_state}
+    end
+  end
+
+  defp run_mcp(module, context, params, _handler_mod, _handler_state) when is_atom(module) do
     case safe_call(fn -> module.handle_mcp_request(context, params) end) do
-      {:ok, {:ok, result}} -> {{:ok, result}, state}
-      {:ok, {:mcp_error, error}} -> {{:mcp_error, error}, state}
-      {:ok, {:error, reason}} -> {{:error, reason}, state}
-      {:ok, other} -> {{:error, {:invalid_return, other}}, state}
-      {:error, reason} -> {{:error, reason}, state}
+      {:ok, {:ok, result}} -> {{:ok, result}, :unchanged}
+      {:ok, {:mcp_error, error}} -> {{:mcp_error, error}, :unchanged}
+      {:ok, {:error, reason}} -> {{:error, reason}, :unchanged}
+      {:ok, other} -> {{:error, {:invalid_return, other}}, :unchanged}
+      {:error, reason} -> {{:error, reason}, :unchanged}
     end
   end
 

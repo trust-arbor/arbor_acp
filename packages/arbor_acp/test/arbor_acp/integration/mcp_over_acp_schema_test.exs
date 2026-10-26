@@ -44,7 +44,10 @@ defmodule Arbor.ACP.Integration.McpOverAcpSchemaTest do
       "resultNull" => Protocol.encode_mcp_result(7, nil),
       "resultObject" => Protocol.encode_mcp_result(8, %{"tools" => []}),
       "mcpError" =>
-        Protocol.encode_mcp_error(9, %{"code" => -32_001, "message" => "missing", "data" => nil})
+        Protocol.encode_mcp_error(9, %{"code" => -32_001, "message" => "missing", "data" => nil}),
+      "emptyServer" => Types.acp_mcp_server("", ""),
+      "emptyRequest" => Protocol.encode_mcp_message_request("", "", "", id: 11),
+      "emptyNotification" => Protocol.encode_mcp_message_notification("", "", "")
     }
 
     path =

@@ -48,6 +48,7 @@ defmodule Arbor.ACP.McpOverAcpTest do
     assert provider_ctx.session_id == "sess-1"
     assert provider_ctx.server_id == "tools"
     assert provider_ctx.request_id == "call-1"
+    assert is_reference(provider_ctx.token)
     assert request["method"] == "tools/call"
     assert request["params"] == %{"name" => "echo"}
 
@@ -57,6 +58,7 @@ defmodule Arbor.ACP.McpOverAcpTest do
                provider_ctx.server_id,
                provider_ctx.request_id,
                "notifications/progress",
+               token: provider_ctx.token,
                params: %{"progress" => 1}
              )
 

@@ -31,6 +31,25 @@ const frames = JSON.parse(await readFile(source, "utf8"));
 assert.equal(zMcpServerAcpId.safeParse("").success, true);
 assert.equal(zMcpRequestId.safeParse("").success, true);
 
+const emptyServer = must(zMcpServerAcp, frames.emptyServer, "empty acp server");
+assert.equal(emptyServer.name, "");
+assert.equal(emptyServer.serverId, "");
+assert.deepEqual(must(zMcpServer, frames.emptyServer, "empty server union"), frames.emptyServer);
+
+const emptyRequest = must(zAgentRequest, frames.emptyRequest, "empty mcp request");
+assert.equal(emptyRequest.params.serverId, "");
+assert.equal(emptyRequest.params.requestId, "");
+assert.equal(emptyRequest.params.method, "");
+assert.deepEqual(
+  emptyRequest.params,
+  must(zMessageMcpRequest, frames.emptyRequest.params, "empty request params"),
+);
+
+const emptyNote = must(zClientNotification, frames.emptyNotification, "empty notification");
+assert.equal(emptyNote.params.serverId, "");
+assert.equal(emptyNote.params.requestId, "");
+assert.equal(emptyNote.params.method, "");
+
 const caps = must(zMcpCapabilities, {}, "default capabilities");
 assert.equal(caps.http, false);
 assert.equal(caps.sse, false);

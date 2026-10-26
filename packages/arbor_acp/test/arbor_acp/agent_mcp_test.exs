@@ -10,7 +10,25 @@ defmodule Arbor.ACP.AgentMcpTest do
     @behaviour Arbor.ACP.Agent.Handler
 
     @impl true
-    def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid), fail_close: false}}
+    def init(opts) do
+      {:ok,
+       %{
+         test_pid: Keyword.fetch!(opts, :test_pid),
+         fail_close: false,
+         advertise_acp: Keyword.get(opts, :advertise_acp)
+       }}
+    end
+
+    @impl true
+    def handle_initialize(_params, _ctx, state) do
+      result =
+        case state.advertise_acp do
+          nil -> %{}
+          value -> %{"agentCapabilities" => %{"mcpCapabilities" => %{"acp" => value}}}
+        end
+
+      {:reply, result, state}
+    end
 
     @impl true
     def handle_new_session(params, _ctx, state) do
@@ -594,7 +612,7 @@ defmodule Arbor.ACP.AgentMcpTest do
     assert {:ok, []} = call_mcp(agent, transport, "tools/list", [])
   end
 
-  test "rejects an infinite timeout, an empty request id, and a non-object params" do
+  test "rejects an infinite timeout and a non-object params, and sends an empty request id" do
     {agent, transport, peer} = boot()
     open_session!(transport, 2, [acp("Tools", "tools")])
 
@@ -603,11 +621,71 @@ defmodule Arbor.ACP.AgentMcpTest do
     end
 
     assert_raise ArgumentError, fn ->
-      Agent.mcp_request(agent, "sess-1", "tools", "tools/list", request_id: "")
+      Agent.mcp_request(agent, "sess-1", "tools", "tools/list", request_id: <<0xFF>>)
     end
 
     assert {:error, :invalid_params} =
              Agent.mcp_request(agent, "sess-1", "tools", "tools/list", params: %{name: "echo"})
+
+    refute_outbound(peer)
+
+    task = async_mcp(agent, "tools/list", request_id: "")
+    request = receive_raw(transport)
+    assert request["params"]["requestId"] == ""
+    assert request["params"]["serverId"] == "tools"
+    reply_result(transport, request, %{"ok" => true})
+    assert {:ok, %{"ok" => true}} = Task.await(task)
+  end
+
+  test "binds an empty server id and calls it with an empty method" do
+    {agent, transport, _peer} = boot()
+    open_session!(transport, 2, [acp("", "")])
+
+    task = async_mcp(agent, "", server_id: "", request_id: "")
+    request = receive_raw(transport)
+    assert request["params"]["serverId"] == ""
+    assert request["params"]["requestId"] == ""
+    assert request["params"]["method"] == ""
+    reply_result(transport, request, [])
+    assert {:ok, []} = Task.await(task)
+  end
+
+  test "mcp_request follows the capabilities handle_initialize sent" do
+    quiet = Types.agent_capabilities(load_session: true, session_close: true)
+
+    {agent, transport, _peer} =
+      boot(agent_capabilities: quiet, handler_opts: [advertise_acp: true])
+
+    assert Arbor.ACP.Capabilities.supported?(
+             :sys.get_state(agent).agent_capabilities,
+             :mcp_acp
+           )
+
+    open_session!(transport, 2, [acp("Tools", "tools")])
+    task = async_mcp(agent, "tools/list")
+    monitor = Process.monitor(task.pid)
+
+    receive do
+      {:DOWN, ^monitor, :process, _pid, reason} ->
+        flunk("mcp_request finished before a frame: #{inspect(reason)}")
+    after
+      100 -> :ok
+    end
+
+    request = receive_raw(transport)
+    assert request["method"] == "mcp/message"
+    reply_result(transport, request, %{"tools" => []})
+    assert {:ok, %{"tools" => []}} = Task.await(task)
+    Process.demonitor(monitor, [:flush])
+
+    {agent, transport, peer} =
+      boot(agent_capabilities: acp_capabilities(), handler_opts: [advertise_acp: false])
+
+    refute Arbor.ACP.Capabilities.supported?(:sys.get_state(agent).agent_capabilities, :mcp_acp)
+    open_session!(transport, 2, [acp("Tools", "tools")])
+
+    assert {:error, {:unsupported_capability, :acp_mcp}} =
+             Agent.mcp_request(agent, "sess-1", "tools", "tools/list", timeout: 200)
 
     refute_outbound(peer)
   end
@@ -631,7 +709,7 @@ defmodule Arbor.ACP.AgentMcpTest do
     agent_opts =
       [
         handler: McpAgent,
-        handler_opts: [test_pid: self()],
+        handler_opts: Keyword.merge([test_pid: self()], Keyword.get(opts, :handler_opts, [])),
         transport: {:memory, peer},
         agent_capabilities: Keyword.get(opts, :agent_capabilities, acp_capabilities())
       ]

@@ -158,9 +158,10 @@ defmodule Arbor.ACP.Client.Handler do
   registered for that server id is `:handler`.
 
   `request` is the validated params object. `context` includes `:client`,
-  `:session_id`, `:server_id`, and `:request_id`. Return the handler state
-  as the last element: `{:ok, json, state}`, `{:mcp_error, error_map, state}`,
-  or `{:error, reason, state}`. The design note is `docs/MCP_OVER_ACP.md`.
+  `:session_id`, `:server_id`, `:request_id`, and `:token`. Pass `:token` to
+  `Arbor.ACP.Client.mcp_notify/5`. Return the handler state as the last
+  element: `{:ok, json, state}`, `{:mcp_error, error_map, state}`, or
+  `{:error, reason, state}`. The design note is `docs/MCP_OVER_ACP.md`.
   """
   @callback handle_mcp_request(session_id :: String.t(), request :: map(), map(), state()) ::
               {:ok, term(), state()}

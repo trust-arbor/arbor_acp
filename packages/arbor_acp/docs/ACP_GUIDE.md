@@ -232,12 +232,15 @@ configuration. ArborACP does not install or start those servers.
 The client includes `Types.acp_mcp_server/3` on `session/new`, `session/load`,
 `session/resume`, and `session/fork` only when that value is exactly `true`
 and a provider is registered for the server id. Without the advertisement or
-the provider, that entry is omitted and the session still opens.
+the provider, that entry is omitted, the session still opens, and the
+successful result lists it under `omittedMcpServers`.
 
 `Arbor.ACP.Agent.mcp_request/5` sends `mcp/message` for a server declared on
-that session. Register the provider with `Client.register_mcp_provider/3` or
-the `mcp_providers` start option. `Client.mcp_notify/5` sends a notification
-for a request that is still in flight. The design note is
+that session. It follows the capabilities the agent actually sent, including
+a `handle_initialize/3` override. Register the provider with
+`Client.register_mcp_provider/3` or the `mcp_providers` start option.
+`Client.mcp_notify/5` sends a notification for a request that is still in
+flight when called with that request's `:token`. The design note is
 [MCP-over-ACP](MCP_OVER_ACP.md).
 
 Serving an Arbor MCP server through a provider, so its tools are available on

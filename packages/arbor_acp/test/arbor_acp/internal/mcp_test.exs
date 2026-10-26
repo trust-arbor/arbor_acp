@@ -18,8 +18,11 @@ defmodule Arbor.ACP.Internal.McpTest do
                %{"type" => "acp", "name" => "again", "serverId" => "tools"}
              ])
 
+    assert {:ok, [""]} =
+             Mcp.acp_server_ids([%{"type" => "acp", "name" => "", "serverId" => ""}])
+
     assert {:error, :invalid_params} =
-             Mcp.acp_server_ids([%{"type" => "acp", "name" => "tools", "serverId" => ""}])
+             Mcp.acp_server_ids([%{"type" => "acp", "name" => "tools", "serverId" => <<0xFF>>}])
 
     assert {:error, :invalid_params} =
              Mcp.acp_server_ids([
@@ -77,9 +80,16 @@ defmodule Arbor.ACP.Internal.McpTest do
                "_meta" => %{}
              })
 
-    assert {:error, :invalid_params} =
+    assert :ok =
              Mcp.validate_message(%{
                "serverId" => "",
+               "requestId" => "",
+               "method" => ""
+             })
+
+    assert {:error, :invalid_params} =
+             Mcp.validate_message(%{
+               "serverId" => <<0xFF>>,
                "requestId" => "req-1",
                "method" => "tools/list"
              })
@@ -130,6 +140,49 @@ defmodule Arbor.ACP.Internal.McpTest do
     assert :error = Mcp.session_id(cleared, "docs")
   end
 
+  test "holds ids a lifecycle call keeps or releases until it finishes" do
+    table = commit_new(Mcp.new(), "open-1", "session-1", ["tools", "docs"])
+
+    assert {:ok, keeping} = Mcp.begin_existing(table, "session-1", "keep", ["tools", "extra"])
+    assert {:ok, "session-1"} = Mcp.session_id(keeping, "tools")
+    assert {:ok, "session-1"} = Mcp.session_id(keeping, "docs")
+    assert {:error, :pending} = Mcp.session_id(keeping, "extra")
+
+    assert {:error, :mcp_server_id_in_use} =
+             Mcp.begin_existing(keeping, "session-1", "drop", [])
+
+    assert {:error, :mcp_server_id_in_use} = Mcp.begin_new(keeping, "open-2", ["tools"])
+    assert {:error, :mcp_server_id_in_use} = Mcp.begin_new(keeping, "open-2", ["docs"])
+    assert {:error, :mcp_server_id_in_use} = Mcp.begin_new(keeping, "open-2", ["extra"])
+
+    {kept, []} = Mcp.commit_existing(keeping, "keep", "session-1", ["tools", "extra"])
+    assert {:ok, "session-1"} = Mcp.session_id(kept, "tools")
+    assert {:ok, "session-1"} = Mcp.session_id(kept, "extra")
+    refute Mcp.declared?(kept, "session-1", "docs")
+
+    {:ok, again} = Mcp.begin_existing(table, "session-1", "keep", ["tools"])
+    released = Mcp.abort(again, "keep")
+    assert {:ok, "session-1"} = Mcp.session_id(released, "tools")
+    assert {:ok, "session-1"} = Mcp.session_id(released, "docs")
+    assert {:error, :mcp_server_id_in_use} = Mcp.begin_new(released, "open-2", ["tools"])
+  end
+
+  test "a load that releases ids blocks a concurrent claim until it commits" do
+    table = commit_new(Mcp.new(), "open-1", "session-1", ["tools"])
+
+    assert {:ok, dropping} = Mcp.begin_existing(table, "session-1", "drop", [])
+    assert {:ok, "session-1"} = Mcp.session_id(dropping, "tools")
+
+    assert {:error, :mcp_server_id_in_use} =
+             Mcp.begin_existing(dropping, "session-1", "keep", ["tools"])
+
+    assert {:error, :mcp_server_id_in_use} = Mcp.begin_new(dropping, "open-2", ["tools"])
+
+    {cleared, []} = Mcp.commit_existing(dropping, "drop", "session-1", [])
+    assert :error = Mcp.session_id(cleared, "tools")
+    assert {:ok, _claimed} = Mcp.begin_new(cleared, "open-2", ["tools"])
+  end
+
   test "commit_existing drops in-flight requests for servers removed from the session" do
     table =
       Mcp.new()
@@ -168,7 +221,7 @@ defmodule Arbor.ACP.Internal.McpTest do
     assert {:error, :duplicate_request_id} =
              Mcp.track(tracked, entry("session-1", "tools", "req-2", 1), true)
 
-    assert %{outer_id: 1, ref: ^ref} = Mcp.lookup(tracked, "tools", "req-1")
+    assert %{outer_id: 1, ref: ^ref, token: ^ref} = Mcp.lookup(tracked, "tools", "req-1")
     assert %{request_id: "req-1"} = Mcp.lookup_outer(tracked, 1)
 
     {finished, open} = Mcp.finish(tracked, "tools", "req-1")

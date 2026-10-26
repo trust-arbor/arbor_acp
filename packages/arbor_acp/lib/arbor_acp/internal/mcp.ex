@@ -4,8 +4,12 @@ defmodule Arbor.ACP.Internal.Mcp do
   # Ownership for UNSTABLE MCP-over-ACP.
   #
   # A server id is pending for one in-flight session call or bound to one live
-  # session. An inner request id is unique per server while that request is in
-  # flight. Both agent and client keep this table beside their existing pending
+  # session. A lifecycle call that reuses a session also holds every id that
+  # session owns until the call commits or aborts, so a concurrent call cannot
+  # release or claim those ids. The hold does not change the bound session:
+  # in-flight MCP requests keep working. An inner request id is unique per
+  # server while that request is in flight, and its ref is the notify token.
+  # Both agent and client keep this table beside their existing pending
   # request maps; this module does not send messages or start timers.
 
   alias Arbor.ACP.Internal.Extensions
@@ -20,14 +24,18 @@ defmodule Arbor.ACP.Internal.Mcp do
           required(:server_id) => String.t(),
           required(:request_id) => String.t(),
           required(:outer_id) => integer() | String.t(),
-          optional(:ref) => reference()
+          optional(:ref) => reference(),
+          optional(:token) => reference()
+        }
+
+  @type server :: %{
+          required(:owner) => {:pending, term()} | {:session, String.t()},
+          optional(:held_by) => term()
         }
 
   @type t :: %__MODULE__{
           sessions: %{optional(String.t()) => MapSet.t(String.t())},
-          servers: %{
-            optional(String.t()) => %{owner: {:pending, term()} | {:session, String.t()}}
-          },
+          servers: %{optional(String.t()) => server()},
           requests: %{optional({String.t(), String.t()}) => entry()},
           by_outer: %{optional(term()) => {String.t(), String.t()}}
         }
@@ -115,9 +123,9 @@ defmodule Arbor.ACP.Internal.Mcp do
           {:ok, t()} | {:error, :duplicate_mcp_server_id | :mcp_server_id_in_use}
   def begin_existing(%__MODULE__{} = table, session_id, token, ids) when is_list(ids) do
     with :ok <- unique_ids(ids),
-         :ok <- reusable?(table, session_id, ids) do
-      new_ids = Enum.reject(ids, &owned_by?(table, session_id, &1))
-      {:ok, reserve(table, token, new_ids)}
+         :ok <- reusable?(table, session_id, ids),
+         :ok <- hold_free?(table, session_id, ids) do
+      {:ok, hold(table, session_id, token, ids)}
     end
   end
 
@@ -295,7 +303,8 @@ defmodule Arbor.ACP.Internal.Mcp do
   defp put_meta(wire, nil), do: wire
   defp put_meta(wire, meta), do: Map.put(wire, "_meta", meta)
 
-  defp text?(value), do: is_binary(value) and value != "" and String.valid?(value)
+  # SDK 1.9 types these as strings with no minLength, so "" is a real id.
+  defp text?(value), do: is_binary(value) and String.valid?(value)
 
   defp fetch_field(map, keys) do
     Enum.find_value(keys, fn key ->
@@ -329,6 +338,43 @@ defmodule Arbor.ACP.Internal.Mcp do
     if free?, do: :ok, else: {:error, :mcp_server_id_in_use}
   end
 
+  # The requested ids and every id this session currently owns must be free of
+  # another in-flight lifecycle call. Pending ids and held ids are not.
+  defp hold_free?(table, session_id, ids) do
+    targets = MapSet.union(MapSet.new(ids), servers_for(table, session_id))
+
+    free? =
+      Enum.all?(targets, fn id ->
+        case Map.get(table.servers, id) do
+          %{held_by: _token} -> false
+          %{owner: {:pending, _token}} -> false
+          _free -> true
+        end
+      end)
+
+    if free?, do: :ok, else: {:error, :mcp_server_id_in_use}
+  end
+
+  defp hold(table, session_id, token, ids) do
+    targets = MapSet.union(MapSet.new(ids), servers_for(table, session_id))
+
+    servers =
+      Enum.reduce(targets, table.servers, fn id, servers ->
+        case Map.get(servers, id) do
+          %{owner: {:session, ^session_id}} = server ->
+            Map.put(servers, id, Map.put(server, :held_by, token))
+
+          nil ->
+            Map.put(servers, id, %{owner: {:pending, token}})
+
+          _taken ->
+            servers
+        end
+      end)
+
+    %{table | servers: servers}
+  end
+
   defp reserve(table, _token, []), do: table
 
   defp reserve(table, token, ids) do
@@ -343,7 +389,16 @@ defmodule Arbor.ACP.Internal.Mcp do
   defp clear_pending(table, token) do
     servers =
       Enum.reduce(table.servers, %{}, fn {id, server}, acc ->
-        if server.owner == {:pending, token}, do: acc, else: Map.put(acc, id, server)
+        cond do
+          server.owner == {:pending, token} ->
+            acc
+
+          Map.get(server, :held_by) == token ->
+            Map.put(acc, id, Map.delete(server, :held_by))
+
+          true ->
+            Map.put(acc, id, server)
+        end
       end)
 
     %{table | servers: servers}
@@ -415,7 +470,7 @@ defmodule Arbor.ACP.Internal.Mcp do
     }
 
     case Map.get(entry, :ref) do
-      ref when is_reference(ref) -> Map.put(stored, :ref, ref)
+      ref when is_reference(ref) -> Map.merge(stored, %{ref: ref, token: ref})
       _other -> stored
     end
   end

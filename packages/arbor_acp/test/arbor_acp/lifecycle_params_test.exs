@@ -125,6 +125,18 @@ defmodule Arbor.ACP.LifecycleParamsTest do
     test "rejects a malformed acp server before omission and rejects duplicate kept ids" do
       assert {:error, {:invalid_params, :mcp_server}} =
                LifecycleParams.select_acp_servers(
+                 [%{"type" => "acp", "name" => <<0xFF>>, "serverId" => "tools"}],
+                 %{},
+                 []
+               )
+
+      assert {:ok,
+              %{
+                servers: [],
+                server_ids: [],
+                omitted: [%{id: "tools", reason: :mcp_acp_not_advertised}]
+              }} =
+               LifecycleParams.select_acp_servers(
                  [%{"type" => "acp", "name" => "", "serverId" => "tools"}],
                  %{},
                  []

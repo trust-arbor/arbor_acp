@@ -418,8 +418,8 @@ defmodule Arbor.ACP.Agent do
 
   UNSTABLE. `:timeout` is a finite deadline in milliseconds and defaults to
   30 seconds. It is also capped by `:pending_request_timeout`. `:request_id`
-  sets the inner id. `:params` is a string-keyed JSON object or `nil`.
-  `:meta` is optional ACP `_meta`.
+  sets the inner id and may be empty, matching the SDK schema. `:params` is a
+  string-keyed JSON object or `nil`. `:meta` is optional ACP `_meta`.
 
   Returns `{:ok, result}` (including `{:ok, nil}`), `{:error, {:mcp_error, map}}`
   for an inner MCP error, or `{:error, reason}` when the request is not sent
@@ -1408,8 +1408,13 @@ defmodule Arbor.ACP.Agent do
       |> Map.merge(result || %{})
       |> Map.put("protocolVersion", state.protocol_version)
 
-    msg = Protocol.encode_response(result, id)
-    send_without_reply(msg, %{state | status: :ready})
+    state = %{
+      state
+      | status: :ready,
+        agent_capabilities: advertised_capabilities(result, state)
+    }
+
+    send_without_reply(Protocol.encode_response(result, id), state)
   end
 
   defp handle_initialize_result(id, {:error, reason}, state) do
@@ -1419,6 +1424,12 @@ defmodule Arbor.ACP.Agent do
   defp handle_initialize_result(id, :noreply, state) do
     msg = Protocol.encode_error(-32603, "initialize cannot return :noreply", nil, id)
     send_without_reply(msg, state)
+  end
+
+  defp advertised_capabilities(result, state) do
+    Map.get(result, "agentCapabilities") ||
+      Map.get(result, :agentCapabilities) ||
+      state.agent_capabilities
   end
 
   defp handle_session_result(id, {:reply, result}, state) do
@@ -1810,13 +1821,13 @@ defmodule Arbor.ACP.Agent do
       nil ->
         "mcp-" <> Integer.to_string(System.unique_integer([:positive]))
 
-      request_id when is_binary(request_id) and request_id != "" ->
+      request_id when is_binary(request_id) ->
         if String.valid?(request_id),
           do: request_id,
-          else: raise(ArgumentError, "MCP request_id must be a non-empty string")
+          else: raise(ArgumentError, "MCP request_id must be a valid string")
 
       _invalid ->
-        raise ArgumentError, "MCP request_id must be a non-empty string"
+        raise ArgumentError, "MCP request_id must be a valid string"
     end
   end
 

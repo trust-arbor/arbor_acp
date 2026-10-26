@@ -501,12 +501,17 @@ defmodule Arbor.ACP.Client do
   end
 
   @doc """
-  UNSTABLE. Sends an `mcp/message` notification for an in-flight MCP request.
+  UNSTABLE. Sends an `mcp/message` notification for one in-flight MCP request.
 
-  Returns `{:error, :unknown_mcp_request}` when that server and request id are
-  not active. `:params` and `:meta` are string-keyed JSON objects or `nil`.
-  Calling this from the client process raises `ArgumentError`. The design note
-  is `docs/MCP_OVER_ACP.md`.
+  `:token` is the reference from the provider context. The notification is
+  sent only when that token still identifies the active request. A missing
+  token, a finished or cancelled request, or a token from another session
+  returns `{:error, :unknown_mcp_request}`.
+
+  `:session_id`, when set, must be the session that owns the request.
+  `:params` and `:meta` are string-keyed JSON objects or `nil`. Calling this
+  from the client process raises `ArgumentError`. The design note is
+  `docs/MCP_OVER_ACP.md`.
   """
   @spec mcp_notify(GenServer.server(), String.t(), String.t(), String.t(), keyword()) ::
           :ok | {:error, term()}
@@ -516,14 +521,16 @@ defmodule Arbor.ACP.Client do
       raise ArgumentError, "mcp_notify/5 cannot be called from the client process"
     end
 
-    opts = Keyword.validate!(opts, [:params, :meta, :timeout])
+    opts = Keyword.validate!(opts, [:params, :meta, :timeout, :token, :session_id])
 
     with :ok <- json_object_option(Keyword.get(opts, :params)),
-         :ok <- json_object_option(Keyword.get(opts, :meta)) do
+         :ok <- json_object_option(Keyword.get(opts, :meta)),
+         :ok <- notify_token(Keyword.get(opts, :token)),
+         :ok <- notify_session(Keyword.get(opts, :session_id)) do
       Call.call(
         client,
         {:mcp_notify, server_id, request_id, method, Keyword.get(opts, :params),
-         Keyword.get(opts, :meta)},
+         Keyword.get(opts, :meta), Keyword.get(opts, :token), Keyword.get(opts, :session_id)},
         Call.timeout!(opts)
       )
     end
@@ -849,22 +856,30 @@ defmodule Arbor.ACP.Client do
     end
   end
 
-  def handle_call({:mcp_notify, server_id, request_id, method, params, meta}, _from, state) do
+  def handle_call(
+        {:mcp_notify, server_id, request_id, method, params, meta, token, session_id},
+        _from,
+        state
+      ) do
     case Mcp.lookup(state.mcp, server_id, request_id) do
-      nil ->
-        {:reply, {:error, :unknown_mcp_request}, state}
+      %{token: ^token, session_id: owner} when is_reference(token) ->
+        if session_id == nil or session_id == owner do
+          message =
+            Protocol.encode_mcp_message_notification(server_id, request_id, method,
+              params: params,
+              meta: meta
+            )
 
-      _entry ->
-        message =
-          Protocol.encode_mcp_message_notification(server_id, request_id, method,
-            params: params,
-            meta: meta
-          )
-
-        case do_send(message, state) do
-          {:ok, state} -> {:reply, :ok, state}
-          {:error, reason} -> {:reply, {:error, reason}, state}
+          case do_send(message, state) do
+            {:ok, state} -> {:reply, :ok, state}
+            {:error, reason} -> {:reply, {:error, reason}, state}
+          end
+        else
+          {:reply, {:error, :unknown_mcp_request}, state}
         end
+
+      _missing_or_stale ->
+        {:reply, {:error, :unknown_mcp_request}, state}
     end
   end
 
@@ -957,6 +972,7 @@ defmodule Arbor.ACP.Client do
         {:noreply, state}
 
       {request, pending} ->
+        stop_mcp_worker(request)
         state = finish_mcp_request(%{state | pending_agent_requests: pending}, request)
 
         message =
@@ -1073,6 +1089,20 @@ defmodule Arbor.ACP.Client do
 
       true ->
         {:noreply, state}
+    end
+  end
+
+  def handle_info({:acp_mcp_worker, ref, pid}, state) when is_reference(ref) and is_pid(pid) do
+    case Map.get(state.pending_agent_requests, ref) do
+      nil ->
+        Process.exit(pid, :kill)
+        {:noreply, state}
+
+      request ->
+        pending =
+          PendingRequests.put(state.pending_agent_requests, ref, Map.put(request, :worker, pid))
+
+        {:noreply, %{state | pending_agent_requests: pending}}
     end
   end
 
@@ -1564,11 +1594,12 @@ defmodule Arbor.ACP.Client do
       {{from, telemetry_tag, monitor_ref, timer_ref}, pending} ->
         cancel_timer(timer_ref)
         Process.demonitor(monitor_ref, [:flush])
+        omitted = mcp_plan_omissions(state, id)
         state = apply_session_resolution(telemetry_tag, reply, state)
         state = settle_mcp_plan(id, telemetry_tag, reply, state)
         emit_resolve_telemetry(telemetry_tag, reply)
         {reply, state} = finish_prompt_collection(telemetry_tag, reply, state)
-        GenServer.reply(from, reply)
+        GenServer.reply(from, with_omitted_servers(reply, omitted))
 
         %{
           state
@@ -2268,11 +2299,47 @@ defmodule Arbor.ACP.Client do
 
       {request, pending} ->
         cancel_timer(request.timer_ref)
-        state = finish_mcp_request(%{state | pending_agent_requests: pending}, request)
-        response = encode_handler_response(request, result)
-        send_to_transport(response, state)
+        state = %{state | pending_agent_requests: pending}
+        deliver_handler_response(state, request, encode_handler_response(request, result))
+    end
+  end
+
+  defp deliver_handler_response(state, request, response) do
+    case do_send(response, state) do
+      {:ok, state} ->
+        finish_mcp_request(state, request)
+
+      {:error, :frame_too_large} ->
+        Logger.warning("ACP handler result exceeded the frame cap",
+          request_id_hash: LogSummary.fingerprint(request.id)
+        )
+
+        state = send_handler_overflow(state, request)
+        finish_mcp_request(state, request)
+
+      {:error, reason} ->
+        Logger.warning("ACP send failed", reason_shape: LogSummary.describe(reason))
+        finish_mcp_request(state, request)
+    end
+  end
+
+  defp send_handler_overflow(state, request) do
+    case do_send(overflow_error(request), state) do
+      {:ok, state} ->
+        state
+
+      {:error, reason} ->
+        Logger.warning("ACP send failed", reason_shape: LogSummary.describe(reason))
         state
     end
+  end
+
+  defp overflow_error(%{kind: :mcp, id: id}) do
+    Protocol.encode_error(-32603, "MCP provider unavailable", nil, id)
+  end
+
+  defp overflow_error(%{id: id}) do
+    Protocol.encode_error(-32603, "Client handler failed", nil, id)
   end
 
   defp encode_handler_response(%{kind: :extension, id: id}, {:extension, {:ok, result}}) do
@@ -2374,6 +2441,7 @@ defmodule Arbor.ACP.Client do
     state =
       Enum.reduce(state.pending_agent_requests, state, fn {_ref, request}, state ->
         cancel_timer(request.timer_ref)
+        stop_mcp_worker(request)
         response = Protocol.encode_error(-32603, reason, nil, request.id)
         send_to_transport(response, state)
         finish_mcp_request(state, request)
@@ -2415,6 +2483,7 @@ defmodule Arbor.ACP.Client do
     state =
       Enum.reduce(to_cancel, state, fn {_ref, request}, state ->
         cancel_timer(request.timer_ref)
+        stop_mcp_worker(request)
         response = Protocol.encode_request_cancelled_error(request.id)
         send_to_transport(response, state)
         finish_mcp_request(state, request)
@@ -2539,7 +2608,7 @@ defmodule Arbor.ACP.Client do
       {:error, reason} ->
         {:reply, {:error, reason}, state}
 
-      {:ok, lifecycle_opts, ids} ->
+      {:ok, lifecycle_opts, ids, omitted} ->
         message = encoder.(lifecycle_opts)
 
         case reserve_mcp(state, message["id"], mcp_kind, ids) do
@@ -2547,7 +2616,7 @@ defmodule Arbor.ACP.Client do
             {:reply, {:error, {:invalid_params, reason}}, state}
 
           {:ok, state} ->
-            state = put_mcp_plan(state, message["id"], mcp_kind, ids)
+            state = put_mcp_plan(state, message["id"], mcp_kind, ids, omitted)
 
             case send_request(message, from, state, telemetry_tag) do
               {:reply, {:error, _reason} = error, state} ->
@@ -2568,7 +2637,7 @@ defmodule Arbor.ACP.Client do
          ) do
       {:ok, %{servers: servers, server_ids: ids, omitted: omitted}} ->
         log_mcp_omissions(omitted)
-        {:ok, Keyword.put(lifecycle_opts, :mcp_servers, servers), ids}
+        {:ok, Keyword.put(lifecycle_opts, :mcp_servers, servers), ids, omitted}
 
       {:error, reason} ->
         {:error, reason}
@@ -2579,9 +2648,17 @@ defmodule Arbor.ACP.Client do
 
   defp log_mcp_omissions(omitted) do
     Enum.each(omitted, fn %{id: id, reason: reason} ->
+      hash = LogSummary.fingerprint(id)
+
       Logger.info("ACP client omitted an MCP-over-ACP server",
         reason: reason,
-        server_id_hash: LogSummary.fingerprint(id)
+        server_id_hash: hash
+      )
+
+      :telemetry.execute(
+        [:arbor_acp, :mcp, :server, :omitted],
+        %{count: 1},
+        %{reason: reason, server_id_hash: hash}
       )
     end)
   end
@@ -2600,9 +2677,28 @@ defmodule Arbor.ACP.Client do
     end
   end
 
-  defp put_mcp_plan(state, token, kind, ids) do
-    %{state | mcp_plans: Map.put(state.mcp_plans, token, %{kind: kind, ids: ids})}
+  defp put_mcp_plan(state, token, kind, ids, omitted) do
+    plan = %{kind: kind, ids: ids, omitted: omitted}
+    %{state | mcp_plans: Map.put(state.mcp_plans, token, plan)}
   end
+
+  defp mcp_plan_omissions(state, token) do
+    case Map.get(state.mcp_plans, token) do
+      %{omitted: omitted} when is_list(omitted) -> omitted
+      _missing -> []
+    end
+  end
+
+  defp with_omitted_servers({:ok, result}, omitted) when is_map(result) and omitted != [] do
+    reported =
+      Enum.map(omitted, fn %{id: id, reason: reason} ->
+        %{"serverId" => id, "reason" => Atom.to_string(reason)}
+      end)
+
+    {:ok, Map.put(result, "omittedMcpServers", reported)}
+  end
+
+  defp with_omitted_servers(reply, _omitted), do: reply
 
   defp abort_mcp_plan(state, token) do
     {plan, plans} = Map.pop(state.mcp_plans, token)
@@ -2671,6 +2767,7 @@ defmodule Arbor.ACP.Client do
 
       {request, pending} ->
         cancel_timer(request.timer_ref)
+        stop_mcp_worker(request)
         send_to_transport(Protocol.encode_request_cancelled_error(outer_id), state)
         %{state | pending_agent_requests: pending}
     end
@@ -2734,8 +2831,8 @@ defmodule Arbor.ACP.Client do
     end
   end
 
-  defp dispatch_provider(state, ref, pid, session_id, params) when is_pid(pid) do
-    send(pid, {:acp_mcp_request, ref, mcp_context(state, session_id, params), params})
+  defp dispatch_provider(_state, ref, pid, session_id, params) when is_pid(pid) do
+    send(pid, {:acp_mcp_request, ref, mcp_context(session_id, params, ref), params})
   end
 
   defp dispatch_provider(state, ref, provider, session_id, params) do
@@ -2743,17 +2840,18 @@ defmodule Arbor.ACP.Client do
       state.handler_pid,
       ref,
       provider,
-      mcp_context(state, session_id, params),
+      mcp_context(session_id, params, ref),
       params
     )
   end
 
-  defp mcp_context(_state, session_id, params) do
+  defp mcp_context(session_id, params, token) do
     %{
       client: self(),
       session_id: session_id,
       server_id: params["serverId"],
-      request_id: params["requestId"]
+      request_id: params["requestId"],
+      token: token
     }
   end
 
@@ -2785,6 +2883,7 @@ defmodule Arbor.ACP.Client do
     state =
       Enum.reduce(to_fail, state, fn {_ref, request}, state ->
         cancel_timer(request.timer_ref)
+        stop_mcp_worker(request)
 
         send_to_transport(
           Protocol.encode_error(-32_603, "MCP provider unavailable", nil, request.id),
@@ -2866,7 +2965,22 @@ defmodule Arbor.ACP.Client do
     Mcp.session_id(state.mcp, server_id) != :error
   end
 
-  defp valid_server_id?(id), do: is_binary(id) and id != "" and String.valid?(id)
+  defp valid_server_id?(id), do: is_binary(id) and String.valid?(id)
+
+  defp notify_token(nil), do: :ok
+  defp notify_token(token) when is_reference(token), do: :ok
+  defp notify_token(_token), do: {:error, :invalid_params}
+
+  defp notify_session(nil), do: :ok
+
+  defp notify_session(session_id) when is_binary(session_id) do
+    if String.valid?(session_id), do: :ok, else: {:error, :invalid_params}
+  end
+
+  defp notify_session(_session_id), do: {:error, :invalid_params}
+
+  defp stop_mcp_worker(%{worker: pid}) when is_pid(pid), do: Process.exit(pid, :kill)
+  defp stop_mcp_worker(_request), do: :ok
 
   defp json_object_option(nil), do: :ok
 

@@ -1267,12 +1267,13 @@ defmodule Arbor.ACP.Types do
 
   A client includes this in `mcpServers` only when the agent advertised
   `mcpCapabilities.acp == true` and a provider is registered for `server_id`.
-  `name` and `server_id` must be non-empty strings.
+  `name` and `server_id` are strings. Empty strings are valid, matching the
+  SDK schema. Invalid UTF-8 is rejected.
   """
   @spec acp_mcp_server(String.t(), String.t(), keyword()) :: acp_mcp_server()
   def acp_mcp_server(name, server_id, opts \\ []) when is_list(opts) do
     if not (mcp_id?(name) and mcp_id?(server_id)) do
-      raise ArgumentError, "ACP MCP server name and server_id must be non-empty strings"
+      raise ArgumentError, "ACP MCP server name and server_id must be valid strings"
     end
 
     %{"type" => "acp", "name" => name, "serverId" => server_id}
@@ -1360,7 +1361,7 @@ defmodule Arbor.ACP.Types do
     })
   end
 
-  defp mcp_id?(value), do: is_binary(value) and value != "" and String.valid?(value)
+  defp mcp_id?(value), do: is_binary(value) and String.valid?(value)
 
   defp maybe_put_bool(map, key, opts, opt_key) do
     case Keyword.get(opts, opt_key) do

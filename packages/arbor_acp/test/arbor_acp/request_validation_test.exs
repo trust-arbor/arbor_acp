@@ -358,11 +358,18 @@ defmodule Arbor.ACP.RequestValidationTest do
                })
     end
 
-    test "rejects an empty id, a missing method, and a non-object params value" do
-      assert {:error, :invalid_params} =
+    test "accepts an empty request id and rejects a missing method, invalid UTF-8, and a non-object params value" do
+      assert :ok =
                RequestValidation.validate_agent_request("mcp/message", %{
                  "serverId" => "tools",
                  "requestId" => "",
+                 "method" => "tools/list"
+               })
+
+      assert {:error, :invalid_params} =
+               RequestValidation.validate_agent_request("mcp/message", %{
+                 "serverId" => "tools",
+                 "requestId" => <<0xFF>>,
                  "method" => "tools/list"
                })
 

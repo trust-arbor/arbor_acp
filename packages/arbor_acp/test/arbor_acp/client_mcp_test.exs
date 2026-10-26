@@ -31,6 +31,13 @@ defmodule Arbor.ACP.ClientMcpTest do
         "tools/list" ->
           {:ok, %{"tools" => [], "n" => state.seen}, %{state | seen: state.seen + 1}}
 
+        "block" ->
+          send(state.test_pid, {:blocking, self()})
+
+          receive do
+            :release -> {:ok, %{"released" => true}, state}
+          end
+
         "fail" ->
           {:error, :nope, state}
 
@@ -38,6 +45,19 @@ defmodule Arbor.ACP.ClientMcpTest do
           {:mcp_error, %{"code" => -32_001, "message" => "missing"}, state}
       end
     end
+  end
+
+  defmodule BlockingProvider do
+    @behaviour Arbor.ACP.Client.McpProvider
+
+    @impl true
+    def handle_mcp_request(_context, %{"method" => "block"}) do
+      receive do
+        :release -> {:ok, %{"released" => true}}
+      end
+    end
+
+    def handle_mcp_request(_context, _request), do: {:ok, %{"tools" => []}}
   end
 
   defmodule ModuleProvider do
@@ -91,10 +111,22 @@ defmodule Arbor.ACP.ClientMcpTest do
     assert context.client == ctx.client
     assert context.session_id == "sess-1"
     assert context.server_id == "tools"
+    assert is_reference(context.token)
     assert params["requestId"] == "r1"
+
+    assert {:error, :unknown_mcp_request} =
+             Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress")
+
+    assert {:error, :unknown_mcp_request} =
+             Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress",
+               token: context.token,
+               session_id: "other"
+             )
 
     assert :ok =
              Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress",
+               token: context.token,
+               session_id: "sess-1",
                params: %{"progress" => 1},
                meta: %{"source" => "provider"}
              )
@@ -445,10 +477,11 @@ defmodule Arbor.ACP.ClientMcpTest do
     ctx = boot(mcp_providers: %{"tools" => provider}, max_frame_bytes: 4_096)
     open_session(ctx, [acp("Tools", "tools")])
     _id = agent_mcp(ctx, "tools", "r1", "tools/list")
-    assert_receive {:provider, _ref, _context, _params}
+    assert_receive {:provider, _ref, context, _params}
 
     assert {:error, :frame_too_large} =
              Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress",
+               token: context.token,
                params: %{"blob" => String.duplicate("x", 8_000)}
              )
 
@@ -456,6 +489,7 @@ defmodule Arbor.ACP.ClientMcpTest do
 
     assert :ok =
              Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress",
+               token: context.token,
                params: %{"progress" => 1}
              )
 
@@ -467,11 +501,15 @@ defmodule Arbor.ACP.ClientMcpTest do
     ctx = boot(mcp_providers: %{"tools" => provider})
     open_session(ctx, [acp("Tools", "tools")])
     id = agent_mcp(ctx, "tools", "r1", "tools/list")
-    assert_receive {:provider, ref, _context, _params}
+    assert_receive {:provider, ref, context, _params}
     :ok = Client.cancel(ctx.client, "sess-1")
     assert %{"method" => "session/cancel"} = await_frame()
 
-    assert :ok = Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress")
+    assert :ok =
+             Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress",
+               token: context.token
+             )
+
     assert %{"method" => "mcp/message"} = await_frame()
 
     send_json(ctx.outbound, Protocol.encode_cancel_request(id))
@@ -495,6 +533,9 @@ defmodule Arbor.ACP.ClientMcpTest do
              Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress",
                params: %{a: 1}
              )
+
+    assert {:error, :invalid_params} =
+             Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress", token: "nope")
   end
 
   test "start_link rejects a provider map that cannot be installed" do
@@ -509,7 +550,198 @@ defmodule Arbor.ACP.ClientMcpTest do
     assert {:error, {:invalid_params, :mcp_provider}} =
              start_quietly(mcp_providers: %{"gone" => pid}, _skip_connect: true)
 
-    assert {:error, :invalid_params} = register_empty()
+    ctx = boot()
+    assert :ok = Client.register_mcp_provider(ctx.client, "", :handler)
+
+    assert {:error, :invalid_params} =
+             Client.register_mcp_provider(ctx.client, <<0xFF>>, :handler)
+  end
+
+  test "a closed session's notify token cannot reach the request that reused its ids" do
+    provider = provider_loop(self())
+    ctx = boot(mcp_providers: %{"tools" => provider})
+    open_session(ctx, [acp("Tools", "tools")])
+    id = agent_mcp(ctx, "tools", "r1", "tools/list")
+    assert_receive {:provider, first_ref, first, _params}
+
+    task = Task.async(fn -> Client.close_session(ctx.client, "sess-1") end)
+    close = await_frame()
+    send_result(ctx.outbound, close["id"], %{})
+    assert_cancelled(await_frame(), id)
+    assert {:ok, %{}} = Task.await(task, 5_000)
+    send(provider, {:reply, first_ref, {:ok, %{"late" => true}}})
+
+    open_session(ctx, [acp("Tools", "tools")], "sess-2")
+    _id = agent_mcp(ctx, "tools", "r1", "tools/list")
+    assert_receive {:provider, _ref, second, _params}
+
+    assert {:error, :unknown_mcp_request} =
+             Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress",
+               token: first.token
+             )
+
+    refute_outbound(ctx)
+
+    assert :ok =
+             Client.mcp_notify(ctx.client, "tools", "r1", "notifications/progress",
+               token: second.token,
+               params: %{"progress" => 1}
+             )
+
+    assert %{"method" => "mcp/message"} = await_frame()
+  end
+
+  test "a load that keeps a server id holds it against a concurrent release" do
+    provider = provider_loop(self())
+    ctx = boot(mcp_providers: %{"tools" => provider})
+    open_session(ctx, [acp("Tools", "tools")])
+
+    task =
+      Task.async(fn ->
+        Client.load_session(ctx.client, "sess-1", "/tmp", mcp_servers: [acp("Tools", "tools")])
+      end)
+
+    request = await_frame()
+    assert request["method"] == "session/load"
+
+    assert {:error, {:invalid_params, :mcp_server_id_in_use}} =
+             Client.load_session(ctx.client, "sess-1", "/tmp", mcp_servers: [], timeout: 200)
+
+    refute_outbound(ctx)
+    send_result(ctx.outbound, request["id"], %{})
+    assert {:ok, _} = Task.await(task, 5_000)
+
+    id = agent_mcp(ctx, "tools", "t1", "tools/list")
+    assert_receive {:provider, ref, _context, _params}
+    send(provider, {:reply, ref, {:ok, %{"ok" => true}}})
+    assert %{"id" => ^id, "result" => %{"result" => %{"ok" => true}}} = await_frame()
+  end
+
+  test "an oversized provider result becomes an outer error and finishes the request" do
+    provider = provider_loop(self())
+    ctx = boot(mcp_providers: %{"tools" => provider}, max_frame_bytes: 512)
+    open_session(ctx, [acp("Tools", "tools")])
+    id = agent_mcp(ctx, "tools", "huge", "tools/list")
+    assert_receive {:provider, ref, context, _params}
+
+    send(provider, {:reply, ref, {:ok, %{"blob" => String.duplicate("x", 2_000)}}})
+    assert_provider_unavailable(await_frame(), id)
+
+    assert {:error, :unknown_mcp_request} =
+             Client.mcp_notify(ctx.client, "tools", "huge", "notifications/progress",
+               token: context.token
+             )
+
+    id = agent_mcp(ctx, "tools", "small", "tools/list")
+    assert_receive {:provider, ref, _context, _params}
+    send(provider, {:reply, ref, {:ok, %{"ok" => true}}})
+    assert %{"id" => ^id, "result" => %{"result" => %{"ok" => true}}} = await_frame()
+  end
+
+  test "reports omitted ACP servers on the session result and emits telemetry" do
+    secret = "secret-server-#{System.unique_integer([:positive])}"
+    ctx = boot(advertise: false)
+    handler_id = "mcp-omitted-#{System.unique_integer([:positive])}"
+    parent = self()
+
+    :telemetry.attach(
+      handler_id,
+      [:arbor_acp, :mcp, :server, :omitted],
+      fn event, measurements, metadata, _config ->
+        send(parent, {:omitted, event, measurements, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      with_info_log(fn ->
+        task =
+          Task.async(fn ->
+            Client.new_session(ctx.client, "/tmp", mcp_servers: [acp("Hidden", secret), stdio()])
+          end)
+
+        request = await_frame()
+        assert request["params"]["mcpServers"] == [stdio()]
+        send_result(ctx.outbound, request["id"], %{"sessionId" => "sess-1"})
+        assert {:ok, result} = Task.await(task, 5_000)
+        send(parent, {:session, result})
+      end)
+
+    assert_receive {:session, result}
+    assert result["sessionId"] == "sess-1"
+
+    assert result["omittedMcpServers"] == [
+             %{"serverId" => secret, "reason" => "mcp_acp_not_advertised"}
+           ]
+
+    assert_receive {:omitted, [:arbor_acp, :mcp, :server, :omitted], %{count: 1}, metadata}
+    assert metadata.reason == :mcp_acp_not_advertised
+    assert metadata.server_id_hash == LogSummary.fingerprint(secret)
+    refute Map.has_key?(metadata, :id)
+    refute log =~ secret
+
+    :telemetry.detach(handler_id)
+
+    task = Task.async(fn -> Client.new_session(ctx.client, "/tmp", mcp_servers: [stdio()]) end)
+    request = await_frame()
+    send_result(ctx.outbound, request["id"], %{"sessionId" => "sess-2"})
+    assert {:ok, plain} = Task.await(task, 5_000)
+    refute Map.has_key?(plain, "omittedMcpServers")
+  end
+
+  test "accepts an empty ACP server id and request id" do
+    provider = provider_loop(self())
+    ctx = boot(mcp_providers: %{"" => provider})
+    open_session(ctx, [acp("", "")])
+    id = agent_mcp(ctx, "", "", "tools/list")
+    assert_receive {:provider, ref, context, params}
+    assert context.server_id == ""
+    assert context.request_id == ""
+    assert params["method"] == "tools/list"
+    send(provider, {:reply, ref, {:ok, %{"ok" => true}}})
+    assert %{"id" => ^id, "result" => %{"result" => %{"ok" => true}}} = await_frame()
+  end
+
+  test "a timed-out module provider is stopped and the next request still runs" do
+    ctx =
+      boot(
+        mcp_providers: %{"tools" => BlockingProvider},
+        handler_request_timeout: 1_000
+      )
+
+    open_session(ctx, [acp("Tools", "tools")], "sess-block")
+    id = agent_mcp(ctx, "tools", "slow", "block")
+    worker = await_mcp_worker(ctx.client)
+    assert is_pid(worker)
+    monitor = Process.monitor(worker)
+    assert_provider_unavailable(await_frame(), id)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}
+
+    id = agent_mcp(ctx, "tools", "next", "tools/list")
+    assert %{"id" => ^id, "result" => %{"result" => %{"tools" => []}}} = await_frame()
+  end
+
+  test "a timed-out handler provider is stopped and the next request still runs" do
+    ctx =
+      boot(
+        handler: McpHandler,
+        handler_opts: [test_pid: self()],
+        mcp_providers: %{"app" => :handler},
+        handler_request_timeout: 80
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-handler")
+    id = agent_mcp(ctx, "app", "slow", "block")
+    assert_receive {:blocking, worker}
+    monitor = Process.monitor(worker)
+    assert_provider_unavailable(await_frame(), id)
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}
+
+    id = agent_mcp(ctx, "app", "next", "tools/list")
+    assert_receive {:handler_mcp, "sess-handler", %{"method" => "tools/list"}, _context}
+    assert %{"id" => ^id, "result" => %{"result" => %{"n" => 0}}} = await_frame()
   end
 
   defp start_quietly(opts) do
@@ -522,11 +754,6 @@ defmodule Arbor.ACP.ClientMcpTest do
 
     assert_receive {:started, result}, 5_000
     result
-  end
-
-  defp register_empty do
-    ctx = boot()
-    Client.register_mcp_provider(ctx.client, "", :handler)
   end
 
   defp with_info_log(fun) do
@@ -663,6 +890,26 @@ defmodule Arbor.ACP.ClientMcpTest do
   defp await_frame do
     assert_receive {:from_client, message}, 5_000
     message
+  end
+
+  defp await_mcp_worker(client, attempts \\ 15) do
+    pending = :sys.get_state(client).pending_agent_requests
+
+    case Enum.find_value(pending, fn {_ref, request} ->
+           if request.kind == :mcp, do: Map.get(request, :worker)
+         end) do
+      pid when is_pid(pid) ->
+        pid
+
+      _missing when attempts > 0 ->
+        receive do
+        after
+          20 -> await_mcp_worker(client, attempts - 1)
+        end
+
+      _missing ->
+        nil
+    end
   end
 
   defp send_result(outbound, id, result) do
