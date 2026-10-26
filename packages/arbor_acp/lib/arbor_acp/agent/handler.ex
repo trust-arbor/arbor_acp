@@ -124,6 +124,13 @@ defmodule Arbor.ACP.Agent.Handler do
   @doc "Handles an underscore-prefixed notification; return `{:ok, state}`."
   @callback handle_extension_notification(String.t(), map(), context(), state()) :: {:ok, state()}
 
+  @doc """
+  Optionally receives an UNSTABLE `mcp/message` notification for an in-flight
+  MCP request. `params` is the notification object. Return `{:ok, state}`.
+  """
+  @callback handle_mcp_notification(session_id :: String.t(), params :: map(), state()) ::
+              {:ok, state()}
+
   @doc "Called when the handler runner terminates."
   @callback terminate(reason :: any(), state()) :: :ok
 
@@ -143,6 +150,7 @@ defmodule Arbor.ACP.Agent.Handler do
     handle_cancel: 3,
     handle_extension_request: 4,
     handle_extension_notification: 4,
+    handle_mcp_notification: 3,
     terminate: 2
   ]
 end

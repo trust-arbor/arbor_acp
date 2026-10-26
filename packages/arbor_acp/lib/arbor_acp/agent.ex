@@ -36,6 +36,8 @@ defmodule Arbor.ACP.Agent do
   alias Arbor.ACP.Agent.Transport.Memory
   alias Arbor.ACP.Agent.Transport.Stdio
   alias Arbor.ACP.Capabilities
+  alias Arbor.ACP.Internal.Call
+  alias Arbor.ACP.Internal.Mcp
   alias Arbor.ACP.Maps
   alias Arbor.ACP.NameValue
   alias Arbor.ACP.PendingRequests
@@ -75,6 +77,7 @@ defmodule Arbor.ACP.Agent do
     active_prompts: %{},
     pending_client_requests: %{},
     pending_client_monitors: %{},
+    mcp: Mcp.new(),
     status: :listening
   ]
 
@@ -410,6 +413,37 @@ defmodule Arbor.ACP.Agent do
     terminal_by_id(agent, "terminal/release", session_id, terminal_id, opts)
   end
 
+  @doc """
+  Calls an MCP method on an ACP-provided server declared for `session_id`.
+
+  UNSTABLE. `:timeout` is a finite deadline in milliseconds and defaults to
+  30 seconds. It is also capped by `:pending_request_timeout`. `:request_id`
+  sets the inner id. `:params` is a string-keyed JSON object or `nil`.
+  `:meta` is optional ACP `_meta`.
+
+  Returns `{:ok, result}` (including `{:ok, nil}`), `{:error, {:mcp_error, map}}`
+  for an inner MCP error, or `{:error, reason}` when the request is not sent
+  or the outer call fails.
+  """
+  @spec mcp_request(GenServer.server(), String.t(), String.t(), String.t(), keyword()) ::
+          {:ok, term()} | {:error, term()}
+  def mcp_request(agent, session_id, server_id, method, opts \\ [])
+      when is_binary(session_id) and is_binary(server_id) and is_binary(method) do
+    opts = Keyword.validate!(opts, [:timeout, :request_id, :params, :meta])
+    timeout = mcp_timeout!(opts)
+    request_id = mcp_request_id!(opts)
+
+    with :ok <- json_object_option(Keyword.get(opts, :params)),
+         :ok <- json_object_option(Keyword.get(opts, :meta)) do
+      Call.call(
+        agent,
+        {:mcp_request, session_id, server_id, request_id, method, Keyword.get(opts, :params),
+         Keyword.get(opts, :meta), timeout},
+        timeout + 5_000
+      )
+    end
+  end
+
   @impl true
   def init(opts) do
     Process.flag(:trap_exit, true)
@@ -472,6 +506,24 @@ defmodule Arbor.ACP.Agent do
     end
   end
 
+  def handle_call(
+        {:mcp_request, session_id, server_id, request_id, method, params, meta, timeout},
+        from,
+        state
+      ) do
+    send_mcp_request(
+      session_id,
+      server_id,
+      request_id,
+      method,
+      params,
+      meta,
+      timeout,
+      from,
+      state
+    )
+  end
+
   def handle_call({:client_request, msg, capability}, from, state) do
     with :ok <- ensure_client_capability(state, capability),
          :ok <- RequestValidation.validate_agent_request(msg["method"], msg["params"]) do
@@ -518,6 +570,9 @@ defmodule Arbor.ACP.Agent do
 
       {:notification, "$/cancel_request", params} ->
         {:noreply, handle_cancel_request_notification(params, state)}
+
+      {:notification, "mcp/message", params} ->
+        {:noreply, handle_mcp_notification(params, state)}
 
       {:notification, "_" <> _ = method, params} ->
         if state.status == :ready and
@@ -566,6 +621,8 @@ defmodule Arbor.ACP.Agent do
   end
 
   def handle_info({:client_request_timeout, request_id}, state) do
+    state = finish_mcp_outer(state, request_id)
+
     case PendingRequests.pop(state.pending_client_requests, request_id) do
       {nil, _pending} ->
         {:noreply, state}
@@ -609,6 +666,7 @@ defmodule Arbor.ACP.Agent do
         {:noreply, state}
 
       {:ok, request_id} ->
+        state = finish_mcp_outer(state, request_id)
         monitors = Map.delete(state.pending_client_monitors, ref)
         {request, pending} = PendingRequests.pop(state.pending_client_requests, request_id)
         cancel_pending_client_timer(request)
@@ -820,26 +878,35 @@ defmodule Arbor.ACP.Agent do
 
   defp handle_client_request("session/new", params, id, state) do
     if function_exported?(state.handler_mod, :handle_new_session, 3) do
-      ctx = context(state, id)
+      case begin_mcp(state, id, :new, params) do
+        {:ok, state, extra} ->
+          ctx = context(state, id)
 
-      start_callback(
-        :new_session,
-        id,
-        fn ref -> HandlerRunner.new_session(state.handler_pid, ref, params, ctx) end,
-        state
-      )
+          start_callback(
+            :new_session,
+            id,
+            fn ref -> HandlerRunner.new_session(state.handler_pid, ref, params, ctx) end,
+            state,
+            extra
+          )
+
+        {:error, reason} ->
+          send_mcp_claim_error(state, id, reason)
+      end
     else
       send_method_not_found("session/new", id, state)
     end
   end
 
   defp handle_client_request("session/load", params, id, state) do
-    optional_capability_callback(
+    start_mcp_session(
       :load_session,
       :load_session,
       :handle_load_session,
       id,
       state,
+      {:existing, params["sessionId"]},
+      params,
       fn ref, ctx ->
         HandlerRunner.load_session(state.handler_pid, ref, params, ctx)
       end
@@ -860,12 +927,14 @@ defmodule Arbor.ACP.Agent do
   end
 
   defp handle_client_request("session/resume", params, id, state) do
-    optional_capability_callback(
+    start_mcp_session(
       :resume_session,
       :session_resume,
       :handle_resume_session,
       id,
       state,
+      {:existing, params["sessionId"]},
+      params,
       fn ref, ctx ->
         HandlerRunner.resume_session(state.handler_pid, ref, params, ctx)
       end
@@ -873,12 +942,14 @@ defmodule Arbor.ACP.Agent do
   end
 
   defp handle_client_request("session/fork", params, id, state) do
-    optional_capability_callback(
+    start_mcp_session(
       :fork_session,
       :session_fork,
       :handle_fork_session,
       id,
       state,
+      :new,
+      params,
       fn ref, ctx ->
         HandlerRunner.fork_session(state.handler_pid, ref, params, ctx)
       end
@@ -901,7 +972,8 @@ defmodule Arbor.ACP.Agent do
           session_id,
           Map.put(ctx, :session_id, session_id)
         )
-      end
+      end,
+      %{mcp_release: session_id}
     )
   end
 
@@ -919,7 +991,8 @@ defmodule Arbor.ACP.Agent do
           session_id,
           Map.put(ctx, :session_id, session_id)
         )
-      end
+      end,
+      %{mcp_release: session_id}
     )
   end
 
@@ -1059,18 +1132,18 @@ defmodule Arbor.ACP.Agent do
     send_method_not_found(method, id, state)
   end
 
-  defp optional_capability_callback(kind, capability, callback, id, state, fun) do
+  defp optional_capability_callback(kind, capability, callback, id, state, fun, extra \\ %{}) do
     if Capabilities.supported?(state.agent_capabilities, capability) do
-      optional_callback(kind, callback, id, state, fun)
+      optional_callback(kind, callback, id, state, fun, extra)
     else
       send_method_not_found(method_name(kind), id, state)
     end
   end
 
-  defp optional_callback(kind, callback, id, state, fun) do
+  defp optional_callback(kind, callback, id, state, fun, extra \\ %{}) do
     if function_exported?(state.handler_mod, callback, callback_arity(callback)) do
       ctx = context(state, id)
-      start_callback(kind, id, fn ref -> fun.(ref, ctx) end, state)
+      start_callback(kind, id, fn ref -> fun.(ref, ctx) end, state, extra)
     else
       send_method_not_found(method_name(kind), id, state)
     end
@@ -1225,6 +1298,7 @@ defmodule Arbor.ACP.Agent do
 
     Enum.reduce(to_cancel, state, fn {_ref, callback}, acc ->
       cancel_timer(Map.get(callback, :timer_ref))
+      acc = abort_mcp(acc, callback)
       send_without_reply(Protocol.encode_request_cancelled_error(callback.request_id), acc)
     end)
   end
@@ -1277,12 +1351,14 @@ defmodule Arbor.ACP.Agent do
       {%{kind: :new_session, request_id: id} = callback, pending} ->
         cancel_timer(Map.get(callback, :timer_ref))
         state = %{state | pending_callbacks: pending}
+        state = settle_mcp_session(state, callback, result)
         handle_session_result(id, result, state)
 
       {%{kind: kind, request_id: id} = callback, pending}
       when kind in [:load_session, :resume_session, :fork_session] ->
         cancel_timer(Map.get(callback, :timer_ref))
         state = %{state | pending_callbacks: pending}
+        state = settle_mcp_session(state, callback, result)
         handle_session_result(id, result, state)
 
       {%{kind: :list_sessions, request_id: id} = callback, pending} ->
@@ -1321,6 +1397,7 @@ defmodule Arbor.ACP.Agent do
       {%{request_id: id} = callback, pending} ->
         cancel_timer(Map.get(callback, :timer_ref))
         state = %{state | pending_callbacks: pending}
+        state = release_mcp_on_success(state, callback, result)
         handle_generic_result(id, result, state)
     end
   end
@@ -1446,6 +1523,311 @@ defmodule Arbor.ACP.Agent do
     end
   end
 
+  defp start_mcp_session(kind, capability, callback, id, state, mcp_kind, params, fun) do
+    if Capabilities.supported?(state.agent_capabilities, capability) and
+         function_exported?(state.handler_mod, callback, callback_arity(callback)) do
+      case begin_mcp(state, id, mcp_kind, params) do
+        {:ok, state, extra} ->
+          ctx = context(state, id)
+          start_callback(kind, id, fn ref -> fun.(ref, ctx) end, state, extra)
+
+        {:error, reason} ->
+          send_mcp_claim_error(state, id, reason)
+      end
+    else
+      send_method_not_found(method_name(kind), id, state)
+    end
+  end
+
+  defp begin_mcp(state, token, :new, params) do
+    with {:ok, ids} <- Mcp.acp_server_ids(Map.get(params, "mcpServers", [])),
+         {:ok, mcp} <- Mcp.begin_new(state.mcp, token, ids) do
+      {:ok, %{state | mcp: mcp}, %{mcp_token: token, mcp_ids: ids, mcp_kind: :new}}
+    end
+  end
+
+  defp begin_mcp(state, token, {:existing, session_id}, params) do
+    case Map.fetch(params, "mcpServers") do
+      :error ->
+        {:ok, state, %{mcp_token: token, mcp_ids: :unchanged, mcp_kind: {:existing, session_id}}}
+
+      {:ok, servers} ->
+        with {:ok, ids} <- Mcp.acp_server_ids(servers),
+             {:ok, mcp} <- Mcp.begin_existing(state.mcp, session_id, token, ids) do
+          {:ok, %{state | mcp: mcp},
+           %{mcp_token: token, mcp_ids: ids, mcp_kind: {:existing, session_id}}}
+        end
+    end
+  end
+
+  defp settle_mcp_session(
+         state,
+         %{mcp_kind: :new, mcp_token: token, mcp_ids: ids},
+         {:reply, result}
+       ) do
+    case session_id_of(result) do
+      {:ok, session_id} -> %{state | mcp: Mcp.commit_new(state.mcp, token, session_id, ids)}
+      :error -> %{state | mcp: Mcp.abort(state.mcp, token)}
+    end
+  end
+
+  defp settle_mcp_session(
+         state,
+         %{mcp_kind: {:existing, session_id}, mcp_token: token, mcp_ids: ids},
+         {:reply, _result}
+       )
+       when is_list(ids) do
+    {mcp, dropped} = Mcp.commit_existing(state.mcp, token, session_id, ids)
+    fail_mcp_entries(%{state | mcp: mcp}, dropped, :session_closed)
+  end
+
+  defp settle_mcp_session(state, %{mcp_token: token}, _result) do
+    %{state | mcp: Mcp.abort(state.mcp, token)}
+  end
+
+  defp settle_mcp_session(state, _callback, _result), do: state
+
+  defp release_mcp_on_success(state, %{mcp_release: session_id}, {:reply, _result}) do
+    release_mcp_session(state, session_id)
+  end
+
+  defp release_mcp_on_success(state, _callback, _result), do: state
+
+  defp release_mcp_session(state, session_id) do
+    {mcp, dropped} = Mcp.release_session(state.mcp, session_id)
+    fail_mcp_entries(%{state | mcp: mcp}, dropped, :session_closed)
+  end
+
+  defp fail_mcp_entries(state, entries, reason) do
+    Enum.reduce(entries, state, fn entry, state ->
+      fail_mcp_outer(state, entry.outer_id, reason)
+    end)
+  end
+
+  defp fail_mcp_outer(state, outer_id, reason) do
+    case PendingRequests.pop(state.pending_client_requests, outer_id) do
+      {nil, _pending} ->
+        state
+
+      {{from, monitor_ref, timer_ref}, pending} ->
+        cancel_timer(timer_ref)
+        Process.demonitor(monitor_ref, [:flush])
+        GenServer.reply(from, {:error, reason})
+
+        state = %{
+          state
+          | pending_client_requests: pending,
+            pending_client_monitors: Map.delete(state.pending_client_monitors, monitor_ref)
+        }
+
+        if state.status == :ready do
+          send_without_reply(Protocol.encode_cancel_request(outer_id), state)
+        else
+          state
+        end
+
+      {from, pending} ->
+        GenServer.reply(from, {:error, reason})
+        %{state | pending_client_requests: pending}
+    end
+  end
+
+  defp abort_mcp(state, %{mcp_token: token}), do: %{state | mcp: Mcp.abort(state.mcp, token)}
+  defp abort_mcp(state, _callback), do: state
+
+  defp session_id_of(session_id) when is_binary(session_id) and session_id != "" do
+    if String.valid?(session_id), do: {:ok, session_id}, else: :error
+  end
+
+  defp session_id_of(%{"sessionId" => session_id})
+       when is_binary(session_id) and session_id != "" do
+    if String.valid?(session_id), do: {:ok, session_id}, else: :error
+  end
+
+  defp session_id_of(_result), do: :error
+
+  defp send_mcp_claim_error(state, id, reason) do
+    {code, message} =
+      case reason do
+        :duplicate_mcp_server_id -> {-32_602, "Duplicate MCP server id"}
+        :mcp_server_id_in_use -> {-32_602, "MCP server id is already in use"}
+        _other -> {-32_602, "Invalid request parameters"}
+      end
+
+    send_request_error(state, id, code, message)
+  end
+
+  defp send_mcp_request(
+         session_id,
+         server_id,
+         request_id,
+         method,
+         params,
+         meta,
+         timeout,
+         from,
+         state
+       ) do
+    with :ok <- mcp_ready(state),
+         :ok <- mcp_advertised(state),
+         :ok <- mcp_declared(state, session_id, server_id) do
+      msg =
+        Protocol.encode_mcp_message_request(server_id, request_id, method,
+          params: params,
+          meta: meta
+        )
+
+      entry = %{
+        session_id: session_id,
+        server_id: server_id,
+        request_id: request_id,
+        outer_id: msg["id"]
+      }
+
+      room? = map_size(state.pending_client_requests) < state.max_pending_requests
+
+      case Mcp.track(state.mcp, entry, room?) do
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+
+        {:ok, mcp} ->
+          case do_send(msg, state) do
+            {:ok, state} ->
+              {:noreply,
+               state
+               |> Map.put(:mcp, mcp)
+               |> pend_client_request(
+                 msg["id"],
+                 from,
+                 min(timeout, state.pending_request_timeout)
+               )}
+
+            {:error, reason} ->
+              {:reply, {:error, reason}, state}
+          end
+      end
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp pend_client_request(state, id, from, timeout) do
+    monitor_ref = Process.monitor(elem(from, 0))
+
+    timer_ref = Process.send_after(self(), {:client_request_timeout, id}, timeout)
+
+    %{
+      state
+      | pending_client_requests:
+          PendingRequests.put(state.pending_client_requests, id, {from, monitor_ref, timer_ref}),
+        pending_client_monitors: Map.put(state.pending_client_monitors, monitor_ref, id)
+    }
+  end
+
+  defp mcp_ready(%{status: :ready}), do: :ok
+  defp mcp_ready(_state), do: {:error, :not_initialized}
+
+  defp mcp_advertised(state) do
+    if Capabilities.supported?(state.agent_capabilities, :mcp_acp) do
+      :ok
+    else
+      {:error, {:unsupported_capability, :acp_mcp}}
+    end
+  end
+
+  defp mcp_declared(state, session_id, server_id) do
+    if Mcp.declared?(state.mcp, session_id, server_id),
+      do: :ok,
+      else: {:error, :unknown_mcp_server}
+  end
+
+  defp finish_mcp_outer(state, outer_id) do
+    {_entry, state} = take_mcp_outer(state, outer_id)
+    state
+  end
+
+  defp take_mcp_outer(state, outer_id) do
+    {entry, mcp} = Mcp.finish_outer(state.mcp, outer_id)
+    {entry, %{state | mcp: mcp}}
+  end
+
+  defp mcp_reply(nil, reply), do: reply
+  defp mcp_reply(_entry, {:ok, result}), do: Mcp.decode_response(result)
+  defp mcp_reply(_entry, {:error, _reason} = error), do: error
+
+  defp handle_mcp_notification(params, state) do
+    with :ok <- Mcp.validate_message(params),
+         %{} = entry <- Mcp.lookup(state.mcp, params["serverId"], params["requestId"]),
+         true <- function_exported?(state.handler_mod, :handle_mcp_notification, 3),
+         true <- mcp_notification_room?(state, params) do
+      HandlerRunner.mcp_notification(state.handler_pid, entry.session_id, params)
+      state
+    else
+      :queue_full ->
+        Logger.warning("ACP agent dropped an MCP notification because the handler queue is full")
+        state
+
+      _dropped ->
+        Logger.debug("ACP agent dropped an MCP notification",
+          method_hash: LogSummary.fingerprint(mcp_note_method(params))
+        )
+
+        state
+    end
+  end
+
+  defp mcp_note_method(%{"method" => method}) when is_binary(method), do: method
+  defp mcp_note_method(_params), do: "mcp/message"
+
+  defp mcp_notification_room?(state, params) do
+    incoming = :erlang.external_size({:"$gen_cast", {:mcp_notification, params}})
+
+    if Arbor.ACP.Internal.Extensions.room?(
+         state.handler_pid,
+         incoming,
+         state.max_extension_queue,
+         state.max_extension_queue_bytes
+       ) do
+      true
+    else
+      :queue_full
+    end
+  end
+
+  defp mcp_timeout!(opts) do
+    case Keyword.get(opts, :timeout, @default_timeout) do
+      timeout when is_integer(timeout) and timeout >= 0 and timeout <= 4_294_967_295 ->
+        timeout
+
+      _invalid ->
+        raise ArgumentError,
+              "MCP request timeout must be a finite non-negative number of milliseconds"
+    end
+  end
+
+  defp mcp_request_id!(opts) do
+    case Keyword.get(opts, :request_id) do
+      nil ->
+        "mcp-" <> Integer.to_string(System.unique_integer([:positive]))
+
+      request_id when is_binary(request_id) and request_id != "" ->
+        if String.valid?(request_id),
+          do: request_id,
+          else: raise(ArgumentError, "MCP request_id must be a non-empty string")
+
+      _invalid ->
+        raise ArgumentError, "MCP request_id must be a non-empty string"
+    end
+  end
+
+  defp json_object_option(nil), do: :ok
+
+  defp json_object_option(value) when is_map(value) do
+    if Arbor.ACP.Internal.Extensions.json?(value), do: :ok, else: {:error, :invalid_params}
+  end
+
+  defp json_object_option(_value), do: {:error, :invalid_params}
+
   defp send_client_request(msg, from, state) do
     id = msg["id"]
 
@@ -1491,6 +1873,9 @@ defmodule Arbor.ACP.Agent do
   end
 
   defp resolve_client_request(id, reply, state) do
+    {entry, state} = take_mcp_outer(state, id)
+    reply = mcp_reply(entry, reply)
+
     case PendingRequests.pop(state.pending_client_requests, id) do
       {nil, _pending} ->
         Logger.debug("ACP agent received response for unknown client request",
@@ -1701,8 +2086,10 @@ defmodule Arbor.ACP.Agent do
         %{kind: :prompt, prompt_id: prompt_id} ->
           handle_prompt_result(prompt_id, {:error, reason}, acc)
 
-        %{request_id: id} ->
-          send_error(id, reason, acc)
+        %{request_id: id} = callback ->
+          acc
+          |> abort_mcp(callback)
+          |> send_error(id, reason)
       end
     end)
     |> Map.put(:pending_callbacks, %{})
@@ -1724,8 +2111,10 @@ defmodule Arbor.ACP.Agent do
     finish_cancel(prompt_id, "cancelled", state)
   end
 
-  defp expire_callback(%{request_id: id}, state) do
-    send_without_reply(Protocol.encode_error(-32603, "Agent handler timed out", nil, id), state)
+  defp expire_callback(%{request_id: id} = callback, state) do
+    state
+    |> abort_mcp(callback)
+    |> send_without_reply(Protocol.encode_error(-32603, "Agent handler timed out", nil, id))
   end
 
   defp expire_prompt(prompt_id, state) do
