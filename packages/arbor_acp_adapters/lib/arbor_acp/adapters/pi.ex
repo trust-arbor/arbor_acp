@@ -88,6 +88,11 @@ defmodule Arbor.ACP.Adapters.Pi do
     # work waits while any is pending, since Pi would apply it to whichever
     # session ends up active.
     pending_session_changes: MapSet.new(),
+    # Session changes Pi has not answered whose setup the client cancelled,
+    # and switches back to the previous session; both map the Pi request id
+    # to the previous session. Their ids stay in pending_session_changes.
+    orphaned_session_changes: %{},
+    restoring_session_changes: %{},
     # Requests of setup or command groups that ended before Pi answered them.
     # Their replies are dropped when they arrive; Pi exiting clears the set.
     retired_rpc_ids: MapSet.new(),
@@ -337,7 +342,7 @@ defmodule Arbor.ACP.Adapters.Pi do
         error = Envelope.error(acp_id, -32_800, "Request cancelled")
         {:messages, [error], %{state | queued_session_setups: waiting}}
 
-      group = pending_setup_group(acp_id, state) ->
+      group = setup_group(acp_id, state) ->
         cancel_session_setup(group, state)
 
       true ->
@@ -632,6 +637,8 @@ defmodule Arbor.ACP.Adapters.Pi do
         pending_model_refresh: nil,
         queued_model_switch: nil,
         pending_session_changes: MapSet.new(),
+        orphaned_session_changes: %{},
+        restoring_session_changes: %{},
         retired_rpc_ids: MapSet.new()
     }
   end
@@ -861,8 +868,11 @@ defmodule Arbor.ACP.Adapters.Pi do
     end
   end
 
+  # A cancelled setup's change, or a switch back to the previous session, can
+  # still be pending without a group; a new setup waits for it too.
   defp setup_in_progress?(state) do
-    Enum.any?(Map.values(state.control_groups), &(&1.type in [:session_new, :session_load]))
+    session_change_pending?(state) or
+      Enum.any?(Map.values(state.control_groups), &(&1.type in [:session_new, :session_load]))
   end
 
   defp deliver_queued(%{managed?: false} = state), do: {:ok, :skip, state}
@@ -974,8 +984,13 @@ defmodule Arbor.ACP.Adapters.Pi do
   # `--session <requested file>`), so a new process resumes the previous
   # session's file, and a model switch requested meanwhile is sent to it. With
   # no previous session the replacement process is closed.
-  defp restore_previous_session(%{previous: previous}, %{managed?: false} = state),
-    do: Map.merge(state, previous.fields)
+  defp restore_previous_session(%{previous: previous} = group, %{managed?: false} = state) do
+    state = Map.merge(state, previous.fields)
+
+    if session_change_succeeded?(group),
+      do: begin_session_restore(previous, state),
+      else: {nil, state}
+  end
 
   defp restore_previous_session(%{previous: %{session_file: file} = previous}, state)
        when is_binary(file) do
@@ -984,18 +999,81 @@ defmodule Arbor.ACP.Adapters.Pi do
 
     case prepare_session_process(cwd, file, state) do
       {:ok, state} ->
-        state |> Map.merge(previous.fields) |> resend_model_switch(switch)
+        {nil, state |> Map.merge(previous.fields) |> resend_model_switch(switch)}
 
       {:error, reason, state} ->
         Logger.warning("[Pi Adapter] Could not restore the previous session: #{reason}")
-        Map.merge(state, previous.fields)
+        {nil, Map.merge(state, previous.fields)}
     end
   end
 
   defp restore_previous_session(%{previous: previous}, state),
-    do: state |> close_active_session() |> Map.merge(previous.fields)
+    do: {nil, state |> close_active_session() |> Map.merge(previous.fields)}
 
-  defp restore_previous_session(_group, state), do: state
+  defp restore_previous_session(_group, state), do: {nil, state}
+
+  defp session_change_succeeded?(group),
+    do: Map.has_key?(group.responses, :new_session) or Map.has_key?(group.responses, :switch)
+
+  # Unmanaged, Pi itself has to switch back: the adapter sends switch_session
+  # for the previous session's file. Model work stays held until Pi answers.
+  defp begin_session_restore(%{session_file: file} = previous, state) when is_binary(file) do
+    {id, request, state} = rpc(state, RPC.method(:switch_session), %{"sessionPath" => file})
+
+    state =
+      %{state | restoring_session_changes: Map.put(state.restoring_session_changes, id, previous)}
+      |> track_session_change(id)
+
+    {RPC.line(request), state}
+  end
+
+  defp begin_session_restore(previous, state) do
+    if previous.session_id do
+      Logger.warning(
+        "[Pi Adapter] Pi left session #{previous.session_id}, which has no session file to return to"
+      )
+    end
+
+    {nil, abandon_session_requests(state)}
+  end
+
+  # The client cancelled this setup before Pi answered its change. A
+  # success means Pi switched after all, so it is sent back to the previous
+  # session; otherwise Pi stayed, and the held model work goes ahead.
+  defp finish_orphaned_change(event, id, state) do
+    {previous, orphaned} = Map.pop(state.orphaned_session_changes, id)
+
+    state = %{
+      state
+      | orphaned_session_changes: orphaned,
+        pending_session_changes: MapSet.delete(state.pending_session_changes, id)
+    }
+
+    if session_change_took_effect?(event),
+      do: write_or_skip(begin_session_restore(previous, state)),
+      else: {:skip, state}
+  end
+
+  defp finish_session_restore(event, id, state) do
+    {previous, restoring} = Map.pop(state.restoring_session_changes, id)
+
+    state = %{
+      state
+      | restoring_session_changes: restoring,
+        pending_session_changes: MapSet.delete(state.pending_session_changes, id)
+    }
+
+    if session_change_took_effect?(event) do
+      {:skip, Map.merge(state, previous.fields)}
+    else
+      Logger.warning(
+        "[Pi Adapter] Pi did not return to session #{previous.session_id}: " <>
+          inspect(event["error"] || event["data"])
+      )
+
+      {:skip, abandon_session_requests(state)}
+    end
+  end
 
   defp resend_model_switch(state, nil), do: state
 
@@ -1517,37 +1595,53 @@ defmodule Arbor.ACP.Adapters.Pi do
     if session_change_took_effect?(event), do: abandon_session_requests(state), else: state
   end
 
-  # The setup group whose session change is still waiting for Pi's answer.
-  defp pending_setup_group(acp_id, state) do
+  defp setup_group(acp_id, state) do
     Enum.find(Map.values(state.control_groups), fn group ->
-      group.acp_id == acp_id and group.type in [:session_new, :session_load] and
-        MapSet.member?(state.pending_session_changes, group[:change_id])
+      group.acp_id == acp_id and group.type in [:session_new, :session_load]
     end)
   end
 
-  # The ACP request that started a session change ended before Pi answered
-  # it: the client timed it out, cancelled it, or went away (the ACP client
-  # sends `$/cancel_request` in each case). A `session_before_switch`
-  # extension that never resolves leaves Pi on its session without a reply,
-  # so the change is resolved as not taken effect and the held model work
-  # goes ahead for the session that is still active. A late reply is
-  # untracked and ignored.
+  # The ACP request of a running setup ended: the client timed it out,
+  # cancelled it, or went away (the ACP client sends `$/cancel_request` in
+  # each case). The request fails at once, and the client keeps its previous
+  # session, but no outcome is assumed that Pi has not reported:
+  #   * Unmanaged, with the change still unanswered (a `session_before_switch`
+  #     extension may never resolve), the change stays tracked and model work
+  #     stays held. Pi's answer decides: see finish_orphaned_change/3.
+  #   * Managed, with the change unanswered, replacing the Pi process ends the
+  #     change; the previous session's process is restored.
+  #   * Once the change succeeded, the setup's queries are retired and Pi is
+  #     returned to the previous session.
   defp cancel_session_setup(group, state) do
-    state =
-      state
-      |> delete_group(group)
-      |> then(&resolve_session_change(group.change_id, %{"success" => false}, &1))
-      |> then(&restore_previous_session(group, &1))
-
     error = Envelope.error(group.acp_id, -32_800, "Request cancelled")
+    change_pending? = MapSet.member?(state.pending_session_changes, group.change_id)
+    state = delete_group(state, group)
 
-    result =
-      case continue_model_work(state) do
-        {nil, state} -> {:messages, [error], state}
-        {data, state} -> deliver_messages_and_write([error], data, state)
+    {data, state} =
+      cond do
+        change_pending? and not state.managed? ->
+          orphaned = Map.put(state.orphaned_session_changes, group.change_id, group.previous)
+
+          state =
+            Map.merge(%{state | orphaned_session_changes: orphaned}, group.previous.fields)
+
+          {nil, state}
+
+        change_pending? ->
+          pending = MapSet.delete(state.pending_session_changes, group.change_id)
+          restore_previous_session(group, %{state | pending_session_changes: pending})
+
+        true ->
+          restore_previous_session(group, state)
       end
 
-    start_queued_setup_after(result)
+    result =
+      case data do
+        nil -> {:messages, [error], state}
+        data -> deliver_messages_and_write([error], data, state)
+      end
+
+    result |> continue_model_work_after() |> start_queued_setup_after()
   end
 
   defp session_change_took_effect?(%{"success" => false}), do: false
@@ -1700,6 +1794,12 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
     result =
       cond do
+        Map.has_key?(state.orphaned_session_changes, id) ->
+          event |> finish_orphaned_change(id, state) |> continue_model_work_after()
+
+        Map.has_key?(state.restoring_session_changes, id) ->
+          event |> finish_session_restore(id, state) |> continue_model_work_after()
+
         MapSet.member?(state.pending_session_changes, id) ->
           state = resolve_session_change(id, event, state)
           event |> process_response(id, state) |> continue_model_work_after()
@@ -2141,7 +2241,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     if Sessions.empty_models?(models_data) do
       state = maybe_cleanup_failed_session(session_file, state)
       error = auth_required_error(group.acp_id, state)
-      {:messages, [error], restore_previous_session(group, state)}
+      group |> restore_previous_session(state) |> with_messages([error])
     else
       session_id = state_data["sessionId"] || "pi-#{System.unique_integer([:positive])}"
       finish_established_session(group, state, state_data, models_data, session_id)
@@ -2156,7 +2256,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     if Sessions.empty_models?(models_data) do
       state = maybe_cleanup_failed_session(group.session_file, state)
       error = auth_required_error(group.acp_id, state)
-      {:messages, [error], restore_previous_session(group, state)}
+      group |> restore_previous_session(state) |> with_messages([error])
     else
       finish_established_session(group, state, state_data, models_data, group.session_id)
     end
@@ -2241,9 +2341,12 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp replay_messages_for(_group, _session_id), do: []
 
   defp finish_control_error(group, error, state) do
-    state = state |> delete_group(group) |> then(&restore_previous_session(group, &1))
-    {:messages, [error], state}
+    state = delete_group(state, group)
+    group |> restore_previous_session(state) |> with_messages([error])
   end
+
+  defp with_messages({nil, state}, messages), do: {:messages, messages, state}
+  defp with_messages({data, state}, messages), do: {:messages_and_write, messages, data, state}
 
   defp finish_prompt_error(event, state) do
     acp_id = state.pending_prompt.acp_id
