@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Security:** `Arbor.ACP.Registry` fetch no longer lets `:httpc` autoredirect. Cross-origin (and any other) 3xx hops are refused so Authorization and other request headers are not replayed onto a different origin, including an https-to-http downgrade. The refused location is returned without its userinfo, query or fragment.
 - Fix: the AdapterBridge also accepts a bare `{:error, reason}` from `translate_outbound/2` on the session lifecycle path (`session/new`, `session/load`, `session/resume`), replying with a JSON-RPC error instead of crashing (follow-up to #12).
 - Docs: ArborRPC releases after `1.0.0-rc.2` install without a C compiler, and starting an agent then fails with `:native_helper_unavailable`. The README, usage rules and guides now say so and recommend `config :arbor_rpc, native_helper: :required` for applications that launch agents.
 
