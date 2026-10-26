@@ -1303,6 +1303,39 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert config_update["params"]["sessionId"] == "s1"
     end
 
+    test "a switch requested during a load's queries waits and reaches s1 if the load fails",
+         ctx do
+      state = with_session_file(switch_ready_state(ctx.state), ctx)
+
+      assert {:ok, setup, state} =
+               Pi.translate_outbound(session_change("session/load", ctx), state)
+
+      {[_change | queries], state} = confirm_session_change(setup, state)
+
+      # Pi is already on s2, but the adapter still serves s1: nothing is sent.
+      assert {:messages_and_write, _, "", state} =
+               Pi.translate_outbound(set_model_request("anthropic/claude-opus-4"), state)
+
+      models = Enum.find(queries, &(&1["type"] == "get_available_models"))
+
+      failure =
+        Jason.encode!(%{
+          "type" => "response",
+          "id" => models["id"],
+          "command" => "get_available_models",
+          "success" => false,
+          "error" => "catalog unavailable"
+        })
+
+      assert {:messages_and_write, [_error], back, state} = Pi.translate_inbound(failure, state)
+      assert [%{"type" => "switch_session"} = restore] = decode_many(back)
+
+      assert {:skip_and_write, next, _state} =
+               Pi.translate_inbound(response_line(restore["id"], "switch_session", %{}), state)
+
+      assert [%{"type" => "set_model", "modelId" => "claude-opus-4"}] = decode_many(next)
+    end
+
     test "a setup arriving while a cancelled change is unanswered waits for Pi", ctx do
       state = switch_ready_state(ctx.state)
 

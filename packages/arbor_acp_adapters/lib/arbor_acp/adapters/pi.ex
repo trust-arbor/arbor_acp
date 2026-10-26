@@ -986,15 +986,16 @@ defmodule Arbor.ACP.Adapters.Pi do
   # no previous session the replacement process is closed.
   defp restore_previous_session(%{previous: previous} = group, %{managed?: false} = state) do
     state = Map.merge(state, previous.fields)
+    state = %{state | queued_model_switch: held_switch(group, state)}
 
     if session_change_succeeded?(group),
       do: begin_session_restore(previous, state),
       else: {nil, state}
   end
 
-  defp restore_previous_session(%{previous: %{session_file: file} = previous}, state)
+  defp restore_previous_session(%{previous: %{session_file: file} = previous} = group, state)
        when is_binary(file) do
-    switch = state.queued_model_switch
+    switch = held_switch(group, state)
     cwd = previous.fields.workspace_root || previous.fields.cwd
 
     case prepare_session_process(cwd, file, state) do
@@ -1498,7 +1499,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp request_model_switch(fields, state) do
     switch = %{fields: fields, session_id: state.session_id}
 
-    if model_switch_in_flight?(state) or session_change_pending?(state) do
+    if model_switch_in_flight?(state) or setup_in_progress?(state) do
       {"", %{state | queued_model_switch: switch}}
     else
       send_model_switch(switch, state)
@@ -1553,7 +1554,9 @@ defmodule Arbor.ACP.Adapters.Pi do
     switch = state.pending_model_switch
 
     cond do
-      session_change_pending?(state) ->
+      # Until a setup completes, Pi may be on the session it is moving to while
+      # the adapter still serves the previous one.
+      setup_in_progress?(state) ->
         {nil, state}
 
       match?(%{replied?: true}, switch) ->
@@ -1592,8 +1595,29 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp resolve_session_change(id, event, state) do
     state = %{state | pending_session_changes: MapSet.delete(state.pending_session_changes, id)}
 
-    if session_change_took_effect?(event), do: abandon_session_requests(state), else: state
+    if session_change_took_effect?(event),
+      do: state |> stash_held_switch(id) |> abandon_session_requests(),
+      else: state
   end
+
+  # The setup keeps the previous session's waiting switch: if the setup fails
+  # or is cancelled after its change took effect, the restored session gets it.
+  defp stash_held_switch(%{queued_model_switch: nil} = state, _change_id), do: state
+
+  defp stash_held_switch(state, change_id) do
+    case Enum.find(Map.values(state.control_groups), &(&1[:change_id] == change_id)) do
+      nil ->
+        state
+
+      group ->
+        group = Map.put(group, :held_switch, state.queued_model_switch)
+        %{state | control_groups: Map.put(state.control_groups, group.group_id, group)}
+    end
+  end
+
+  # The switch the restored session should still get: one requested while
+  # the setup ran wins over the one held from before its change.
+  defp held_switch(group, state), do: state.queued_model_switch || group[:held_switch]
 
   defp setup_group(acp_id, state) do
     Enum.find(Map.values(state.control_groups), fn group ->
@@ -2296,6 +2320,9 @@ defmodule Arbor.ACP.Adapters.Pi do
   # session/new and a settled session switch produce the same state transition
   # and the same response; only the session id and the optional replay differ.
   defp finish_established_session(group, state, state_data, models_data, session_id) do
+    # A model switch requested while the setup ran was for the session it
+    # replaces.
+    state = abandon_session_requests(state)
     cwd = state_data["cwd"] || group.cwd
     session_file = state_data["sessionFile"] || group[:session_file]
     models = Config.model_state(models_data, state_data)

@@ -506,6 +506,59 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       end
     end
 
+    # The model switch the client was told succeeded must reach the restored
+    # process however the managed load ends: its change fails, the change
+    # succeeds and a query fails, or the client cancels the request.
+    for {name, middle, ending} <- [
+          {"held_before_the_change_and_a_query_fails",
+           [Flows.set_model(3, "openai/gpt-5.1"), {:respond, "switch_session", %{}}],
+           {:respond_error, "get_state", "state unavailable"}},
+          {"requested_during_the_queries_and_a_query_fails",
+           [{:respond, "switch_session", %{}}, Flows.set_model(3, "openai/gpt-5.1")],
+           {:respond_error, "get_available_models", "catalog unavailable"}},
+          {"held_and_the_client_cancels_the_load", [Flows.set_model(3, "openai/gpt-5.1")],
+           {:outbound, %{"method" => "$/cancel_request", "params" => %{"requestId" => 2}}}}
+        ] do
+      @middle middle
+      @ending ending
+      test "managed_load_switch_#{name}_reaches_the_restored_process" do
+        steps =
+          [{:init, managed: true}] ++
+            Flows.open_session(1) ++
+            [
+              Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+              Flows.session_load(2, "mapped")
+            ] ++ @middle ++ [@ending, {:read_file, "<sandbox>/bin/argv.log"}]
+
+        transcript =
+          PiGolden.assert_golden(
+            @area,
+            "managed_load_switch_#{unquote(name)}_reaches_the_restored_process",
+            steps
+          )
+
+        set_model_step =
+          Enum.find(
+            transcript,
+            &match?(%{step: %{message: %{"method" => "session/set_model"}}}, &1)
+          )
+
+        refute Map.has_key?(set_model_step.result, :port_writes),
+               "the switch reached the replacement process"
+
+        [ended, argv] = transcript |> Enum.take(-2) |> Enum.map(& &1.result)
+
+        assert %{
+                 messages: [%{"id" => 2, "error" => _}],
+                 port: :respawned,
+                 port_writes: [%{"type" => "set_model", "modelId" => "gpt-5.1"}]
+               } = ended
+
+        assert "--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl" =
+                 argv.content |> String.split("\n", trim: true) |> List.last()
+      end
+    end
+
     test "managed_failed_new_session_restores_the_previous_session" do
       steps =
         [{:init, managed: true}] ++
