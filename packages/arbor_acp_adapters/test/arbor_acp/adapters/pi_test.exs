@@ -1175,6 +1175,105 @@ defmodule Arbor.ACP.Adapters.PiTest do
       end
     end
 
+    # The ACP client sends $/cancel_request when the request times out, when
+    # its caller cancels it, and when the caller goes away. A
+    # session_before_switch extension that never resolves means Pi never
+    # answers the change.
+    for method <- ["session/load", "session/resume", "session/new"] do
+      @cancelled_method method
+      test "a #{method} the client cancels before Pi answers releases s1's waiting switch",
+           ctx do
+        method = @cancelled_method
+        state = switch_ready_state(ctx.state)
+        {refresh, state, pi} = refresh_with_waiting_switch(state)
+
+        assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
+        state = feed_without_effect(refresh, state, pi, method)
+
+        # Pi answers the setup queries but never the change itself.
+        {[_change], others} =
+          setup
+          |> decode_many()
+          |> Enum.split_with(&(&1["type"] in ["new_session", "switch_session"]))
+
+        {state, []} = answer_session_setup(others, state, ctx)
+
+        assert {:messages_and_write, [error], next, state} =
+                 Pi.translate_outbound(cancel_request(70), state),
+               "#{method}: the cancelled setup kept s1's switch held"
+
+        assert error["id"] == 70
+        assert error["error"]["code"] == -32_800
+        assert state.pending_session_changes == MapSet.new()
+        assert state.control_groups == %{}
+
+        assert [%{"type" => "set_model", "modelId" => "claude-opus-4"}] = decode_many(next)
+        {state, pi, messages} = drive_fake_pi(next, state, pi)
+        assert pi.applied == ["openai/gpt-5.1", "anthropic/claude-opus-4"]
+        assert state.session_id == "s1"
+        assert state.current_model_id == "anthropic/claude-opus-4"
+        assert Enum.all?(messages, &(&1["params"]["sessionId"] == "s1"))
+
+        # A later switch is no longer held.
+        assert {:messages_and_write, _, data, _state} =
+                 Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+        assert [%{"type" => "set_model"}] = decode_many(data)
+      end
+    end
+
+    test "a cancelled setup lets s1's outstanding switch refresh", ctx do
+      state = switch_ready_state(ctx.state)
+      pi = %{fake_pi() | hold_switches?: true}
+
+      assert {:messages_and_write, _, first, state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+      {state, pi, []} = drive_fake_pi(first, state, pi)
+
+      assert {:ok, _setup, state} =
+               Pi.translate_outbound(session_change("session/load", ctx), state)
+
+      assert {:messages, [%{"id" => 70, "error" => %{"code" => -32_800}}], state} =
+               Pi.translate_outbound(cancel_request(70), state)
+
+      {state, _pi, messages} = settle_fake_pi(state, pi, :oldest_first)
+      assert state.current_model_id == "openai/gpt-5.1"
+      assert [mode_update, config_update] = messages
+      assert mode_update["params"]["sessionId"] == "s1"
+      assert config_update["params"]["sessionId"] == "s1"
+    end
+
+    test "cancelling another request leaves a pending setup alone", ctx do
+      state = switch_ready_state(ctx.state)
+
+      assert {:ok, _setup, state} =
+               Pi.translate_outbound(session_change("session/load", ctx), state)
+
+      assert {:ok, :skip, ^state} = Pi.translate_outbound(cancel_request(71), state)
+      assert MapSet.size(state.pending_session_changes) == 1
+    end
+
+    test "Pi exiting during a session change releases nothing and holds nothing", ctx do
+      state = switch_ready_state(ctx.state)
+      {_refresh, state, _pi} = refresh_with_waiting_switch(state)
+
+      assert {:ok, _setup, state} =
+               Pi.translate_outbound(session_change("session/load", ctx), state)
+
+      assert {:messages, [%{"id" => 70, "error" => _}], state} =
+               Pi.handle_adapter_message({nil, {:exit_status, 1}}, state)
+
+      assert state.pending_session_changes == MapSet.new()
+      assert state.queued_model_switch == nil
+      assert state.pending_model_refresh == nil
+
+      assert {:messages_and_write, _, data, _state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+      assert [%{"type" => "set_model"}] = decode_many(data)
+    end
+
     test "a model switch outstanding when the session changes is consumed without effect", ctx do
       for method <- ["session/load", "session/new", "session/close"] do
         state = switch_ready_state(ctx.state)
@@ -2291,6 +2390,9 @@ defmodule Arbor.ACP.Adapters.PiTest do
       end
     end)
   end
+
+  defp cancel_request(acp_id),
+    do: %{"method" => "$/cancel_request", "params" => %{"requestId" => acp_id}}
 
   defp set_model_request(model_id) do
     %{"method" => "session/set_model", "params" => %{"sessionId" => "s1", "modelId" => model_id}}

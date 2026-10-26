@@ -324,7 +324,10 @@ defmodule Arbor.ACP.Adapters.Pi do
         %{"method" => "$/cancel_request", "params" => %{"requestId" => acp_id}},
         state
       ) do
-    resolve_extension_ui_response(acp_id, %{"action" => "cancel"}, state)
+    case pending_setup_group(acp_id, state) do
+      nil -> resolve_extension_ui_response(acp_id, %{"action" => "cancel"}, state)
+      group -> cancel_session_setup(group, state)
+    end
   end
 
   def translate_outbound(%{"method" => method}, state) do
@@ -836,9 +839,12 @@ defmodule Arbor.ACP.Adapters.Pi do
           {{kind, {id, message}}, acc}
         end)
 
+      [{:switch, {switch_id, _msg}} | _] = requests
+
       group = %{
         type: :session_load,
         acp_id: acp_id,
+        change_id: switch_id,
         session_id: session_id,
         cwd: cwd,
         session_file: session_file,
@@ -854,7 +860,6 @@ defmodule Arbor.ACP.Adapters.Pi do
           put_control(acc, rpc_id, kind, group)
         end)
 
-      [{:switch, {switch_id, _msg}} | _] = requests
       state = track_session_change(state, switch_id)
 
       deliver_pending(
@@ -888,6 +893,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     group = %{
       type: :session_new,
       acp_id: acp_id,
+      change_id: new_id,
       cwd: cwd,
       file_commands: file_commands,
       settings: settings,
@@ -1309,6 +1315,35 @@ defmodule Arbor.ACP.Adapters.Pi do
     if session_change_took_effect?(event) or state.managed?,
       do: abandon_session_requests(state),
       else: state
+  end
+
+  # The setup group whose session change is still waiting for Pi's answer.
+  defp pending_setup_group(acp_id, state) do
+    Enum.find(Map.values(state.control_groups), fn group ->
+      group.acp_id == acp_id and group.type in [:session_new, :session_load] and
+        MapSet.member?(state.pending_session_changes, group[:change_id])
+    end)
+  end
+
+  # The ACP request that started a session change ended before Pi answered
+  # it: the client timed it out, cancelled it, or went away (the ACP client
+  # sends `$/cancel_request` in each case). A `session_before_switch`
+  # extension that never resolves leaves Pi on its session without a reply,
+  # so the change is resolved as not taken effect and the held model work
+  # goes ahead for the session that is still active. A late reply is
+  # untracked and ignored.
+  defp cancel_session_setup(group, state) do
+    state =
+      state
+      |> delete_group(group)
+      |> then(&resolve_session_change(group.change_id, %{"success" => false}, &1))
+
+    error = Envelope.error(group.acp_id, -32_800, "Request cancelled")
+
+    case continue_model_work(state) do
+      {nil, state} -> {:messages, [error], state}
+      {data, state} -> deliver_messages_and_write([error], data, state)
+    end
   end
 
   defp session_change_took_effect?(%{"success" => false}), do: false
