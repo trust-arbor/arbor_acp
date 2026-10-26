@@ -88,6 +88,9 @@ defmodule Arbor.ACP.Adapters.Pi do
     # work waits while any is pending, since Pi would apply it to whichever
     # session ends up active.
     pending_session_changes: MapSet.new(),
+    # Requests of setup or command groups that ended before Pi answered them.
+    # Their replies are dropped when they arrive; Pi exiting clears the set.
+    retired_rpc_ids: MapSet.new(),
     # session/new, session/load and session/resume requests waiting for the
     # setup in progress to finish; one setup runs at a time.
     queued_session_setups: [],
@@ -628,7 +631,8 @@ defmodule Arbor.ACP.Adapters.Pi do
         pending_model_switch: nil,
         pending_model_refresh: nil,
         queued_model_switch: nil,
-        pending_session_changes: MapSet.new()
+        pending_session_changes: MapSet.new(),
+        retired_rpc_ids: MapSet.new()
     }
   end
 
@@ -1695,11 +1699,19 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
     result =
-      if MapSet.member?(state.pending_session_changes, id) do
-        state = resolve_session_change(id, event, state)
-        event |> process_response(id, state) |> continue_model_work_after()
-      else
-        process_response(event, id, state)
+      cond do
+        MapSet.member?(state.pending_session_changes, id) ->
+          state = resolve_session_change(id, event, state)
+          event |> process_response(id, state) |> continue_model_work_after()
+
+        # A reply for a group that already ended, for example a setup query
+        # that arrives after its setup failed or was cancelled. Applying it
+        # could repoint a newer session.
+        MapSet.member?(state.retired_rpc_ids, id) ->
+          {:skip, %{state | retired_rpc_ids: MapSet.delete(state.retired_rpc_ids, id)}}
+
+        true ->
+          process_response(event, id, state)
       end
 
     start_queued_setup_after(result)
@@ -2246,11 +2258,9 @@ defmodule Arbor.ACP.Adapters.Pi do
     {:messages, [error], %{state | pending_prompt: nil, text_acc: []}}
   end
 
-  defp process_untracked_response(%{"command" => "get_state", "data" => data}, state)
-       when is_map(data) do
-    {:skip, Sessions.update_session_state_from_pi(data, state)}
-  end
-
+  # An untracked reply answers nothing the adapter is waiting for. It never
+  # changes the session state: a late setup reply would describe whichever
+  # session Pi had when it read the request, not necessarily the current one.
   defp process_untracked_response(_event, state), do: {:skip, state}
 
   # Edit snapshots are only taken for files inside the session workspace and
@@ -2610,10 +2620,14 @@ defmodule Arbor.ACP.Adapters.Pi do
         Map.delete(pending, rpc_id)
       end)
 
+    # A pending session change is resolved through pending_session_changes.
+    retired = MapSet.difference(refs, state.pending_session_changes)
+
     %{
       state
       | pending_controls: pending_controls,
-        control_groups: Map.delete(state.control_groups, group.group_id)
+        control_groups: Map.delete(state.control_groups, group.group_id),
+        retired_rpc_ids: MapSet.union(state.retired_rpc_ids, retired)
     }
   end
 

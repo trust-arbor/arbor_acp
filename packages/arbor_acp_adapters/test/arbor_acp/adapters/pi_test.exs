@@ -1519,6 +1519,57 @@ defmodule Arbor.ACP.Adapters.PiTest do
       end
     end
 
+    # A setup query can still be answered after its setup ended: here the
+    # catalog query fails first and get_state is answered later.
+    for order <- [:late_reply_first, :next_session_first] do
+      @late_order order
+      test "a late setup query reply after the setup failed changes nothing (#{order})", ctx do
+        state = switch_ready_state(ctx.state)
+
+        assert {:ok, setup, state} =
+                 Pi.translate_outbound(session_change("session/load", ctx), state)
+
+        {[_change | followups], state} = confirm_session_change(setup, state)
+        by_type = Map.new(followups, &{&1["type"], &1["id"]})
+
+        failure =
+          Jason.encode!(%{
+            "type" => "response",
+            "id" => by_type["get_available_models"],
+            "command" => "get_available_models",
+            "success" => false,
+            "error" => "catalog unavailable"
+          })
+
+        {state, [error]} = result_state_and_messages(Pi.translate_inbound(failure, state))
+        assert error["id"] == 70
+
+        state =
+          if @late_order == :next_session_first do
+            state = settle_session_change_restore(state)
+            assert {:ok, next, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
+            {state, _messages} = finish_session_setup(next, state, ctx)
+            state
+          else
+            state
+          end
+
+        before = Map.take(state, [:session_id, :session_file, :thinking_level])
+
+        late =
+          response_line(by_type["get_state"], "get_state", %{
+            "sessionId" => "stale",
+            "sessionFile" => Path.join(ctx.session_dir, "stale.jsonl"),
+            "thinkingLevel" => "xhigh"
+          })
+
+        assert {:skip, state} = Pi.translate_inbound(late, state)
+
+        assert Map.take(state, [:session_id, :session_file, :thinking_level]) == before,
+               "#{@late_order}: a late get_state reply repointed the session"
+      end
+    end
+
     test "thinking_level_changed events publish the level Pi applied", %{state: state} do
       state = switch_ready_state(state)
 
@@ -2699,6 +2750,14 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
   defp session_setup_request(method, acp_id, ctx),
     do: %{session_change(method, ctx) | "id" => acp_id}
+
+  defp result_state_and_messages({:messages, messages, state}), do: {state, messages}
+
+  defp result_state_and_messages({:messages_and_write, messages, _data, state}),
+    do: {state, messages}
+
+  # Answers a switch the adapter sent to return Pi to the previous session.
+  defp settle_session_change_restore(state), do: state
 
   defp session_change_new(acp_id, ctx),
     do: %{"method" => "session/new", "id" => acp_id, "params" => %{"cwd" => ctx.tmp_dir}}

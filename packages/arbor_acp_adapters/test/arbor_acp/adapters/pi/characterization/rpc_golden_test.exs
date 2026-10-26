@@ -30,7 +30,7 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
     * `initialize` skip, `authenticate` reply, removed `pi/` and
       `_ex_mcp.pi/` extension methods erroring, unknown methods skipped;
     * unparseable or unclassifiable inbound lines being skipped, and an
-      untracked `get_state` response silently re-pointing the session.
+      untracked `get_state` response being ignored.
 
   Control-group completion and failure ordering are characterized by the
   control_groups area; stream events, prompt scheduling, configuration,
@@ -620,7 +620,7 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
       assert Enum.all?(Enum.drop(transcript, 1), &match?(%{tag: :skip}, &1.result))
     end
 
-    test "untracked_get_state_response_repoints_the_session" do
+    test "untracked_get_state_response_is_ignored" do
       steps =
         Flows.open_session(1) ++
           [
@@ -651,9 +651,10 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
           ]
 
       transcript =
-        PiGolden.assert_golden(@area, "untracked_get_state_response_repoints_the_session", steps)
+        PiGolden.assert_golden(@area, "untracked_get_state_response_is_ignored", steps)
 
-      assert %{"id" => 2, "result" => %{"_meta" => %{"ex_mcp" => %{"sessionId" => "renamed"}}}} =
+      # A stray get_state reply never repoints the session.
+      assert %{"id" => 2, "result" => %{"_meta" => %{"ex_mcp" => %{"sessionId" => "pi-session"}}}} =
                transcript |> PiGolden.messages() |> Enum.find(&(&1["id"] == 2))
     end
   end

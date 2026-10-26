@@ -313,7 +313,7 @@
           "id" => 2,
           "jsonrpc" => "2.0",
           "result" => %{
-            "_meta" => %{"ex_mcp" => %{"sessionId" => "renamed", "text" => ""}},
+            "_meta" => %{"ex_mcp" => %{"sessionId" => "pi-session", "text" => ""}},
             "stopReason" => "end_turn",
             "usage" => %{}
           }
@@ -337,7 +337,7 @@
           "jsonrpc" => "2.0",
           "method" => "session/update",
           "params" => %{
-            "sessionId" => "renamed",
+            "sessionId" => "pi-session",
             "update" => %{"currentModeId" => "low", "sessionUpdate" => "current_mode_update"}
           }
         },
@@ -345,7 +345,7 @@
           "jsonrpc" => "2.0",
           "method" => "session/update",
           "params" => %{
-            "sessionId" => "renamed",
+            "sessionId" => "pi-session",
             "update" => %{
               "configOptions" => [
                 %{

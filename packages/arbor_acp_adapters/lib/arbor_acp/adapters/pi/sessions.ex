@@ -81,18 +81,6 @@ defmodule Arbor.ACP.Adapters.Pi.Sessions do
   end
 
   @doc """
-  Folds an untracked `get_state` payload into the adapter state, leaving
-  fields Pi did not report alone.
-  """
-  @spec update_session_state_from_pi(map(), state()) :: state()
-  def update_session_state_from_pi(data, state) do
-    state
-    |> maybe_set(:session_id, data["sessionId"])
-    |> maybe_set(:session_file, data["sessionFile"])
-    |> maybe_set(:thinking_level, data["thinkingLevel"])
-  end
-
-  @doc """
   True when Pi reported an empty model catalog, which means the session could
   not authenticate rather than that it has no models.
   """
@@ -140,7 +128,4 @@ defmodule Arbor.ACP.Adapters.Pi.Sessions do
   end
 
   defp parse_cursor(_cursor), do: 0
-
-  defp maybe_set(state, _key, nil), do: state
-  defp maybe_set(state, key, value), do: Map.put(state, key, value)
 end
