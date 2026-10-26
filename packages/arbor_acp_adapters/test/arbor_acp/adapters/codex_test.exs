@@ -680,6 +680,63 @@ defmodule Arbor.ACP.Adapters.CodexTest do
       assert response["result"]["sessionId"] == "thread-abc"
     end
 
+    test "an unprompted live thread resumes through thread/read", %{state: state} do
+      request = %{
+        "method" => "session/resume",
+        "id" => 29,
+        "params" => %{"sessionId" => "thread-abc", "cwd" => "/tmp/project"}
+      }
+
+      assert {:ok, data, state} = Codex.translate_outbound(request, state)
+      assert decode(data)["method"] == "thread/resume"
+
+      error = %{"code" => -32_603, "message" => "no rollout found for thread id thread-abc"}
+
+      assert {:skip_and_write, read_data, state} =
+               Codex.translate_inbound(Jason.encode!(%{"id" => 1, "error" => error}), state)
+
+      assert decode(read_data) == %{
+               "id" => 2,
+               "method" => "thread/read",
+               "params" => %{"threadId" => "thread-abc"}
+             }
+
+      thread = %{"id" => "thread-abc", "cwd" => "/tmp/project", "model" => "gpt-5"}
+
+      assert {:messages, [response], state} =
+               Codex.translate_inbound(
+                 Jason.encode!(%{"id" => 2, "result" => %{"thread" => thread}}),
+                 state
+               )
+
+      assert response["id"] == 29
+      assert response["result"]["sessionId"] == "thread-abc"
+      assert state.sessions["thread-abc"].model == "gpt-5"
+    end
+
+    test "an unknown unmaterialized thread keeps the resume error", %{state: state} do
+      request = %{
+        "method" => "session/resume",
+        "id" => 30,
+        "params" => %{"sessionId" => "thread-unknown", "cwd" => "/tmp/project"}
+      }
+
+      assert {:ok, _data, state} = Codex.translate_outbound(request, state)
+      error = %{"code" => -32_603, "message" => "no rollout found for thread id thread-unknown"}
+
+      assert {:skip_and_write, _data, state} =
+               Codex.translate_inbound(Jason.encode!(%{"id" => 1, "error" => error}), state)
+
+      assert {:messages, [response], _state} =
+               Codex.translate_inbound(
+                 Jason.encode!(%{"id" => 2, "error" => %{"code" => -32_603}}),
+                 state
+               )
+
+      assert response["id"] == 30
+      assert response["error"] == error
+    end
+
     test "session/list response maps Codex threads to ACP session info", %{state: state} do
       state = %{state | pending_requests: %{1 => %{type: :session_list, acp_id: 22, meta: %{}}}}
 

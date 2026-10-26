@@ -59,14 +59,15 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.ToolInfo do
 
   defp do_from_use("Write", input, _id, cwd) do
     path = input["file_path"] || input["path"]
+    content = input["content"] || input["file_text"]
 
     %{
       "title" => "Write #{display_path(path, cwd)}",
       "kind" => "edit",
       "content" =>
-        if(path && input["content"],
+        if(path && is_binary(content),
           do: [
-            %{"type" => "diff", "path" => path, "oldText" => nil, "newText" => input["content"]}
+            %{"type" => "diff", "path" => path, "oldText" => nil, "newText" => content}
           ],
           else: []
         ),

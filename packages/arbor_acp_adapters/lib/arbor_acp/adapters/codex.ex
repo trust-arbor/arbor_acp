@@ -360,6 +360,7 @@ defmodule Arbor.ACP.Adapters.Codex do
 
             state =
               track_request(state, id, :thread_resume, acp_id, %{
+                session_id: session_id,
                 mode_id: mode_id,
                 additional_directories: additional_directories,
                 page_history: true
@@ -408,6 +409,7 @@ defmodule Arbor.ACP.Adapters.Codex do
 
             state =
               track_request(state, id, :thread_resume, acp_id, %{
+                session_id: session_id,
                 mode_id: mode_id,
                 additional_directories: additional_directories,
                 page_history: false
@@ -1111,6 +1113,64 @@ defmodule Arbor.ACP.Adapters.Codex do
       response = Envelope.response(acp_id, session_result(session_id, result, session, state))
       {:messages, replay_messages ++ [response], state}
     end
+  end
+
+  # Codex persists a rollout only after the first prompt. A just-created live
+  # thread therefore fails thread/resume even though thread/read can find it.
+  defp handle_typed_response(
+         :thread_resume,
+         %{acp_id: acp_id, meta: %{session_id: session_id} = meta},
+         {:error, %{"message" => message} = error},
+         state
+       )
+       when is_binary(message) and is_binary(session_id) do
+    if String.contains?(message, "no rollout found for thread id") do
+      {id, state} = next_request_id(state)
+
+      request =
+        Protocol.encode_request(id, Protocol.method(:thread_read), %{"threadId" => session_id})
+
+      state =
+        track_request(state, id, :thread_read_fallback, acp_id, %{
+          resume_meta: meta,
+          resume_error: error
+        })
+
+      {:skip_and_write, request, state}
+    else
+      {:messages, [error_response(acp_id, error)], state}
+    end
+  end
+
+  defp handle_typed_response(
+         :thread_read_fallback,
+         %{acp_id: acp_id, meta: %{resume_meta: resume_meta}},
+         {:ok, %{"thread" => %{"id" => session_id} = thread}},
+         state
+       )
+       when session_id == resume_meta.session_id do
+    result = %{
+      "thread" => thread,
+      "model" => thread["model"],
+      "modelProvider" => thread["modelProvider"],
+      "reasoningEffort" => thread["reasoningEffort"]
+    }
+
+    handle_typed_response(
+      :thread_resume,
+      %{acp_id: acp_id, meta: %{resume_meta | page_history: false}},
+      {:ok, result},
+      state
+    )
+  end
+
+  defp handle_typed_response(
+         :thread_read_fallback,
+         %{acp_id: acp_id, meta: %{resume_error: error}},
+         _reply,
+         state
+       ) do
+    {:messages, [error_response(acp_id, error)], state}
   end
 
   defp handle_typed_response(:thread_turns_list, %{acp_id: acp_id} = entry, reply, state) do

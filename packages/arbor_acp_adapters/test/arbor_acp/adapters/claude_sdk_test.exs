@@ -8,6 +8,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
   alias Arbor.ACP.Adapters.ClaudeSDK
   alias Arbor.ACP.Adapters.ClaudeSDK.Mapper
   alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
+  alias Arbor.ACP.Adapters.ClaudeSDK.ToolInfo
   alias Arbor.ACP.Capabilities
   alias Arbor.ACP.Adapters.Internal.PromptQueue
 
@@ -34,7 +35,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
     test "exposes SDK entrypoint env" do
       assert ClaudeSDK.env([]) == %{
                "CLAUDE_CODE_ENTRYPOINT" => "sdk-ts",
-               "CLAUDE_AGENT_SDK_VERSION" => "0.3.238"
+               "CLAUDE_AGENT_SDK_VERSION" => "0.3.310"
              }
     end
 
@@ -64,6 +65,26 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
       assert "bypassPermissions" in args
       assert "--allow-dangerously-skip-permissions" in args
     end
+  end
+
+  test "Write tool calls accept the current path and file_text aliases" do
+    assert %{
+             "title" => "Write lib/a.ex",
+             "content" => [
+               %{
+                 "type" => "diff",
+                 "path" => "/tmp/project/lib/a.ex",
+                 "oldText" => nil,
+                 "newText" => "hello"
+               }
+             ]
+           } =
+             ToolInfo.from_use(
+               "Write",
+               %{"path" => "/tmp/project/lib/a.ex", "file_text" => "hello"},
+               "tool-1",
+               "/tmp/project"
+             )
   end
 
   describe "capabilities/0" do
