@@ -1469,6 +1469,28 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert state.session_id == "s2"
     end
 
+    test "a failed session change keeps the previous session's workspace", ctx do
+      other = Path.join(ctx.tmp_dir, "other")
+      File.mkdir_p!(other)
+
+      for method <- ["session/load", "session/new"], outcome <- [:rejected, :cancelled] do
+        state = %{switch_ready_state(ctx.state) | startup_sent?: true}
+        before = Map.take(state, [:cwd, :workspace_root, :settings, :last_session_cwd])
+        request = put_in(session_change(method, ctx), ["params", "cwd"], other)
+
+        assert {:ok, setup, state} = Pi.translate_outbound(request, state)
+        assert state.workspace_root == other
+
+        assert {:messages, [_error], state} = reject_session_setup(setup, state, ctx, outcome)
+
+        assert Map.take(state, [:cwd, :workspace_root, :settings, :last_session_cwd]) == before,
+               "#{method}/#{outcome} left the adapter on the requested workspace"
+
+        assert state.startup_sent?
+        assert state.session_id == "s1"
+      end
+    end
+
     test "thinking_level_changed events publish the level Pi applied", %{state: state} do
       state = switch_ready_state(state)
 

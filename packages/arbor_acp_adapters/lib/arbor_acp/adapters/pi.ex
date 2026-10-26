@@ -908,16 +908,86 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp add_message({:messages_and_write, messages, data, state}, message),
     do: {:messages_and_write, messages ++ [message], data, state}
 
-  defp run_session_setup({:new, acp_id, cwd}, state), do: start_session_new(acp_id, cwd, state)
+  defp run_session_setup({:new, acp_id, cwd}, state) do
+    previous = previous_session(state)
 
-  defp run_session_setup({:switch, acp_id, session_id, cwd, session_file, replay?}, state) do
-    case prepare_session_process(cwd, session_file, state) do
-      {:ok, state} -> start_session_switch(acp_id, session_id, cwd, session_file, replay?, state)
+    case prepare_session_process(cwd, nil, state) do
+      {:ok, state} -> start_session_new(acp_id, cwd, previous, state)
       {:error, reason, failed_state} -> {:error, reason, failed_state}
     end
   end
 
-  defp start_session_switch(acp_id, session_id, cwd, session_file, replay?, state) do
+  defp run_session_setup({:switch, acp_id, session_id, cwd, session_file, replay?}, state) do
+    previous = previous_session(state)
+
+    case prepare_session_process(cwd, session_file, state) do
+      {:ok, state} ->
+        start_session_switch(acp_id, session_id, cwd, session_file, replay?, previous, state)
+
+      {:error, reason, failed_state} ->
+        {:error, reason, failed_state}
+    end
+  end
+
+  @restored_session_fields [:cwd, :workspace_root, :settings, :last_session_cwd, :startup_sent?]
+
+  # What a failed setup restores: a setup prepares its session before Pi
+  # answers, and a managed one also replaces the Pi process.
+  defp previous_session(state) do
+    %{
+      session_id: state.session_id,
+      session_file: state.session_file,
+      fields: Map.take(state, @restored_session_fields)
+    }
+  end
+
+  # The ACP request of a failed or cancelled setup fails, so the client keeps
+  # using its previous session, and the adapter has to keep serving it.
+  # Unmanaged, Pi stays on that session; only the adapter's workspace and
+  # settings, which the setup already pointed at the requested cwd, go back.
+  # A managed setup already replaced the Pi process (a load started it with
+  # `--session <requested file>`), so a new process resumes the previous
+  # session's file, and a model switch requested meanwhile is sent to it. With
+  # no previous session the replacement process is closed.
+  defp restore_previous_session(%{previous: previous}, %{managed?: false} = state),
+    do: Map.merge(state, previous.fields)
+
+  defp restore_previous_session(%{previous: %{session_file: file} = previous}, state)
+       when is_binary(file) do
+    switch = state.queued_model_switch
+    cwd = previous.fields.workspace_root || previous.fields.cwd
+
+    case prepare_session_process(cwd, file, state) do
+      {:ok, state} ->
+        state |> Map.merge(previous.fields) |> resend_model_switch(switch)
+
+      {:error, reason, state} ->
+        Logger.warning("[Pi Adapter] Could not restore the previous session: #{reason}")
+        Map.merge(state, previous.fields)
+    end
+  end
+
+  defp restore_previous_session(%{previous: previous}, state),
+    do: state |> close_active_session() |> Map.merge(previous.fields)
+
+  defp restore_previous_session(_group, state), do: state
+
+  defp resend_model_switch(state, nil), do: state
+
+  defp resend_model_switch(state, %{fields: fields}) do
+    {data, state} = request_model_switch(fields, state)
+
+    case write_managed(data, state) do
+      :ok ->
+        state
+
+      {:error, reason} ->
+        Logger.warning("[Pi Adapter] Could not resend set_model: #{inspect(reason)}")
+        %{state | pending_model_switch: nil}
+    end
+  end
+
+  defp start_session_switch(acp_id, session_id, cwd, session_file, replay?, previous, state) do
     file_commands = SlashCommands.load(cwd, state.opts)
     settings = Settings.load(cwd, state.opts)
 
@@ -928,6 +998,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     group = %{
       type: :session_load,
       acp_id: acp_id,
+      previous: previous,
       session_id: session_id,
       cwd: cwd,
       session_file: session_file,
@@ -945,20 +1016,14 @@ defmodule Arbor.ACP.Adapters.Pi do
     )
   end
 
-  defp start_session_new(acp_id, cwd, state) do
-    case prepare_session_process(cwd, nil, state) do
-      {:ok, state} -> do_start_session_new(acp_id, cwd, state)
-      {:error, reason, failed_state} -> {:error, reason, failed_state}
-    end
-  end
-
-  defp do_start_session_new(acp_id, cwd, state) do
+  defp start_session_new(acp_id, cwd, previous, state) do
     file_commands = SlashCommands.load(cwd, state.opts)
     settings = Settings.load(cwd, state.opts)
 
     group = %{
       type: :session_new,
       acp_id: acp_id,
+      previous: previous,
       cwd: cwd,
       file_commands: file_commands,
       settings: settings,
@@ -1419,15 +1484,12 @@ defmodule Arbor.ACP.Adapters.Pi do
   # Requests made for the current session are abandoned only once Pi has
   # actually replaced it. When Pi rejects the change, or an extension cancels
   # it (a success reply with `cancelled: true`), the session stays active and
-  # its held model work goes ahead. A managed change has already replaced the
-  # Pi process before Pi answers it, so the old session is gone either way and
-  # its requests have nowhere to go.
+  # its held model work goes ahead; a managed setup first restores the
+  # previous session's process (see restore_previous_session/2).
   defp resolve_session_change(id, event, state) do
     state = %{state | pending_session_changes: MapSet.delete(state.pending_session_changes, id)}
 
-    if session_change_took_effect?(event) or state.managed?,
-      do: abandon_session_requests(state),
-      else: state
+    if session_change_took_effect?(event), do: abandon_session_requests(state), else: state
   end
 
   # The setup group whose session change is still waiting for Pi's answer.
@@ -1450,6 +1512,7 @@ defmodule Arbor.ACP.Adapters.Pi do
       state
       |> delete_group(group)
       |> then(&resolve_session_change(group.change_id, %{"success" => false}, &1))
+      |> then(&restore_previous_session(group, &1))
 
     error = Envelope.error(group.acp_id, -32_800, "Request cancelled")
 
@@ -2044,7 +2107,8 @@ defmodule Arbor.ACP.Adapters.Pi do
 
     if Sessions.empty_models?(models_data) do
       state = maybe_cleanup_failed_session(session_file, state)
-      {:messages, [auth_required_error(group.acp_id, state)], state}
+      error = auth_required_error(group.acp_id, state)
+      {:messages, [error], restore_previous_session(group, state)}
     else
       session_id = state_data["sessionId"] || "pi-#{System.unique_integer([:positive])}"
       finish_established_session(group, state, state_data, models_data, session_id)
@@ -2058,7 +2122,8 @@ defmodule Arbor.ACP.Adapters.Pi do
 
     if Sessions.empty_models?(models_data) do
       state = maybe_cleanup_failed_session(group.session_file, state)
-      {:messages, [auth_required_error(group.acp_id, state)], state}
+      error = auth_required_error(group.acp_id, state)
+      {:messages, [error], restore_previous_session(group, state)}
     else
       finish_established_session(group, state, state_data, models_data, group.session_id)
     end
@@ -2143,7 +2208,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp replay_messages_for(_group, _session_id), do: []
 
   defp finish_control_error(group, error, state) do
-    state = delete_group(state, group)
+    state = state |> delete_group(group) |> then(&restore_previous_session(group, &1))
     {:messages, [error], state}
   end
 

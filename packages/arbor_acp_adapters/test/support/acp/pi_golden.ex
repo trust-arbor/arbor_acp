@@ -93,7 +93,8 @@ defmodule Arbor.ACP.Test.PiGolden do
 
   With `{:init, managed: true}` the adapter owns a real Port. The sandbox's
   `bin/pi` is a shell script that echoes every stdin line back on stdout and
-  exits with `N` when it reads `__exit__ N`. After each step the harness
+  exits with `N` when it reads `__exit__ N`; each start appends its command
+  line arguments to `<sandbox>/bin/argv.log`. After each step the harness
   writes a sentinel line and collects everything echoed before it, so the
   RPC lines the adapter pushed into the subprocess are recorded as
   `port_writes` in the same order Pi would have read them. Managed
@@ -161,6 +162,8 @@ defmodule Arbor.ACP.Test.PiGolden do
   #!/bin/sh
   # Fake `pi` for Arbor.ACP.Test.PiGolden: echoes every stdin line back on stdout
   # so the harness can observe what the adapter wrote; "__exit__ N" exits N.
+  # Each start appends its arguments to bin/argv.log.
+  printf '%s\\n' "$*" >> "$(dirname "$0")/argv.log"
   while IFS= read -r line; do
     case "$line" in
       "__exit__ "*) exit "${line#__exit__ }" ;;

@@ -452,36 +452,88 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
                transcript |> PiGolden.writes() |> Enum.map(& &1["type"])
     end
 
-    test "managed_failed_load_drops_model_work_for_the_replaced_process" do
-      # A managed load replaces the Pi process before Pi answers the switch, so
-      # a model switch requested meanwhile has no session left to apply to.
+    # A managed setup replaces the Pi process before Pi answers the change
+    # (a load starts it with `--session <requested file>`). When the change
+    # fails or is cancelled, the ACP request fails and the client keeps its
+    # previous session, so a new process resumes that session's file.
+    for {name, failure} <- [
+          {"rejected", {:respond_error, "switch_session", "no such session"}},
+          {"cancelled", {:respond, "switch_session", %{"cancelled" => true}}}
+        ] do
+      @failure failure
+      test "managed_#{name}_load_restores_the_previous_session" do
+        steps =
+          [{:init, managed: true}] ++
+            Flows.open_session(1) ++
+            [
+              Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+              Flows.session_load(2, "mapped"),
+              Flows.set_model(3, "openai/gpt-5.1"),
+              @failure,
+              {:read_file, "<sandbox>/bin/argv.log"},
+              Flows.prompt(4, "still on the first session")
+            ]
+
+        transcript =
+          PiGolden.assert_golden(
+            @area,
+            "managed_#{unquote(name)}_load_restores_the_previous_session",
+            steps
+          )
+
+        [set_model, failed, argv, prompt] =
+          transcript |> Enum.take(-4) |> Enum.map(& &1.result)
+
+        # The switch waits for the pending load, then goes to the restored process.
+        assert %{tag: :messages_and_reply} = set_model
+        refute Map.has_key?(set_model, :port_writes)
+
+        assert %{
+                 messages: [%{"id" => 2, "error" => _}],
+                 port: :respawned,
+                 port_writes: [%{"type" => "set_model", "modelId" => "gpt-5.1"}]
+               } = failed
+
+        assert %{content: content} = argv
+
+        assert [
+                 "--mode rpc --no-themes",
+                 "--mode rpc --no-themes --session <sandbox>/sessions/mapped.jsonl",
+                 "--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl"
+               ] = String.split(content, "\n", trim: true)
+
+        assert %{port_writes: [%{"type" => "prompt"}]} = prompt
+      end
+    end
+
+    test "managed_failed_new_session_restores_the_previous_session" do
       steps =
         [{:init, managed: true}] ++
           Flows.open_session(1) ++
           [
-            Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
-            Flows.session_load(2, "mapped"),
-            Flows.set_model(3, "openai/gpt-5.1"),
-            {:respond_error, "switch_session", "no such session"}
+            Flows.session_new(2),
+            {:respond_error, "new_session", "boom"},
+            {:read_file, "<sandbox>/bin/argv.log"}
           ]
 
       transcript =
         PiGolden.assert_golden(
           @area,
-          "managed_failed_load_drops_model_work_for_the_replaced_process",
+          "managed_failed_new_session_restores_the_previous_session",
           steps
         )
 
-      [set_model, rejection] = transcript |> Enum.take(-2) |> Enum.map(& &1.result)
+      [failed, argv] = transcript |> Enum.take(-2) |> Enum.map(& &1.result)
 
-      # The switch waits for the pending load and is never written.
-      assert %{tag: :messages_and_reply} = set_model
-      refute Map.has_key?(set_model, :port_writes)
-      assert %{messages: [%{"id" => 2, "error" => %{"message" => "no such session"}}]} = rejection
-      refute Map.has_key?(rejection, :writes)
+      assert %{messages: [%{"id" => 2, "error" => %{"message" => "boom"}}], port: :respawned} =
+               failed
 
-      refute Enum.any?(PiGolden.writes(transcript), &(&1["type"] == "set_model")),
-             "the held switch reached the replacement Pi process"
+      assert [
+               _first,
+               _second,
+               "--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl"
+             ] =
+               String.split(argv.content, "\n", trim: true)
     end
 
     test "load_with_empty_models_is_auth_required" do

@@ -504,21 +504,49 @@
       kind: :inbound,
       message: %{
         "command" => "switch_session",
-        "error" => "no such session",
+        "data" => %{"cancelled" => true},
         "id" => "pi-<6>",
-        "success" => false,
+        "success" => true,
         "type" => "response"
       }
     },
     result: %{
       messages: [
         %{
-          "error" => %{"code" => -32603, "message" => "no such session"},
+          "error" => %{"code" => -32603, "message" => "Pi cancelled the session change"},
           "id" => 2,
           "jsonrpc" => "2.0"
         }
       ],
+      port: :respawned,
+      port_writes: [
+        %{"id" => "pi-<7>", "modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"}
+      ],
       tag: :messages
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{kind: :read_file, path: "<sandbox>/bin/argv.log"},
+    result: %{
+      content: "--mode rpc --no-themes\n--mode rpc --no-themes --session <sandbox>/sessions/mapped.jsonl\n--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl\n",
+      exists: true
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :outbound,
+      message: %{
+        "id" => 4,
+        "method" => "session/prompt",
+        "params" => %{"prompt" => "still on the first session", "sessionId" => "pi-session"}
+      }
+    },
+    result: %{
+      pending: true,
+      port_writes: [
+        %{"id" => "msg-1", "message" => "still on the first session", "type" => "prompt"}
+      ],
+      tag: :ok
     }
   }
 ]
