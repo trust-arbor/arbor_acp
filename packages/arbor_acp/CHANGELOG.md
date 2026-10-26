@@ -4,6 +4,10 @@
 
 - Fix: `Arbor.ACP.Client` delivers `notice`, `compaction_update` and `compaction_summary_chunk` session updates to the handler and event listener when the application advertised `{}` for `clientCapabilities.session.notices` or `.compaction`. The client validated neither kind, so it rejected these updates as invalid and logged a warning, even after opting in. They are now checked strictly against the ACP SDK 1.9.0 v1 schema. Without the matching capability the client drops them with a warning, because agents must not send them unadvertised. `Arbor.ACP.Types` documents the three update shapes and the client session capabilities.
 
+### Added
+
+- **UNSTABLE:** MCP-over-ACP on protocol version 1 (ACP SDK 1.9 v1). `Arbor.ACP.Agent.mcp_request/5` calls a `type: "acp"` server declared on the session. `Arbor.ACP.Client` registers a provider per server id, answers `mcp/message`, and `mcp_notify/5` sends notifications while that request is in flight. The client includes the server only when the agent advertised `mcpCapabilities.acp == true` and a provider is registered; otherwise the entry is omitted and the session still opens. See [MCP-over-ACP](docs/MCP_OVER_ACP.md). Serving an Arbor MCP server through a provider is a follow-up.
+
 ## 1.0.0-rc.4 — 2026-10-26
 
 - Require `arbor_rpc` 1.0.0-rc.3. Its `Subprocess.close/1` closes a child's stdin and waits `:eof_grace` before signalling it, and its C compiler is optional.

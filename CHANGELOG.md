@@ -4,6 +4,10 @@
 
 - Fix: the ACP client rejected `notice` and context compaction session updates as invalid even when the application had opted in with `clientCapabilities.session.notices` or `.compaction`. It now validates them against the ACP SDK 1.9.0 v1 schema and delivers them; without the capability it still drops them.
 
+### Added
+
+- **UNSTABLE:** ArborACP speaks MCP-over-ACP on protocol version 1 (ACP SDK 1.9 v1). An agent that advertises `mcpCapabilities.acp: true` can call MCP methods on a `type: "acp"` server the client provides, and the client can notify the agent while that request is in flight. A server without that advertisement or without a registered provider is left off the session. Bridging an Arbor MCP server onto this channel is a follow-up. See `packages/arbor_acp/docs/MCP_OVER_ACP.md`.
+
 ## ArborACP / Adapters 1.0.0-rc.4 — 2026-10-26
 
 - **Security:** `Arbor.ACP.Registry` fetch no longer follows HTTP redirects, which re-sent the caller's request headers to the redirect target, even another host or an `http:` URL. A redirect returns `{:error, {:redirect_refused, status, location}}`, with the location's userinfo, query and fragment removed.

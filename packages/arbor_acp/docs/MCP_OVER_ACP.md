@@ -139,7 +139,7 @@ The client does not reject a session solely because the caller passed a
 `type: "acp"` server with no provider. That refusal is intentionally not
 implemented. Omission is logged with a hash of the server id, not the id itself.
 
-The agent accepts `Agent.mcp_request/5` only when its own capabilities include
+The agent accepts `Arbor.ACP.Agent.mcp_request/5` only when its own capabilities include
 `mcpCapabilities.acp == true` and that `serverId` was declared on that session.
 Anything else returns `{:error, {:unsupported_capability, :acp_mcp}}` or
 `{:error, :unknown_mcp_server}` and sends nothing.
