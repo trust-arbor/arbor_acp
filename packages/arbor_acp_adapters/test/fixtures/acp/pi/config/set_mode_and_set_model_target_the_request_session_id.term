@@ -498,9 +498,7 @@
       ],
       tag: :messages_and_write,
       writes: [
-        %{"modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"},
-        %{"id" => "pi-<6>", "type" => "get_state"},
-        %{"id" => "pi-<7>", "type" => "get_available_thinking_levels"}
+        %{"id" => "pi-<6>", "modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"}
       ]
     }
   },

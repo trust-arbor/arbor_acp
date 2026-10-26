@@ -114,7 +114,9 @@
         }
       ],
       tag: :messages_and_write,
-      writes: [%{"modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"}]
+      writes: [
+        %{"id" => "pi-<1>", "modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"}
+      ]
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{

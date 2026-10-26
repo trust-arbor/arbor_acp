@@ -314,26 +314,20 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
   def find_available_model(_model_id, _available_models), do: :error
 
   @doc """
-  Plans a model switch: the ACP notifications to emit, the native RPC payload
-  to write, and the updated state. Delivery is the caller's decision.
+  Plans a model switch: the ACP notifications to emit, the fields of the
+  native `set_model` request, and the updated state. The caller mints the
+  request id, sends the request and tracks its reply.
   """
   @spec set_model_plan(term(), String.t() | nil, state()) ::
-          {:ok, [map()], String.t(), state()} | {:error, String.t()}
+          {:ok, [map()], map(), state()} | {:error, String.t()}
   def set_model_plan(model_id, session_id_override, state) do
     case resolve_model(model_id, state.available_models) do
       {:ok, provider, resolved_id, current_model_id} ->
-        data =
-          RPC.line(
-            RPC.notification(RPC.method(:set_model), %{
-              "provider" => provider,
-              "modelId" => resolved_id
-            })
-          )
-
+        fields = %{"provider" => provider, "modelId" => resolved_id}
         state = %{state | current_model_id: current_model_id}
         session_id = session_id_override || state.session_id
 
-        {:ok, [config_options_update(session_id, state)], data, state}
+        {:ok, [config_options_update(session_id, state)], fields, state}
 
       {:error, reason} ->
         {:error, reason}
@@ -369,7 +363,8 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
 
   `{:ack, data}` writes `data` and replies `%{}`; `{:ok, messages, data, state}`
   writes `data`, emits `messages`, and replies with the confirmation config
-  options.
+  options. The `model` option is a correlated request and goes through
+  `set_model_plan/3` instead.
   """
   @spec update_plan(term(), term(), state()) ::
           {:ack, String.t()} | {:ok, [map()], String.t(), state()} | {:error, String.t()}
@@ -386,8 +381,6 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
 
   def update_plan("auto_retry", value, state) when value in ["true", "false"],
     do: update_plan("auto_retry", value == "true", state)
-
-  def update_plan(@model_config_id, value, state), do: set_model_plan(value, nil, state)
 
   def update_plan(@thought_level_config_id, value, state) do
     case set_thinking_plan(value, nil, state) do

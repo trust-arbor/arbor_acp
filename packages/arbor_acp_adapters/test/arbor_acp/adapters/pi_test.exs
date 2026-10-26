@@ -818,75 +818,195 @@ defmodule Arbor.ACP.Adapters.PiTest do
   end
 
   describe "translate_outbound/2 — model, mode, and config" do
-    test "a model switch refreshes its thinking levels and selected mode", %{state: state} do
-      state = %{
-        state
-        | session_id: "s1",
-          thinking_level: "high",
-          available_thinking_levels: ["off", "medium", "high"]
+    test "a model switch refreshes only after Pi has switched the model", %{state: state} do
+      state = switch_ready_state(state)
+      pi = fake_pi()
+
+      assert {:messages_and_write, [_optimistic], data, state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+      {state, _pi, messages} = drive_fake_pi(data, state, pi)
+
+      # The refresh describes the new model, not the one Pi was leaving.
+      assert state.available_thinking_levels == ["off", "minimal", "low"]
+      assert state.thinking_level == "low"
+      assert state.current_model_id == "openai/gpt-5.1"
+      assert state.pending_model_switch == nil
+      assert state.pending_model_refresh == nil
+
+      # set_model goes alone, as a request whose reply starts the refresh.
+      assert [%{"type" => "set_model", "id" => "pi-" <> _}] = decode_many(data)
+      assert [mode_update, config_update] = messages
+      assert mode_update["params"]["update"]["currentModeId"] == "low"
+      options = config_update["params"]["update"]["configOptions"]
+      thought = Enum.find(options, &(&1["id"] == "thought_level"))
+      assert Enum.map(thought["options"], & &1["value"]) == ["off", "minimal", "low"]
+      assert thought["currentValue"] == "low"
+      assert Enum.find(options, &(&1["id"] == "model"))["currentValue"] == "openai/gpt-5.1"
+    end
+
+    test "the model config option refreshes after Pi switches too", %{state: state} do
+      state = switch_ready_state(state)
+
+      msg = %{
+        "method" => "session/set_config_option",
+        "params" => %{"sessionId" => "s1", "configId" => "model", "value" => "openai/gpt-5.1"}
       }
 
-      assert {:messages_and_write, [_update], data, state} =
+      assert {:messages_and_write, [_optimistic], data, state} = Pi.translate_outbound(msg, state)
+      assert [%{"type" => "set_model", "id" => "pi-" <> _}] = decode_many(data)
+
+      {state, _pi, [_mode_update, _config_update]} = drive_fake_pi(data, state, fake_pi())
+      assert state.available_thinking_levels == ["off", "minimal", "low"]
+      assert state.thinking_level == "low"
+    end
+
+    test "a set_mode sent after the refresh keeps its level", %{state: state} do
+      state = switch_ready_state(state)
+      pi = fake_pi()
+
+      assert {:messages_and_write, _, data, state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+      {[level_event, switch_reply], pi} = fake_pi_answer(decode_many(data), pi)
+
+      # The refresh that follows the switch publishes the switch's level.
+      assert {:skip, state} = Pi.translate_inbound(Jason.encode!(level_event), state)
+
+      assert {:skip_and_write, refresh, state} =
+               Pi.translate_inbound(Jason.encode!(switch_reply), state)
+
+      assert Enum.map(decode_many(refresh), & &1["type"]) == [
+               "get_state",
+               "get_available_thinking_levels"
+             ]
+
+      assert {:messages_and_write, _, set_level, state} =
                Pi.translate_outbound(
                  %{
-                   "method" => "session/set_model",
-                   "params" => %{"sessionId" => "s1", "modelId" => "anthropic/claude-sonnet-4"}
+                   "method" => "session/set_mode",
+                   "params" => %{"sessionId" => "s1", "modeId" => "off"}
                  },
                  state
                )
 
-      assert [set_model, get_state, get_levels] = decode_many(data)
-      assert set_model["type"] == "set_model"
-      assert get_state["type"] == "get_state"
-      assert get_levels["type"] == "get_available_thinking_levels"
-
-      assert {:skip, state} =
-               Pi.translate_inbound(
-                 response_line(get_levels["id"], "get_available_thinking_levels", %{
-                   "levels" => ["off", "minimal", "low"]
-                 }),
-                 state
-               )
-
-      assert {:messages, [mode_update, config_update], state} =
-               Pi.translate_inbound(
-                 response_line(get_state["id"], "get_state", %{"thinkingLevel" => "low"}),
-                 state
-               )
-
-      assert mode_update["params"]["update"]["currentModeId"] == "low"
+      # Pi answers the refresh before it reads the later set_thinking_level,
+      # so the refresh's get_state still reports "low".
+      {state, pi, messages} = drive_fake_pi(refresh, state, pi)
+      assert [mode_update, _config_update] = messages
+      assert mode_update["params"]["update"]["currentModeId"] == "off"
+      assert state.thinking_level == "off"
       assert state.available_thinking_levels == ["off", "minimal", "low"]
-      assert state.thinking_level == "low"
 
-      options = config_update["params"]["update"]["configOptions"]
-      thought = Enum.find(options, &(&1["id"] == "thought_level"))
-      assert Enum.map(thought["options"], & &1["value"]) == ["off", "minimal", "low"]
+      # Pi then applies the level and reports the change it made.
+      {state, _pi, []} = drive_fake_pi(set_level, state, pi)
+      assert state.thinking_level == "off"
     end
 
-    test "an old model refresh cannot repoint a newer session selection", %{state: state} do
-      state = %{state | session_id: "s1", available_thinking_levels: ["off", "medium"]}
+    test "a rejected model switch restores the model Pi kept", %{state: state} do
+      state = switch_ready_state(state)
+      pi = %{fake_pi() | reject_set_model: "No API key for openai/gpt-5.1"}
 
-      request = fn model ->
-        %{"method" => "session/set_model", "params" => %{"modelId" => model}}
-      end
+      assert {:messages_and_write, [optimistic], data, state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
 
-      assert {:messages_and_write, _, first_data, state} =
-               Pi.translate_outbound(request.("openai/gpt-5.1"), state)
+      assert Enum.find(optimistic["params"]["update"]["configOptions"], &(&1["id"] == "model"))[
+               "currentValue"
+             ] == "openai/gpt-5.1"
 
-      assert [_, old_state_request, _] = decode_many(first_data)
+      {state, _pi, [_mode_update, config_update]} = drive_fake_pi(data, state, pi)
 
-      assert {:messages_and_write, _, _second_data, state} =
-               Pi.translate_outbound(request.("anthropic/claude-sonnet-4"), state)
+      assert state.current_model_id == "anthropic/claude-sonnet-4"
+      assert state.available_thinking_levels == ["off", "medium", "high"]
+      assert state.thinking_level == "high"
 
+      assert Enum.find(config_update["params"]["update"]["configOptions"], &(&1["id"] == "model"))[
+               "currentValue"
+             ] == "anthropic/claude-sonnet-4"
+    end
+
+    test "a refresh on Pi 0.80.x falls back to the static levels", %{state: state} do
+      state = switch_ready_state(state)
+      pi = %{fake_pi() | thinking_levels_command?: false}
+
+      assert {:messages_and_write, _, data, state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+      {state, _pi, [mode_update, _config_update]} = drive_fake_pi(data, state, pi)
+
+      assert state.available_thinking_levels == ~w(off minimal low medium high xhigh)
+      assert state.thinking_level == "low"
+      assert mode_update["params"]["update"]["currentModeId"] == "low"
+    end
+
+    test "an older model switch cannot repoint a newer selection", %{state: state} do
+      state = switch_ready_state(state)
+
+      assert {:messages_and_write, _, first, state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+      assert {:messages_and_write, _, second, state} =
+               Pi.translate_outbound(set_model_request("anthropic/claude-sonnet-4"), state)
+
+      [first_switch] = decode_many(first)
+      [second_switch] = decode_many(second)
+
+      # The first switch's reply is stale and starts no refresh.
+      assert {:skip, state} =
+               Pi.translate_inbound(response_line(first_switch["id"], "set_model", %{}), state)
+
+      assert state.current_model_id == "anthropic/claude-sonnet-4"
+      assert state.pending_model_switch.rpc_id == second_switch["id"]
+
+      assert {:skip_and_write, refresh, state} =
+               Pi.translate_inbound(response_line(second_switch["id"], "set_model", %{}), state)
+
+      [old_state_request, _levels_request] = decode_many(refresh)
+
+      assert {:messages_and_write, _, _third, state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+      # A refresh superseded by a newer switch is dropped, too.
       assert {:skip, state} =
                Pi.translate_inbound(
                  response_line(old_state_request["id"], "get_state", %{
-                   "sessionId" => "wrong-session"
+                   "sessionId" => "wrong-session",
+                   "thinkingLevel" => "off"
                  }),
                  state
                )
 
       assert state.session_id == "s1"
+      assert state.thinking_level == "high"
+      assert state.current_model_id == "openai/gpt-5.1"
+    end
+
+    test "thinking_level_changed events publish the level Pi applied", %{state: state} do
+      state = switch_ready_state(state)
+
+      assert {:messages, [mode_update, config_update], state} =
+               Pi.translate_inbound(
+                 Jason.encode!(%{"type" => "thinking_level_changed", "level" => "medium"}),
+                 state
+               )
+
+      assert mode_update["params"]["sessionId"] == "s1"
+      assert mode_update["params"]["update"]["currentModeId"] == "medium"
+
+      thought =
+        Enum.find(
+          config_update["params"]["update"]["configOptions"],
+          &(&1["id"] == "thought_level")
+        )
+
+      assert thought["currentValue"] == "medium"
+      assert state.thinking_level == "medium"
+
+      assert {:skip, ^state} =
+               Pi.translate_inbound(
+                 Jason.encode!(%{"type" => "thinking_level_changed", "level" => "medium"}),
+                 state
+               )
     end
 
     test "session/set_model routes full ACP model IDs to Pi set_model", %{state: state} do
@@ -973,11 +1093,8 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert {:messages_and_write, [update], data, new_state} =
                Pi.translate_outbound(msg, state)
 
-      assert decode_one(data) == %{
-               "type" => "set_model",
-               "provider" => "test",
-               "modelId" => "beta"
-             }
+      assert {"pi-" <> _, set_model} = Map.pop(decode_one(data), "id")
+      assert set_model == %{"type" => "set_model", "provider" => "test", "modelId" => "beta"}
 
       assert new_state.current_model_id == "test/beta"
 
@@ -1026,7 +1143,9 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert_receive {:arbor_rpc, ^generation, {:frame, token, rpc_line}}, 1_000
       assert :ok = PortRunner.ack(port, token)
 
-      assert Jason.decode!(rpc_line) == %{
+      assert {"pi-" <> _, set_model} = Map.pop(Jason.decode!(rpc_line), "id")
+
+      assert set_model == %{
                "type" => "set_model",
                "provider" => "test",
                "modelId" => "model-300"
@@ -1725,6 +1844,114 @@ defmodule Arbor.ACP.Adapters.PiTest do
       "success" => true,
       "data" => data
     })
+  end
+
+  defp switch_ready_state(state) do
+    %{
+      state
+      | session_id: "s1",
+        thinking_level: "high",
+        available_thinking_levels: ["off", "medium", "high"],
+        current_model_id: "anthropic/claude-sonnet-4",
+        available_models: [
+          %{"modelId" => "anthropic/claude-sonnet-4", "name" => "anthropic/Claude Sonnet 4"},
+          %{"modelId" => "openai/gpt-5.1", "name" => "openai/GPT-5.1"}
+        ]
+    }
+  end
+
+  defp set_model_request(model_id) do
+    %{"method" => "session/set_model", "params" => %{"sessionId" => "s1", "modelId" => model_id}}
+  end
+
+  # A fake Pi RPC process. Like Pi, it dispatches each input line without
+  # awaiting the previous one, and set_model finishes only after an
+  # asynchronous auth check, so anything read alongside set_model is answered
+  # first and describes the model Pi is leaving.
+  defp fake_pi do
+    %{
+      model: %{"provider" => "anthropic", "id" => "claude-sonnet-4"},
+      level: "high",
+      levels: ["off", "medium", "high"],
+      models: %{
+        "openai/gpt-5.1" => %{level: "low", levels: ["off", "minimal", "low"]}
+      },
+      reject_set_model: nil,
+      thinking_levels_command?: true
+    }
+  end
+
+  defp fake_pi_answer(requests, pi) do
+    {switches, others} = Enum.split_with(requests, &(&1["type"] == "set_model"))
+    {replies, pi} = Enum.flat_map_reduce(others ++ switches, pi, &fake_pi_reply/2)
+    {replies, pi}
+  end
+
+  defp fake_pi_reply(%{"type" => "set_model"} = request, %{reject_set_model: nil} = pi) do
+    key = "#{request["provider"]}/#{request["modelId"]}"
+    %{level: level, levels: levels} = Map.fetch!(pi.models, key)
+    model = %{"provider" => request["provider"], "id" => request["modelId"]}
+    pi = %{pi | model: model, level: level, levels: levels}
+
+    {[
+       %{"type" => "thinking_level_changed", "level" => level},
+       fake_pi_response(request, true, %{"data" => model})
+     ], pi}
+  end
+
+  defp fake_pi_reply(%{"type" => "set_model"} = request, pi),
+    do: {[fake_pi_response(request, false, %{"error" => pi.reject_set_model})], pi}
+
+  defp fake_pi_reply(%{"type" => "get_state"} = request, pi) do
+    data = %{"thinkingLevel" => pi.level, "model" => pi.model, "sessionId" => "s1"}
+    {[fake_pi_response(request, true, %{"data" => data})], pi}
+  end
+
+  defp fake_pi_reply(
+         %{"type" => "get_available_thinking_levels"} = request,
+         %{thinking_levels_command?: false} = pi
+       ) do
+    error = "Unknown command: get_available_thinking_levels"
+    {[fake_pi_response(request, false, %{"error" => error})], pi}
+  end
+
+  defp fake_pi_reply(%{"type" => "get_available_thinking_levels"} = request, pi),
+    do: {[fake_pi_response(request, true, %{"data" => %{"levels" => pi.levels}})], pi}
+
+  defp fake_pi_reply(%{"type" => "set_thinking_level", "level" => level} = request, pi) do
+    events =
+      if level == pi.level,
+        do: [],
+        else: [%{"type" => "thinking_level_changed", "level" => level}]
+
+    {events ++ [fake_pi_response(request, true, %{})], %{pi | level: level}}
+  end
+
+  defp fake_pi_response(request, success, fields) do
+    Map.merge(
+      %{
+        "type" => "response",
+        "id" => request["id"],
+        "command" => request["type"],
+        "success" => success
+      },
+      fields
+    )
+  end
+
+  # Feeds what the adapter wrote to the fake Pi, and Pi's output back to the
+  # adapter, until the adapter stops writing.
+  defp drive_fake_pi(data, state, pi, messages \\ []) do
+    {replies, pi} = fake_pi_answer(decode_many(data), pi)
+
+    Enum.reduce(replies, {state, pi, messages}, fn reply, {state, pi, messages} ->
+      case Pi.translate_inbound(Jason.encode!(reply), state) do
+        {:skip, state} -> {state, pi, messages}
+        {:messages, new, state} -> {state, pi, messages ++ new}
+        {:skip_and_write, more, state} -> drive_fake_pi(more, state, pi, messages)
+        {:messages_and_write, new, more, state} -> drive_fake_pi(more, state, pi, messages ++ new)
+      end
+    end)
   end
 
   defp respond(state, id, command, data) do

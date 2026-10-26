@@ -286,19 +286,11 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
       assert [
                %{
                  tag: :messages_and_write,
-                 writes: [
-                   %{"type" => "set_model", "provider" => "openai"},
-                   %{"type" => "get_state"},
-                   %{"type" => "get_available_thinking_levels"}
-                 ]
+                 writes: [%{"type" => "set_model", "id" => "pi-" <> _, "provider" => "openai"}]
                },
                %{
                  tag: :messages_and_write,
-                 writes: [
-                   %{"type" => "set_model", "provider" => "anthropic"},
-                   %{"type" => "get_state"},
-                   %{"type" => "get_available_thinking_levels"}
-                 ]
+                 writes: [%{"type" => "set_model", "id" => "pi-" <> _, "provider" => "anthropic"}]
                },
                %{tag: :error, error: "Unknown modelId: nope"},
                %{tag: :error, error: "session/set_model requires modelId"}
@@ -511,11 +503,7 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
       assert %{
                tag: :messages_and_reply,
                reply: %{"configOptions" => confirmation},
-               port_writes: [
-                 %{"type" => "set_model"},
-                 %{"type" => "get_state"},
-                 %{"type" => "get_available_thinking_levels"}
-               ]
+               port_writes: [%{"type" => "set_model", "id" => "pi-" <> _}]
              } =
                model_reply
 
@@ -543,11 +531,7 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
       assert %{
                tag: :messages_and_reply,
                reply: %{"configOptions" => _},
-               port_writes: [
-                 %{"type" => "set_model"},
-                 %{"type" => "get_state"},
-                 %{"type" => "get_available_thinking_levels"}
-               ]
+               port_writes: [%{"type" => "set_model", "id" => "pi-" <> _}]
              } =
                set_model_reply
     end

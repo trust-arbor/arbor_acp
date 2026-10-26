@@ -383,9 +383,7 @@
         }
       ],
       port_writes: [
-        %{"modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"},
-        %{"id" => "pi-<6>", "type" => "get_state"},
-        %{"id" => "pi-<7>", "type" => "get_available_thinking_levels"}
+        %{"id" => "pi-<6>", "modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"}
       ],
       reply: %{
         "configOptions" => [
@@ -915,9 +913,12 @@
         }
       ],
       port_writes: [
-        %{"modelId" => "claude-sonnet-4", "provider" => "anthropic", "type" => "set_model"},
-        %{"id" => "pi-<8>", "type" => "get_state"},
-        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"}
+        %{
+          "id" => "pi-<7>",
+          "modelId" => "claude-sonnet-4",
+          "provider" => "anthropic",
+          "type" => "set_model"
+        }
       ],
       reply: %{
         "configOptions" => [

@@ -378,9 +378,7 @@
       ],
       tag: :messages_and_write,
       writes: [
-        %{"modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"},
-        %{"id" => "pi-<6>", "type" => "get_state"},
-        %{"id" => "pi-<7>", "type" => "get_available_thinking_levels"}
+        %{"id" => "pi-<6>", "modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"}
       ]
     }
   },
@@ -494,9 +492,12 @@
       ],
       tag: :messages_and_write,
       writes: [
-        %{"modelId" => "org/model-x", "provider" => "custom", "type" => "set_model"},
-        %{"id" => "pi-<8>", "type" => "get_state"},
-        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"}
+        %{
+          "id" => "pi-<7>",
+          "modelId" => "org/model-x",
+          "provider" => "custom",
+          "type" => "set_model"
+        }
       ]
     }
   },
@@ -610,9 +611,12 @@
       ],
       tag: :messages_and_write,
       writes: [
-        %{"modelId" => "anything", "provider" => "unknown-provider", "type" => "set_model"},
-        %{"id" => "pi-<10>", "type" => "get_state"},
-        %{"id" => "pi-<11>", "type" => "get_available_thinking_levels"}
+        %{
+          "id" => "pi-<8>",
+          "modelId" => "anything",
+          "provider" => "unknown-provider",
+          "type" => "set_model"
+        }
       ]
     }
   }

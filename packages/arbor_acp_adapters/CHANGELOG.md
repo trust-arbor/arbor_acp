@@ -5,6 +5,7 @@
 - Claude SDK: render Write tool calls that use Claude Code's `path`/`file_text` input aliases as file diffs.
 - Codex: resume newly created app-server threads before their first prompt by reading the live thread when no rollout exists yet.
 - Pi: discover thinking levels during session setup and after model switches, publish context-window usage from session stats, and forward live session rename events to ACP clients. Model-specific levels need Pi 0.81.0 or newer; Pi 0.80.x still works and offers the static levels, because a rejected `get_available_thinking_levels` no longer fails `session/new`, `session/load` or `session/resume`.
+- Pi: send `set_model` as a correlated request. The adapter refreshes the session's model and thinking levels only after Pi answers it, so the refresh describes the new model, and a rejected switch reports the model Pi kept. It also follows Pi's `thinking_level_changed` events, and a `set_mode` sent while a refresh is outstanding keeps its level.
 
 ## 1.0.0-rc.4 — 2026-10-26
 

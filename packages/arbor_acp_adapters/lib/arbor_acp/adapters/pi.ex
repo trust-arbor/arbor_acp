@@ -77,8 +77,12 @@ defmodule Arbor.ACP.Adapters.Pi do
     pending_extension_ui: %{},
     last_usage: %{},
     pending_usage_request: nil,
+    # The latest set_model request awaiting Pi's reply, then the
+    # get_state/get_available_thinking_levels refresh sent after it.
+    pending_model_switch: nil,
     pending_model_refresh: nil,
-    ignored_refresh_ids: MapSet.new(),
+    # Replies to superseded set_model requests and refreshes.
+    ignored_rpc_ids: MapSet.new(),
     pending_controls: %{},
     control_groups: %{},
     msg_counter: 0,
@@ -287,20 +291,16 @@ defmodule Arbor.ACP.Adapters.Pi do
     mode = params["modeId"]
 
     case Config.set_thinking_plan(mode, params["sessionId"], state) do
-      {:ok, messages, data, state} -> deliver_messages_and_ack(messages, data, state)
-      :error -> {:error, "Unknown modeId: #{inspect(mode)}", state}
+      {:ok, messages, data, state} ->
+        deliver_messages_and_ack(messages, data, override_refresh_level(state))
+
+      :error ->
+        {:error, "Unknown modeId: #{inspect(mode)}", state}
     end
   end
 
   def translate_outbound(%{"method" => "session/set_model", "params" => params}, state) do
-    case Config.set_model_plan(params["modelId"], params["sessionId"], state) do
-      {:ok, messages, data, state} ->
-        {data, state} = refresh_model_configuration(data, state)
-        deliver_messages_and_config_result(messages, data, state)
-
-      {:error, reason} ->
-        {:error, reason, state}
-    end
+    translate_set_model(params["modelId"], params["sessionId"], state)
   end
 
   def translate_outbound(%{"method" => "session/set_config_option", "params" => params}, state) do
@@ -562,8 +562,9 @@ defmodule Arbor.ACP.Adapters.Pi do
         pending_extension_ui: %{},
         last_usage: %{},
         pending_usage_request: nil,
+        pending_model_switch: nil,
         pending_model_refresh: nil,
-        ignored_refresh_ids: MapSet.new()
+        ignored_rpc_ids: MapSet.new()
     }
   end
 
@@ -1119,27 +1120,66 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp context_usage_update(_data, _session_id), do: nil
 
-  defp refresh_model_configuration(data, %{session_id: session_id} = state)
-       when is_binary(session_id) and session_id != "" do
-    state =
-      case state.pending_model_refresh do
-        %{state_id: old_state_id, levels_id: old_levels_id} = pending ->
-          outstanding_ids =
-            [
-              if(is_nil(pending.state_data), do: old_state_id),
-              if(is_nil(pending.levels_data), do: old_levels_id)
-            ]
-            |> Enum.reject(&is_nil/1)
+  # Pi dispatches each input line without awaiting the previous one, and its
+  # set_model assigns the model only after an asynchronous auth check. A
+  # get_state written alongside set_model therefore describes the previous
+  # model, so the refresh is sent only once Pi has answered the set_model
+  # request.
+  defp translate_set_model(model_id, session_id_override, state) do
+    case Config.set_model_plan(model_id, session_id_override, state) do
+      {:ok, messages, fields, state} ->
+        {data, state} = request_model_switch(fields, state)
+        deliver_messages_and_config_result(messages, data, state)
 
-          %{
-            state
-            | ignored_refresh_ids:
-                MapSet.union(state.ignored_refresh_ids, MapSet.new(outstanding_ids))
-          }
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
 
-        _ ->
-          state
-      end
+  defp request_model_switch(fields, state) do
+    state = supersede_model_switch(state)
+    {id, request, state} = rpc(state, RPC.method(:set_model), fields)
+
+    switch =
+      if is_binary(state.session_id) and state.session_id != "",
+        do: %{rpc_id: id, session_id: state.session_id}
+
+    {RPC.line(request), %{state | pending_model_switch: switch}}
+  end
+
+  # A newer model switch makes the previous switch's reply and refresh stale;
+  # their replies are dropped when they arrive.
+  defp supersede_model_switch(state) do
+    stale_ids =
+      case state.pending_model_switch do
+        %{rpc_id: id} -> [id]
+        nil -> []
+      end ++ outstanding_refresh_ids(state.pending_model_refresh)
+
+    %{
+      state
+      | pending_model_switch: nil,
+        pending_model_refresh: nil,
+        ignored_rpc_ids: MapSet.union(state.ignored_rpc_ids, MapSet.new(stale_ids))
+    }
+  end
+
+  defp outstanding_refresh_ids(nil), do: []
+
+  defp outstanding_refresh_ids(refresh) do
+    for {id, nil} <- [
+          {refresh.state_id, refresh.state_data},
+          {refresh.levels_id, refresh.levels_data}
+        ],
+        do: id
+  end
+
+  # A rejected switch leaves Pi on its previous model, so the refresh runs
+  # either way: it also corrects the optimistically reported model.
+  defp handle_model_switch_reply(event, %{pending_model_switch: switch} = state) do
+    if event["success"] == false do
+      Logger.warning("[Pi Adapter] set_model failed: #{inspect(event["error"])}")
+    end
 
     {state_id, get_state, state} = rpc(state, RPC.method(:get_state))
     {levels_id, get_levels, state} = rpc(state, RPC.method(:get_available_thinking_levels))
@@ -1147,52 +1187,80 @@ defmodule Arbor.ACP.Adapters.Pi do
     refresh = %{
       state_id: state_id,
       levels_id: levels_id,
-      session_id: session_id,
+      session_id: switch.session_id,
       state_data: nil,
-      levels_data: nil
+      levels_data: nil,
+      level_overridden?: false
     }
 
-    {data <> RPC.encode_many([get_state, get_levels]), %{state | pending_model_refresh: refresh}}
+    {:skip_and_write, RPC.encode_many([get_state, get_levels]),
+     %{state | pending_model_switch: nil, pending_model_refresh: refresh}}
   end
 
-  defp refresh_model_configuration(data, state), do: {data, state}
-
   defp handle_model_refresh(event, %{pending_model_refresh: refresh} = state) do
-    if event["success"] == false do
-      {:skip, %{state | pending_model_refresh: nil}}
-    else
-      refresh =
-        cond do
-          event["id"] == refresh.state_id -> %{refresh | state_data: event["data"] || %{}}
-          event["id"] == refresh.levels_id -> %{refresh | levels_data: event["data"] || %{}}
-        end
-
-      if is_map(refresh.state_data) and is_map(refresh.levels_data) do
-        modes = Config.thinking_state(refresh.state_data, refresh.levels_data)
-        levels = Enum.map(modes["availableModes"], & &1["id"])
-
-        state = %{
-          state
-          | pending_model_refresh: nil,
-            available_thinking_levels: levels,
-            thinking_level: modes["currentModeId"]
-        }
-
-        {:messages,
-         [
-           AdapterEvents.current_mode_update(refresh.session_id, state.thinking_level),
-           Config.config_options_update(refresh.session_id, state)
-         ], state}
-      else
-        {:skip, %{state | pending_model_refresh: refresh}}
+    # A failed member reports no data. Pi 0.80.x has no
+    # get_available_thinking_levels, which leaves the static levels.
+    data =
+      case event do
+        %{"success" => false} -> %{}
+        %{"data" => data} when is_map(data) -> data
+        _ -> %{}
       end
+
+    refresh =
+      if event["id"] == refresh.state_id,
+        do: %{refresh | state_data: data},
+        else: %{refresh | levels_data: data}
+
+    if is_map(refresh.state_data) and is_map(refresh.levels_data) do
+      finish_model_refresh(refresh, %{state | pending_model_refresh: nil})
+    else
+      {:skip, %{state | pending_model_refresh: refresh}}
     end
   end
 
+  defp finish_model_refresh(refresh, state) do
+    levels = Config.available_levels(refresh.levels_data["levels"])
+
+    # A set_mode, or a thinking_level_changed event, after the refresh was sent
+    # is newer than the level its get_state reported.
+    reported =
+      if refresh.level_overridden?,
+        do: state.thinking_level,
+        else: refresh.state_data["thinkingLevel"] || state.thinking_level
+
+    state = %{
+      state
+      | available_thinking_levels: levels,
+        thinking_level: Config.normalize_thinking_level(reported, levels),
+        current_model_id: reported_model_id(refresh.state_data) || state.current_model_id
+    }
+
+    {:messages,
+     [
+       AdapterEvents.current_mode_update(refresh.session_id, state.thinking_level),
+       Config.config_options_update(refresh.session_id, state)
+     ], state}
+  end
+
+  defp reported_model_id(%{"model" => %{"provider" => provider, "id" => id}})
+       when is_binary(provider) and provider != "" and is_binary(id) and id != "",
+       do: "#{provider}/#{id}"
+
+  defp reported_model_id(_state_data), do: nil
+
+  defp override_refresh_level(%{pending_model_refresh: %{} = refresh} = state),
+    do: %{state | pending_model_refresh: %{refresh | level_overridden?: true}}
+
+  defp override_refresh_level(state), do: state
+
   defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
     cond do
-      MapSet.member?(state.ignored_refresh_ids, id) ->
-        {:skip, %{state | ignored_refresh_ids: MapSet.delete(state.ignored_refresh_ids, id)}}
+      MapSet.member?(state.ignored_rpc_ids, id) ->
+        {:skip, %{state | ignored_rpc_ids: MapSet.delete(state.ignored_rpc_ids, id)}}
+
+      match?(%{rpc_id: ^id}, state.pending_model_switch) ->
+        handle_model_switch_reply(event, state)
 
       is_map(state.pending_model_refresh) and
           id in [state.pending_model_refresh.state_id, state.pending_model_refresh.levels_id] ->
@@ -1338,6 +1406,37 @@ defmodule Arbor.ACP.Adapters.Pi do
       })
 
     {:messages, [notification], state}
+  end
+
+  # Pi reports every effective thinking-level change, including the level a
+  # model switch selects and the clamp it applies to an unsupported
+  # set_thinking_level.
+  defp process_event(%{"type" => "thinking_level_changed", "level" => level}, state)
+       when is_binary(level) and level != "" do
+    previous = state.thinking_level
+    state = override_refresh_level(%{state | thinking_level: level})
+
+    cond do
+      # The refresh that follows a model switch publishes the level against
+      # the new model's levels.
+      state.pending_model_switch != nil or state.pending_model_refresh != nil ->
+        {:skip, state}
+
+      level == previous or not is_binary(state.session_id) ->
+        {:skip, state}
+
+      true ->
+        levels = Config.available_levels(state.available_thinking_levels)
+
+        {:messages,
+         [
+           AdapterEvents.current_mode_update(
+             state.session_id,
+             Config.normalize_thinking_level(level, levels)
+           ),
+           Config.config_options_update(state.session_id, state)
+         ], state}
+    end
   end
 
   defp process_event(%{"type" => "agent_settled"}, %{pending_prompt: nil} = state) do
@@ -2138,20 +2237,19 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp maybe_keyword_put(keyword, key, value), do: Keyword.put(keyword, key, value)
 
   defp translate_config_option(config_id, value, state) do
-    case Config.update_plan(config_id, value, state) do
-      {:ack, data} ->
-        deliver_ack(data, state)
+    if config_id == Config.model_config_id() do
+      translate_set_model(value, nil, state)
+    else
+      case Config.update_plan(config_id, value, state) do
+        {:ack, data} ->
+          deliver_ack(data, state)
 
-      {:ok, messages, data, state} ->
-        {data, state} =
-          if config_id == Config.model_config_id(),
-            do: refresh_model_configuration(data, state),
-            else: {data, state}
+        {:ok, messages, data, state} ->
+          deliver_messages_and_config_result(messages, data, override_refresh_level(state))
 
-        deliver_messages_and_config_result(messages, data, state)
-
-      {:error, reason} ->
-        {:error, reason, state}
+        {:error, reason} ->
+          {:error, reason, state}
+      end
     end
   end
 
