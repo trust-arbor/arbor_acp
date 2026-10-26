@@ -203,7 +203,8 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
             Capabilities.put(
               %{
                 "fs" => %{"readTextFile" => true, "writeTextFile" => true},
-                "terminal" => true
+                "terminal" => true,
+                "session" => %{"notices" => %{}, "compaction" => %{}}
               },
               :boolean_config_options,
               true
@@ -279,7 +280,7 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
                    "terminal/release"
                  ])
 
-        update_types = collect_update_types(session_id, 11)
+        update_types = collect_update_types(session_id, 14)
 
         for type <- [
               "user_message_chunk",
@@ -292,7 +293,10 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
               "current_mode_update",
               "config_option_update",
               "session_info_update",
-              "usage_update"
+              "usage_update",
+              "notice",
+              "compaction_update",
+              "compaction_summary_chunk"
             ] do
           assert type in update_types
         end
@@ -366,7 +370,10 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
             "current_mode_update",
             "config_option_update",
             "session_info_update",
-            "usage_update"
+            "usage_update",
+            "notice",
+            "compaction_update",
+            "compaction_summary_chunk"
           ] do
         assert type in results["updates"]
       end
