@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Fix: `Arbor.ACP.Client` delivers `notice`, `compaction_update` and `compaction_summary_chunk` session updates to the handler and event listener when the application advertised `{}` for `clientCapabilities.session.notices` or `.compaction`. The client validated neither kind, so it rejected these updates as invalid and logged a warning, even after opting in. They are now checked strictly against the ACP SDK 1.9.0 v1 schema. Without the matching capability the client drops them with a warning, because agents must not send them unadvertised. `Arbor.ACP.Types` documents the three update shapes and the client session capabilities.
+- Fix: `Arbor.ACP.Client` delivers `notice`, `compaction_update` and `compaction_summary_chunk` session updates to the handler and event listener when the application advertised `{}` for `clientCapabilities.session.notices` or `.compaction`. The client validated neither kind, so it rejected these updates as invalid and logged a warning, even after opting in. They are now validated the way the ACP SDK 1.9.0 v1 deserializer does it: an update whose required fields are missing or invalid is rejected; an invalid optional value is removed, and an invalid `summary` item is skipped, so one bad block does not lose a completed compaction. Without the matching capability the client drops them with a warning, because agents must not send them unadvertised. `Arbor.ACP.Types` documents the three update shapes and the client session capabilities.
 
 ## 1.0.0-rc.4 — 2026-10-26
 

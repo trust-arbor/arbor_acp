@@ -193,7 +193,7 @@ defmodule Arbor.ACP.RequestValidationTest do
       end
     end
 
-    test "reject missing, mistyped or malformed fields" do
+    test "reject missing or invalid required fields, as the SDK deserializer does" do
       text = %{"type" => "text", "text" => "summary"}
 
       invalid_updates = [
@@ -205,38 +205,12 @@ defmodule Arbor.ACP.RequestValidationTest do
         %{"sessionUpdate" => "notice", "severity" => "info", "title" => ""},
         %{"sessionUpdate" => "notice", "severity" => "info", "title" => nil},
         %{"sessionUpdate" => "notice", "severity" => "info", "title" => ["Title"]},
-        %{"sessionUpdate" => "notice", "severity" => "info", "title" => "T", "description" => 1},
-        %{"sessionUpdate" => "notice", "severity" => "info", "title" => "T", "_meta" => []},
         %{"sessionUpdate" => "compaction_update", "status" => "completed"},
         %{"sessionUpdate" => "compaction_update", "compactionId" => "c-1"},
         %{"sessionUpdate" => "compaction_update", "compactionId" => 1, "status" => "completed"},
         %{"sessionUpdate" => "compaction_update", "compactionId" => nil, "status" => "completed"},
         %{"sessionUpdate" => "compaction_update", "compactionId" => "c-1", "status" => nil},
         %{"sessionUpdate" => "compaction_update", "compactionId" => "c-1", "status" => 2},
-        %{
-          "sessionUpdate" => "compaction_update",
-          "compactionId" => "c-1",
-          "status" => "completed",
-          "summary" => text
-        },
-        %{
-          "sessionUpdate" => "compaction_update",
-          "compactionId" => "c-1",
-          "status" => "completed",
-          "summary" => [text, %{"type" => "text"}]
-        },
-        %{
-          "sessionUpdate" => "compaction_update",
-          "compactionId" => "c-1",
-          "status" => "failed",
-          "error" => %{"message" => "structured"}
-        },
-        %{
-          "sessionUpdate" => "compaction_update",
-          "compactionId" => "c-1",
-          "status" => "completed",
-          "_meta" => "not-an-object"
-        },
         %{"sessionUpdate" => "compaction_summary_chunk", "content" => text},
         %{"sessionUpdate" => "compaction_summary_chunk", "compactionId" => "c-1"},
         %{
@@ -254,23 +228,154 @@ defmodule Arbor.ACP.RequestValidationTest do
           "compactionId" => "c-1",
           "content" => %{"type" => "text"}
         },
-        %{"sessionUpdate" => "compaction_summary_chunk", "compactionId" => 7, "content" => text},
         %{
           "sessionUpdate" => "compaction_summary_chunk",
           "compactionId" => "c-1",
-          "content" => text,
-          "_meta" => 1
-        }
+          "content" => %{"type" => "resource", "resource" => %{"uri" => "file:///r"}}
+        },
+        %{"sessionUpdate" => "compaction_summary_chunk", "compactionId" => 7, "content" => text}
       ]
 
       for update <- invalid_updates do
         assert {:error, :invalid_params} =
-                 RequestValidation.validate_session_update(%{
+                 RequestValidation.normalize_session_update(%{
                    "sessionId" => @session_id,
                    "update" => update
                  }),
                "expected #{inspect(update)} to be rejected"
       end
+    end
+
+    test "remove invalid optional values and skip invalid summary items instead of rejecting" do
+      text = %{"type" => "text", "text" => "Kept the failing test names"}
+
+      cases = [
+        # A completed compaction survives one unusable summary block.
+        {%{
+           "sessionUpdate" => "compaction_update",
+           "compactionId" => "c-1",
+           "status" => "completed",
+           "summary" => [text, %{"type" => "text"}]
+         },
+         %{
+           "sessionUpdate" => "compaction_update",
+           "compactionId" => "c-1",
+           "status" => "completed",
+           "summary" => [text]
+         }},
+        # Skipping every item leaves `[]`, which clears the summary.
+        {%{
+           "sessionUpdate" => "compaction_update",
+           "compactionId" => "c-1",
+           "status" => "completed",
+           "summary" => [%{"type" => "video"}, nil, "text"]
+         },
+         %{
+           "sessionUpdate" => "compaction_update",
+           "compactionId" => "c-1",
+           "status" => "completed",
+           "summary" => []
+         }},
+        # A non-list summary, a non-string error and a non-object _meta become
+        # absent, which leaves the stored values unchanged.
+        {%{
+           "sessionUpdate" => "compaction_update",
+           "compactionId" => "c-1",
+           "status" => "failed",
+           "summary" => text,
+           "error" => %{"message" => "structured"},
+           "_meta" => "x"
+         },
+         %{"sessionUpdate" => "compaction_update", "compactionId" => "c-1", "status" => "failed"}},
+        {%{
+           "sessionUpdate" => "notice",
+           "severity" => "info",
+           "title" => "T",
+           "description" => 1,
+           "_meta" => []
+         }, %{"sessionUpdate" => "notice", "severity" => "info", "title" => "T"}},
+        # Content blocks keep their required fields and lose invalid optional ones.
+        {%{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => "c-1",
+           "content" => %{
+             "type" => "resource_link",
+             "name" => "notes",
+             "uri" => "file:///n",
+             "size" => "big",
+             "title" => "Notes",
+             "annotations" => %{
+               "audience" => ["user", "robot", 3, "assistant"],
+               "priority" => "high",
+               "lastModified" => "2026-10-26T00:00:00Z"
+             },
+             "_meta" => 1
+           },
+           "_meta" => 1
+         },
+         %{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => "c-1",
+           "content" => %{
+             "type" => "resource_link",
+             "name" => "notes",
+             "uri" => "file:///n",
+             "title" => "Notes",
+             "annotations" => %{
+               "audience" => ["user", "assistant"],
+               "lastModified" => "2026-10-26T00:00:00Z"
+             }
+           }
+         }},
+        {%{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => "c-1",
+           "content" => %{
+             "type" => "resource",
+             "annotations" => "bad",
+             "resource" => %{"uri" => "file:///r", "text" => 1, "blob" => "AA==", "mimeType" => 1}
+           }
+         },
+         %{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => "c-1",
+           "content" => %{
+             "type" => "resource",
+             "resource" => %{"uri" => "file:///r", "blob" => "AA=="}
+           }
+         }}
+      ]
+
+      for {update, expected} <- cases do
+        assert {:ok, %{"sessionId" => @session_id, "update" => ^expected}} =
+                 RequestValidation.normalize_session_update(%{
+                   "sessionId" => @session_id,
+                   "update" => update
+                 })
+
+        assert :ok =
+                 RequestValidation.validate_session_update(%{
+                   "sessionId" => @session_id,
+                   "update" => update
+                 })
+      end
+    end
+
+    test "leave the other update kinds strict and unchanged" do
+      update = %{
+        "sessionUpdate" => "agent_message_chunk",
+        "content" => %{"type" => "text", "text" => "hi", "annotations" => "bad"}
+      }
+
+      assert {:error, :invalid_params} =
+               RequestValidation.normalize_session_update(%{
+                 "sessionId" => @session_id,
+                 "update" => update
+               })
+
+      valid = put_in(update, ["content", "annotations"], %{"priority" => "high"})
+      params = %{"sessionId" => @session_id, "update" => valid}
+      assert {:ok, ^params} = RequestValidation.normalize_session_update(params)
     end
   end
 

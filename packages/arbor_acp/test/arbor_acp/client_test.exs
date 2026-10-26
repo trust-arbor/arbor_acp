@@ -1981,16 +1981,39 @@ defmodule Arbor.ACP.ClientTest do
       assert_received {:handler_session_update, ^session_id, @compaction_chunk}
     end
 
-    test "are rejected when malformed even though the client opted in" do
+    test "deliver a completed compaction without its unusable summary block" do
+      {client, session_id} =
+        start_opt_in_client(%{"session" => %{"notices" => %{}, "compaction" => %{}}})
+
+      kept = %{"type" => "text", "text" => "Kept the failing test names"}
+
+      updates = [
+        Map.put(@compaction_update, "summary", [kept, %{"type" => "text"}]),
+        Map.merge(@notice, %{"description" => 1, "_meta" => "x"})
+      ]
+
+      send_updates_then_marker(client, session_id, updates)
+
+      expected_compaction = Map.put(@compaction_update, "summary", [kept])
+      expected_notice = Map.delete(@notice, "description")
+
+      for expected <- [expected_compaction, expected_notice] do
+        assert_received {:acp_session_update, ^session_id, ^expected}
+        assert_received {:handler_session_update, ^session_id, ^expected}
+      end
+    end
+
+    test "are rejected when a required field is missing or invalid even after opting in" do
       {client, session_id} =
         start_opt_in_client(%{"session" => %{"notices" => %{}, "compaction" => %{}}})
 
       malformed = [
         Map.put(@notice, "title", ""),
         Map.delete(@notice, "severity"),
-        Map.put(@compaction_update, "summary", [%{"type" => "text"}]),
+        Map.put(@compaction_update, "status", nil),
         Map.delete(@compaction_update, "status"),
-        Map.put(@compaction_chunk, "content", "Kept")
+        Map.put(@compaction_chunk, "content", "Kept"),
+        Map.put(@compaction_chunk, "content", %{"type" => "text"})
       ]
 
       send_updates_then_marker(client, session_id, malformed)

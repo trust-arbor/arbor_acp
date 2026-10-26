@@ -14,6 +14,7 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
 
   alias Arbor.ACP.Capabilities
   alias Arbor.ACP.Client
+  alias Arbor.ACP.RequestValidation
 
   @moduletag :interop
   @moduletag :interop_acp
@@ -26,6 +27,7 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
   @ts_everything_agent_script Path.join(@interop_dir, "acp_everything_ts_agent.mjs")
   @ts_everything_client_script Path.join(@interop_dir, "acp_everything_ts_client.mjs")
   @v2_contract_probe_script Path.join(@interop_dir, "acp_v2_draft_probe.mjs")
+  @session_update_parity_script Path.join(@interop_dir, "acp_session_update_parity.mjs")
   @node_modules Path.join(@interop_dir, "node_modules")
   @acp_sdk_package Path.join(@node_modules, "@agentclientprotocol/sdk/package.json")
   @dual_version_agent_path "@agentclientprotocol/sdk/dist/examples/dual-version-agent.js"
@@ -387,6 +389,273 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
 
       assert exit_code == 0,
              "TS ACP everything client exited with code #{exit_code}: #{output}"
+    end
+  end
+
+  describe "opt-in session update deserialization parity" do
+    # Each fixture goes through the official SDK's v1 ClientSideConnection and
+    # through RequestValidation.normalize_session_update/1. Both must make the
+    # same accept/reject decision and, when they accept, deliver the same
+    # update. Fixtures avoid unknown keys, which the SDK strips and ArborACP
+    # preserves.
+    @text %{"type" => "text", "text" => "Kept the failing test names"}
+    @parity_fixtures [
+      # notice
+      %{"sessionUpdate" => "notice", "severity" => "info", "title" => "Indexed"},
+      %{
+        "sessionUpdate" => "notice",
+        "severity" => "warning",
+        "title" => "Rate limited",
+        "description" => "Retrying",
+        "_meta" => %{"vendor" => true}
+      },
+      %{
+        "sessionUpdate" => "notice",
+        "severity" => "error",
+        "title" => "Quota",
+        "description" => nil,
+        "_meta" => nil
+      },
+      %{"sessionUpdate" => "notice", "severity" => "_vendor.debug", "title" => "Custom"},
+      %{"sessionUpdate" => "notice", "severity" => "", "title" => "Future severity"},
+      %{"sessionUpdate" => "notice", "severity" => "info", "title" => "T", "description" => 1},
+      %{"sessionUpdate" => "notice", "severity" => "info", "title" => "T", "_meta" => []},
+      %{"sessionUpdate" => "notice", "severity" => "info", "title" => "T", "_meta" => "x"},
+      %{"sessionUpdate" => "notice", "title" => "No severity"},
+      %{"sessionUpdate" => "notice", "severity" => nil, "title" => "Null severity"},
+      %{"sessionUpdate" => "notice", "severity" => 1, "title" => "Numeric severity"},
+      %{"sessionUpdate" => "notice", "severity" => "info"},
+      %{"sessionUpdate" => "notice", "severity" => "info", "title" => ""},
+      %{"sessionUpdate" => "notice", "severity" => "info", "title" => nil},
+      %{"sessionUpdate" => "notice", "severity" => "info", "title" => ["Title"]},
+      # compaction_update
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "in_progress"
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "completed",
+        "summary" => [
+          @text,
+          %{"type" => "resource_link", "name" => "notes", "uri" => "file:///n"}
+        ],
+        "error" => nil,
+        "_meta" => %{"tokensBefore" => 1200}
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "failed",
+        "summary" => nil,
+        "error" => "Model unavailable",
+        "_meta" => nil
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-2",
+        "status" => "cancelled",
+        "summary" => []
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "",
+        "status" => "_vendor.paused"
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "completed",
+        "summary" => [@text, %{"type" => "text"}]
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "completed",
+        "summary" => [%{"type" => "text"}]
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "completed",
+        "summary" => @text
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "completed",
+        "summary" => "x"
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "failed",
+        "error" => %{"message" => "structured"}
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "failed",
+        "error" => 1
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "completed",
+        "_meta" => "x"
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "completed",
+        "summary" => [
+          %{"type" => "text", "text" => "annotated", "annotations" => "bad", "_meta" => 1},
+          %{
+            "type" => "text",
+            "text" => "partly annotated",
+            "annotations" => %{
+              "audience" => ["user", "robot", 3, "assistant"],
+              "lastModified" => 5,
+              "priority" => "high",
+              "_meta" => []
+            }
+          },
+          %{
+            "type" => "text",
+            "text" => "audience",
+            "annotations" => %{"audience" => "user", "priority" => 0.5}
+          },
+          %{"type" => "image", "data" => "AA==", "mimeType" => "image/png", "uri" => 5},
+          %{"type" => "audio", "data" => "AA==", "mimeType" => "audio/wav", "_meta" => "x"},
+          %{
+            "type" => "resource_link",
+            "name" => "notes",
+            "uri" => "file:///n",
+            "size" => "big",
+            "title" => 3,
+            "description" => false,
+            "mimeType" => 7
+          },
+          %{
+            "type" => "resource",
+            "resource" => %{
+              "uri" => "file:///r",
+              "text" => "body",
+              "mimeType" => 1,
+              "_meta" => "x"
+            }
+          },
+          %{"type" => "resource", "resource" => %{"uri" => "file:///b", "blob" => "AA=="}},
+          %{
+            "type" => "resource",
+            "resource" => %{"uri" => "file:///b", "text" => 1, "blob" => "AA==", "mimeType" => 1}
+          }
+        ]
+      },
+      %{
+        "sessionUpdate" => "compaction_update",
+        "compactionId" => "c-1",
+        "status" => "completed",
+        "summary" => [
+          %{"type" => "resource", "resource" => %{"uri" => "file:///r"}},
+          %{"type" => "resource", "resource" => %{"text" => "no uri"}},
+          %{"type" => "image", "data" => "AA=="},
+          %{"type" => "video", "data" => "AA=="},
+          "text",
+          nil,
+          @text
+        ]
+      },
+      %{"sessionUpdate" => "compaction_update", "status" => "completed"},
+      %{"sessionUpdate" => "compaction_update", "compactionId" => "c-1"},
+      %{"sessionUpdate" => "compaction_update", "compactionId" => 1, "status" => "completed"},
+      %{"sessionUpdate" => "compaction_update", "compactionId" => nil, "status" => "completed"},
+      %{"sessionUpdate" => "compaction_update", "compactionId" => "c-1", "status" => nil},
+      %{"sessionUpdate" => "compaction_update", "compactionId" => "c-1", "status" => 2},
+      # compaction_summary_chunk
+      %{
+        "sessionUpdate" => "compaction_summary_chunk",
+        "compactionId" => "c-1",
+        "content" => @text
+      },
+      %{
+        "sessionUpdate" => "compaction_summary_chunk",
+        "compactionId" => "c-1",
+        "content" => %{"type" => "image", "data" => "AA==", "mimeType" => "image/png"},
+        "_meta" => nil
+      },
+      %{
+        "sessionUpdate" => "compaction_summary_chunk",
+        "compactionId" => "c-1",
+        "content" => %{"type" => "text", "text" => "Kept", "annotations" => 1, "_meta" => "x"},
+        "_meta" => 1
+      },
+      %{"sessionUpdate" => "compaction_summary_chunk", "content" => @text},
+      %{"sessionUpdate" => "compaction_summary_chunk", "compactionId" => "c-1"},
+      %{"sessionUpdate" => "compaction_summary_chunk", "compactionId" => "c-1", "content" => nil},
+      %{
+        "sessionUpdate" => "compaction_summary_chunk",
+        "compactionId" => "c-1",
+        "content" => [@text]
+      },
+      %{
+        "sessionUpdate" => "compaction_summary_chunk",
+        "compactionId" => "c-1",
+        "content" => %{"type" => "text"}
+      },
+      %{
+        "sessionUpdate" => "compaction_summary_chunk",
+        "compactionId" => "c-1",
+        "content" => %{"type" => "video"}
+      },
+      %{"sessionUpdate" => "compaction_summary_chunk", "compactionId" => 7, "content" => @text}
+    ]
+
+    @tag :tmp_dir
+    test "ArborACP accepts, rejects and salvages exactly as the SDK 1.9.0 client does",
+         %{tmp_dir: tmp_dir} = context do
+      skip_without_node(context)
+
+      fixtures_path = Path.join(tmp_dir, "session_update_fixtures.json")
+      File.write!(fixtures_path, Jason.encode!(@parity_fixtures))
+
+      {output, exit_code} =
+        System.cmd(context.node_path, [@session_update_parity_script, fixtures_path],
+          cd: @interop_dir
+        )
+
+      assert exit_code == 0, "SDK parity script failed: #{output}"
+      %{"results" => sdk_results, "rejected" => rejected} = Jason.decode!(output)
+      assert length(sdk_results) == length(@parity_fixtures)
+      # Every undelivered fixture was rejected by the SDK's deserializer.
+      assert rejected == Enum.count(sdk_results, &(not &1["delivered"]))
+
+      mismatches =
+        @parity_fixtures
+        |> Enum.zip(sdk_results)
+        |> Enum.reject(fn {fixture, sdk} ->
+          arbor =
+            case RequestValidation.normalize_session_update(%{
+                   "sessionId" => "parity",
+                   "update" => fixture
+                 }) do
+              {:ok, %{"update" => update}} ->
+                %{"delivered" => true, "update" => update |> Jason.encode!() |> Jason.decode!()}
+
+              {:error, :invalid_params} ->
+                %{"delivered" => false}
+            end
+
+          arbor == sdk
+        end)
+
+      assert mismatches == [],
+             "ArborACP and the SDK disagree: #{inspect(mismatches, pretty: true)}"
+
+      delivered = Enum.count(sdk_results, & &1["delivered"])
+      assert delivered > 0 and delivered < length(@parity_fixtures)
     end
   end
 
