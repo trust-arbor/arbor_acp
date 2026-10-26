@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: trust-arbor/arbor_rpc
-          ref: 7a32a6f490b4a92d547506e122e89b1bc86be22c
+          ref: 5867936bcc8c21a92806babd731d4a884f700240
           path: .arbor-v2/rpc
           persist-credentials: false
       - id: beam

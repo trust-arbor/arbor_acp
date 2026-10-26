@@ -3,7 +3,7 @@
 ACP clients, native agents and the generic adapter runtime. Add the optional
 `arbor_acp_adapters` package for bundled vendor implementations.
 
-Version `1.0.0-rc.3` is published for downstream migration testing. The original
+Version `1.0.0-rc.4` is published for downstream migration testing. The original
 `2.0.0-rc.1` candidate is retired, with its archive and tag preserved. Stable
 qualification and the continuous 48-hour soak remain incomplete. See the
 [ExMCP migration guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/MIGRATING_V1_TO_V2.md).
@@ -27,11 +27,11 @@ the [RPC source-build policy](https://github.com/trust-arbor/arbor_rpc#source-bu
 ## Installation
 
 ```elixir
-{:arbor_acp, "== 1.0.0-rc.3"}
+{:arbor_acp, "== 1.0.0-rc.4"}
 ```
 
 Run `mix deps.get`. The declared core/RPC dependencies resolve normally from Hex.
-An explicit prerelease range such as `~> 1.0.0-rc.3` also selects this candidate;
+An explicit prerelease range such as `~> 1.0.0-rc.4` also selects this candidate;
 exact pins and a committed lockfile make downstream reports reproducible.
 
 ## First session

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 1.0.0-rc.4 — 2026-10-26
+
+- Require `arbor_rpc` 1.0.0-rc.3. Its `Subprocess.close/1` closes a child's stdin and waits `:eof_grace` before signalling it, and its C compiler is optional.
 - Docs: ArborRPC releases after `1.0.0-rc.2` install without a C compiler, and adapter starts then fail with `:native_helper_unavailable`. The README and usage rules now say so and recommend `config :arbor_rpc, native_helper: :required`.
 
 ## 1.0.0-rc.3 — 2026-10-22

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## ArborACP / Adapters 1.0.0-rc.4 — 2026-10-26
+
+- **Security:** `Arbor.ACP.Registry` fetch no longer follows HTTP redirects, which re-sent the caller's request headers to the redirect target, even another host or an `http:` URL. A redirect returns `{:error, {:redirect_refused, status, location}}`, with the location's userinfo, query and fragment removed.
+- Require `arbor_rpc` 1.0.0-rc.3: subprocess close sends stdin EOF before TERM, and the C compiler is optional.
+- Fix an AdapterBridge crash on bare `{:error, reason}` translation results on the session lifecycle path (`session/new`, `session/load`, `session/resume`).
+- Docs: how to require RPC's native helper (`config :arbor_rpc, native_helper: :required`) when an application launches agents.
+
 ## ArborACP / Adapters 1.0.0-rc.3 — 2026-10-22
 
 - **Security:** resolve symlinks before `..` in `WorkspacePath`, closing a workspace confinement bypass in the client's `fs`/`terminal` authorization and the Codex/ZCode workspace-root checks.

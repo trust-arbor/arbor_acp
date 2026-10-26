@@ -1,6 +1,6 @@
 # Releasing ArborACP and adapters
 
-ArborACP and its optional adapter bundle are published as `1.0.0-rc.3`.
+ArborACP and its optional adapter bundle are published as `1.0.0-rc.4`.
 They are independent Hex packages in one repository, not umbrella applications.
 The original `2.0.0-rc.1` candidates are retired with tags and archives preserved.
 Stable promotion remains gated on the final package graph and continuous soak.

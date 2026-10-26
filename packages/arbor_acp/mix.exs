@@ -1,7 +1,7 @@
 defmodule Arbor.ACP.MixProject do
   use Mix.Project
-  @version "1.0.0-rc.3"
-  @rpc_requirement "~> 1.0.0-rc.2"
+  @version "1.0.0-rc.4"
+  @rpc_requirement "~> 1.0.0-rc.3"
   def project do
     [
       app: :arbor_acp,
