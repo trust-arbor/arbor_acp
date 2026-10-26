@@ -73,6 +73,28 @@
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "switch_session",
+        "error" => "not needed for this scenario",
+        "id" => "pi-<1>",
+        "success" => false,
+        "type" => "response"
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "error" => %{"code" => -32603, "message" => "not needed for this scenario"},
+          "id" => 1,
+          "jsonrpc" => "2.0"
+        }
+      ],
+      tag: :messages
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
       content: %{
         "sessions" => %{"shared" => %{"sessionFile" => 7, "sessionId" => "shared"}},
         "version" => 1
@@ -100,6 +122,28 @@
           "type" => "switch_session"
         }
       ]
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "switch_session",
+        "error" => "not needed for this scenario",
+        "id" => "pi-<2>",
+        "success" => false,
+        "type" => "response"
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "error" => %{"code" => -32603, "message" => "not needed for this scenario"},
+          "id" => 2,
+          "jsonrpc" => "2.0"
+        }
+      ],
+      tag: :messages
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{

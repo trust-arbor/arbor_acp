@@ -88,6 +88,9 @@ defmodule Arbor.ACP.Adapters.Pi do
     # work waits while any is pending, since Pi would apply it to whichever
     # session ends up active.
     pending_session_changes: MapSet.new(),
+    # session/new, session/load and session/resume requests waiting for the
+    # setup in progress to finish; one setup runs at a time.
+    queued_session_setups: [],
     pending_controls: %{},
     control_groups: %{},
     msg_counter: 0,
@@ -224,20 +227,20 @@ defmodule Arbor.ACP.Adapters.Pi do
     cwd = params["cwd"] || state.workspace_root || Keyword.get(state.opts, :cwd) || File.cwd!()
 
     case Sessions.require_absolute_cwd(cwd) do
-      :ok -> start_session_new(acp_id, cwd, state)
+      :ok -> begin_session_setup({:new, acp_id, cwd}, state)
       {:error, reason} -> {:error, reason, state}
     end
   end
 
   def translate_outbound(%{"method" => "session/load", "id" => acp_id, "params" => params}, state) do
-    start_session_switch(acp_id, params, true, state)
+    plan_session_switch(acp_id, params, true, state)
   end
 
   def translate_outbound(
         %{"method" => "session/resume", "id" => acp_id, "params" => params},
         state
       ) do
-    start_session_switch(acp_id, params, false, state)
+    plan_session_switch(acp_id, params, false, state)
   end
 
   def translate_outbound(
@@ -324,9 +327,18 @@ defmodule Arbor.ACP.Adapters.Pi do
         %{"method" => "$/cancel_request", "params" => %{"requestId" => acp_id}},
         state
       ) do
-    case pending_setup_group(acp_id, state) do
-      nil -> resolve_extension_ui_response(acp_id, %{"action" => "cancel"}, state)
-      group -> cancel_session_setup(group, state)
+    {queued, waiting} = Enum.split_with(state.queued_session_setups, &(elem(&1, 1) == acp_id))
+
+    cond do
+      queued != [] ->
+        error = Envelope.error(acp_id, -32_800, "Request cancelled")
+        {:messages, [error], %{state | queued_session_setups: waiting}}
+
+      group = pending_setup_group(acp_id, state) ->
+        cancel_session_setup(group, state)
+
+      true ->
+        resolve_extension_ui_response(acp_id, %{"action" => "cancel"}, state)
     end
   end
 
@@ -445,7 +457,7 @@ defmodule Arbor.ACP.Adapters.Pi do
         cleanup_result: cleanup
     }
 
-    state = clear_pending_runtime_state(state)
+    state = %{clear_pending_runtime_state(state) | queued_session_setups: []}
 
     if messages == [], do: {:skip, state}, else: {:messages, messages, state}
   end
@@ -746,7 +758,9 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp fail_managed_input(state, reason) do
     messages = pending_exit_messages(state, reason)
     state = close_active_session(state)
-    {:messages, messages, %{state | subprocess_error: {:error, reason}}}
+
+    {:messages, messages,
+     %{state | subprocess_error: {:error, reason}, queued_session_setups: []}}
   end
 
   defp inbound_messages([], state), do: {:skip, state}
@@ -786,7 +800,13 @@ defmodule Arbor.ACP.Adapters.Pi do
       |> PromptQueue.to_list()
       |> Enum.map(&Envelope.response(&1.acp_id, %{"stopReason" => "cancelled"}))
 
-    prompt_messages ++ control_messages ++ queued_messages
+    setup_messages =
+      Enum.map(
+        state.queued_session_setups,
+        &Envelope.error(elem(&1, 1), -32_603, "Pi process exited: #{inspect(reason)}")
+      )
+
+    prompt_messages ++ control_messages ++ setup_messages ++ queued_messages
   end
 
   defp translate_prompt_message(message, images, acp_id, params, state) do
@@ -812,43 +832,117 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   # session/load and session/resume differ only in whether the transcript is
   # replayed, which also decides whether `get_messages` joins the control group.
-  defp start_session_switch(acp_id, params, replay?, state) do
+  defp plan_session_switch(acp_id, params, replay?, state) do
     session_id = params["sessionId"]
     cwd = params["cwd"] || state.workspace_root || Keyword.get(state.opts, :cwd) || File.cwd!()
 
     with :ok <- Sessions.require_absolute_cwd(cwd),
-         session_file when is_binary(session_file) <- find_session_file(session_id, state),
-         {:ok, state} <- prepare_session_process(cwd, session_file, state) do
-      file_commands = SlashCommands.load(cwd, state.opts)
-      settings = Settings.load(cwd, state.opts)
-
-      followups =
-        if(replay?, do: [{:messages, RPC.method(:get_messages), %{}}], else: []) ++
-          session_setup_followups()
-
-      group = %{
-        type: :session_load,
-        acp_id: acp_id,
-        session_id: session_id,
-        cwd: cwd,
-        session_file: session_file,
-        file_commands: file_commands,
-        settings: settings,
-        replay?: replay?,
-        responses: %{}
-      }
-
-      start_session_change(
-        group,
-        {:switch, RPC.method(:switch_session), %{"sessionPath" => session_file}},
-        followups,
-        state
-      )
+         session_file when is_binary(session_file) <- find_session_file(session_id, state) do
+      begin_session_setup({:switch, acp_id, session_id, cwd, session_file, replay?}, state)
     else
-      {:error, reason, failed_state} -> {:error, reason, failed_state}
       {:error, reason} -> {:error, reason, state}
       _ -> {:error, "Unknown sessionId: #{session_id}", state}
     end
+  end
+
+  # One session setup (the change and the queries that follow it) runs at a
+  # time. Pi applies each change to whichever session is active when it
+  # completes, so the queries of one setup could otherwise be answered after
+  # another setup's change took effect, and describe that session.
+  defp begin_session_setup(plan, state) do
+    if setup_in_progress?(state) do
+      deliver_queued(%{state | queued_session_setups: state.queued_session_setups ++ [plan]})
+    else
+      run_session_setup(plan, state)
+    end
+  end
+
+  defp setup_in_progress?(state) do
+    Enum.any?(Map.values(state.control_groups), &(&1.type in [:session_new, :session_load]))
+  end
+
+  defp deliver_queued(%{managed?: false} = state), do: {:ok, :skip, state}
+  defp deliver_queued(state), do: {:ok, :pending, state}
+
+  # Starts the next waiting setup once none is in progress, and adds what
+  # it writes or answers to the result that ended the previous one.
+  defp start_queued_setup_after(result) do
+    last = tuple_size(result) - 1
+    state = elem(result, last)
+
+    case state.queued_session_setups do
+      [plan | rest] ->
+        if setup_in_progress?(state) do
+          result
+        else
+          state = %{state | queued_session_setups: rest}
+
+          case run_session_setup(plan, state) do
+            {:ok, :pending, state} ->
+              put_elem(result, last, state)
+
+            {:ok, data, state} ->
+              result |> put_elem(last, state) |> add_write(data)
+
+            {:error, reason, state} ->
+              result
+              |> put_elem(last, state)
+              |> add_message(Envelope.error(elem(plan, 1), -32_603, to_string(reason)))
+              |> start_queued_setup_after()
+          end
+        end
+
+      [] ->
+        result
+    end
+  end
+
+  defp add_message({:skip, state}, message), do: {:messages, [message], state}
+
+  defp add_message({:messages, messages, state}, message),
+    do: {:messages, messages ++ [message], state}
+
+  defp add_message({:skip_and_write, data, state}, message),
+    do: {:messages_and_write, [message], data, state}
+
+  defp add_message({:messages_and_write, messages, data, state}, message),
+    do: {:messages_and_write, messages ++ [message], data, state}
+
+  defp run_session_setup({:new, acp_id, cwd}, state), do: start_session_new(acp_id, cwd, state)
+
+  defp run_session_setup({:switch, acp_id, session_id, cwd, session_file, replay?}, state) do
+    case prepare_session_process(cwd, session_file, state) do
+      {:ok, state} -> start_session_switch(acp_id, session_id, cwd, session_file, replay?, state)
+      {:error, reason, failed_state} -> {:error, reason, failed_state}
+    end
+  end
+
+  defp start_session_switch(acp_id, session_id, cwd, session_file, replay?, state) do
+    file_commands = SlashCommands.load(cwd, state.opts)
+    settings = Settings.load(cwd, state.opts)
+
+    followups =
+      if(replay?, do: [{:messages, RPC.method(:get_messages), %{}}], else: []) ++
+        session_setup_followups()
+
+    group = %{
+      type: :session_load,
+      acp_id: acp_id,
+      session_id: session_id,
+      cwd: cwd,
+      session_file: session_file,
+      file_commands: file_commands,
+      settings: settings,
+      replay?: replay?,
+      responses: %{}
+    }
+
+    start_session_change(
+      group,
+      {:switch, RPC.method(:switch_session), %{"sessionPath" => session_file}},
+      followups,
+      state
+    )
   end
 
   defp start_session_new(acp_id, cwd, state) do
@@ -1359,10 +1453,13 @@ defmodule Arbor.ACP.Adapters.Pi do
 
     error = Envelope.error(group.acp_id, -32_800, "Request cancelled")
 
-    case continue_model_work(state) do
-      {nil, state} -> {:messages, [error], state}
-      {data, state} -> deliver_messages_and_write([error], data, state)
-    end
+    result =
+      case continue_model_work(state) do
+        {nil, state} -> {:messages, [error], state}
+        {data, state} -> deliver_messages_and_write([error], data, state)
+      end
+
+    start_queued_setup_after(result)
   end
 
   defp session_change_took_effect?(%{"success" => false}), do: false
@@ -1513,12 +1610,15 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
-    if MapSet.member?(state.pending_session_changes, id) do
-      state = resolve_session_change(id, event, state)
-      event |> process_response(id, state) |> continue_model_work_after()
-    else
-      process_response(event, id, state)
-    end
+    result =
+      if MapSet.member?(state.pending_session_changes, id) do
+        state = resolve_session_change(id, event, state)
+        event |> process_response(id, state) |> continue_model_work_after()
+      else
+        process_response(event, id, state)
+      end
+
+    start_queued_setup_after(result)
   end
 
   defp process_event(

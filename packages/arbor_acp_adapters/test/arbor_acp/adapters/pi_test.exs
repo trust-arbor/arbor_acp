@@ -1410,6 +1410,65 @@ defmodule Arbor.ACP.Adapters.PiTest do
       end
     end
 
+    # Pi finishes overlapping session changes in either order, and answers a
+    # setup's queries from whichever session is active when it reads them.
+    for order <- [:newest_first, :oldest_first] do
+      @overlap_order order
+      test "overlapping setups each describe their own session (#{order})", ctx do
+        order = @overlap_order
+        state = switch_ready_state(ctx.state)
+        pi = %{session_pi(ctx) | pending_change: []} |> Map.put(:held_queries, [])
+
+        {state, pi, messages} =
+          Enum.reduce(
+            [session_change("session/load", ctx), session_change_new(71, ctx)],
+            {state, pi, []},
+            fn request, {state, pi, messages} ->
+              {state, writes, new} = outbound_writes(Pi.translate_outbound(request, state))
+              {state, overlap_pi_receive(writes, pi), messages ++ new}
+            end
+          )
+
+        {state, pi, messages} = settle_overlap_pi(state, pi, order, messages)
+
+        load = Enum.find(messages, &(&1["id"] == 70))
+        new = Enum.find(messages, &(&1["id"] == 71))
+
+        for {response, id} <- [{load, "s2"}, {new, "fresh"}] do
+          %{level: level, model: model} = pi.sessions[id]
+          assert response["result"]["sessionId"] == id
+
+          assert response["result"]["models"]["currentModelId"] ==
+                   "#{model["provider"]}/#{model["id"]}",
+                 "#{order}: the #{id} setup reported another session's model"
+
+          assert response["result"]["modes"]["currentModeId"] == level
+        end
+
+        # The adapter ends on the session Pi ends on.
+        assert state.session_id == pi.active
+      end
+    end
+
+    test "a waiting setup the client cancels never starts", ctx do
+      state = switch_ready_state(ctx.state)
+
+      assert {:ok, setup, state} =
+               Pi.translate_outbound(session_change("session/load", ctx), state)
+
+      assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
+
+      assert {:messages, [%{"id" => 71, "error" => %{"code" => -32_800}}], state} =
+               Pi.translate_outbound(cancel_request(71), state)
+
+      assert state.queued_session_setups == []
+
+      # The first setup completes and nothing else is written.
+      {state, messages} = finish_session_setup(setup, state, ctx)
+      assert Enum.any?(messages, &(&1["id"] == 70))
+      assert state.session_id == "s2"
+    end
+
     test "thinking_level_changed events publish the level Pi applied", %{state: state} do
       state = switch_ready_state(state)
 
@@ -2583,6 +2642,67 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
       request, pi ->
         {[session_pi_reply(request, pi)], pi}
+    end)
+  end
+
+  defp session_change_new(acp_id, ctx),
+    do: %{"method" => "session/new", "id" => acp_id, "params" => %{"cwd" => ctx.tmp_dir}}
+
+  defp outbound_writes({:ok, :skip, state}), do: {state, "", []}
+  defp outbound_writes({:ok, data, state}) when is_binary(data), do: {state, data, []}
+
+  # Like session_pi_answer/2, but several changes can be pending at once and
+  # queries are held until the test lets Pi read them.
+  defp overlap_pi_receive(data, pi) do
+    Enum.reduce(decode_many(data), pi, fn
+      %{"type" => "switch_session", "sessionPath" => path} = request, pi ->
+        %{pi | pending_change: pi.pending_change ++ [{request, Path.basename(path, ".jsonl")}]}
+
+      %{"type" => "new_session"} = request, pi ->
+        %{pi | pending_change: pi.pending_change ++ [{request, "fresh"}]}
+
+      request, pi ->
+        %{pi | held_queries: pi.held_queries ++ [request]}
+    end)
+  end
+
+  # Finishes one pending change, then, as the worst case, every other pending
+  # change before Pi reads the queries the adapter sent meanwhile.
+  defp settle_overlap_pi(state, %{pending_change: [], held_queries: []} = pi, _order, messages),
+    do: {state, pi, messages}
+
+  defp settle_overlap_pi(state, %{pending_change: []} = pi, order, messages) do
+    replies = Enum.map(pi.held_queries, &session_pi_reply(&1, pi))
+    {state, pi, messages} = feed_overlap_pi(replies, state, %{pi | held_queries: []}, messages)
+    settle_overlap_pi(state, pi, order, messages)
+  end
+
+  defp settle_overlap_pi(state, pi, order, messages) do
+    {request, target} =
+      change =
+      if order == :newest_first, do: List.last(pi.pending_change), else: hd(pi.pending_change)
+
+    reply = fake_pi_response(request, true, %{"data" => %{"cancelled" => false}})
+    pi = %{pi | active: target, pending_change: List.delete(pi.pending_change, change)}
+    {state, pi, messages} = feed_overlap_pi([reply], state, pi, messages)
+    settle_overlap_pi(state, pi, order, messages)
+  end
+
+  defp feed_overlap_pi(replies, state, pi, messages) do
+    Enum.reduce(replies, {state, pi, messages}, fn reply, {state, pi, messages} ->
+      case Pi.translate_inbound(Jason.encode!(reply), state) do
+        {:skip, state} ->
+          {state, pi, messages}
+
+        {:messages, new, state} ->
+          {state, pi, messages ++ new}
+
+        {:skip_and_write, data, state} ->
+          {state, overlap_pi_receive(data, pi), messages}
+
+        {:messages_and_write, new, data, state} ->
+          {state, overlap_pi_receive(data, pi), messages ++ new}
+      end
     end)
   end
 

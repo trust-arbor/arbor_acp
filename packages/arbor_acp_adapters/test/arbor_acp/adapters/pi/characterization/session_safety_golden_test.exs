@@ -139,12 +139,14 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
           Flows.session_jsonl("shared", path: "<sandbox>/sessions/scanned.jsonl"),
           Flows.session_map([{"shared", "<sandbox>/project", "<sandbox>/sessions/mapped.jsonl"}]),
           Flows.session_resume(1, "shared"),
+          {:respond_error, "switch_session", "not needed for this scenario"},
           {:write_file, @map,
            %{
              "version" => 1,
              "sessions" => %{"shared" => %{"sessionId" => "shared", "sessionFile" => 7}}
            }},
           Flows.session_resume(2, "shared"),
+          {:respond_error, "switch_session", "not needed for this scenario"},
           {:write_file, @map, %{"version" => 1, "sessions" => %{}}},
           Flows.session_resume(3, "shared")
         ]

@@ -24,9 +24,10 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       is not in the catalog, catalog entries without provider or id, a
       catalog payload without a `models` list, and thinking-level
       normalization;
-    * two overlapping `session/new` groups completing independently, a
-      duplicate response after completion being skipped, and non-string
-      error payloads;
+    * two overlapping `session/new` requests running one setup at a time
+      (the second written only once the first completed), a duplicate
+      response after completion being skipped, and non-string error
+      payloads;
     * the same rules for `session/load` groups (including the requested
       session id winning over the one reported by `get_state`) and for
       single-request slash-command groups, including the two-phase
@@ -349,20 +350,20 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
              ] = responses
     end
 
-    test "overlapping_session_new_groups_complete_independently" do
+    test "overlapping_session_new_groups_run_one_at_a_time" do
       steps = [
         Flows.session_new(1),
+        {:note, "A second setup waits until the first completes: nothing is written"},
         Flows.session_new(2, %{"cwd" => "<sandbox>/project"}),
-        {:note, "Answer the second group first"},
         {:respond, "new_session", %{}},
-        {:respond, "get_state", Flows.state_data(%{"sessionId" => "second"})},
+        {:respond, "get_state", Flows.state_data(%{"sessionId" => "first"})},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
         {:respond, "get_available_thinking_levels",
          %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
+        {:note, "The first setup completes, and the second one's new_session goes out"},
         {:respond, "get_commands", %{"commands" => []}},
-        {:note, "The first group's setup requests are written after its new_session reply"},
-        {:inbound, fn t -> success(t, "new_session", 0, %{}) end},
-        {:respond, "get_state", Flows.state_data(%{"sessionId" => "first"})},
+        {:respond, "new_session", %{}},
+        {:respond, "get_state", Flows.state_data(%{"sessionId" => "second"})},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
         {:respond, "get_available_thinking_levels",
          %{"levels" => ~w(off minimal low medium high xhigh)}},
@@ -374,13 +375,19 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       transcript =
         PiGolden.assert_golden(
           @area,
-          "overlapping_session_new_groups_complete_independently",
+          "overlapping_session_new_groups_run_one_at_a_time",
           steps
         )
 
+      assert %{tag: :ok} = Enum.at(transcript, 3).result
+      refute Map.has_key?(Enum.at(transcript, 3).result, :writes)
+
+      assert %{tag: :messages_and_write, writes: [%{"type" => "new_session"}]} =
+               Enum.at(transcript, 9).result
+
       assert [
-               %{"id" => 2, "result" => %{"sessionId" => "second"}},
-               %{"id" => 1, "result" => %{"sessionId" => "first"}}
+               %{"id" => 1, "result" => %{"sessionId" => "first"}},
+               %{"id" => 2, "result" => %{"sessionId" => "second"}}
              ] = transcript |> PiGolden.messages() |> Enum.filter(&Map.has_key?(&1, "id"))
 
       assert %{tag: :skip} = PiGolden.last_result(transcript)
