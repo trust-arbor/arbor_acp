@@ -1298,13 +1298,24 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp session_change_pending?(state), do: MapSet.size(state.pending_session_changes) > 0
 
   # Requests made for the current session are abandoned only once Pi has
-  # actually replaced it. When Pi rejects the change, the session stays active
-  # and its held model work goes ahead.
+  # actually replaced it. When Pi rejects the change, or an extension cancels
+  # it (a success reply with `cancelled: true`), the session stays active and
+  # its held model work goes ahead. A managed change has already replaced the
+  # Pi process before Pi answers it, so the old session is gone either way and
+  # its requests have nowhere to go.
   defp resolve_session_change(id, event, state) do
     state = %{state | pending_session_changes: MapSet.delete(state.pending_session_changes, id)}
 
-    if event["success"] == false, do: state, else: abandon_session_requests(state)
+    if session_change_took_effect?(event) or state.managed?,
+      do: abandon_session_requests(state),
+      else: state
   end
+
+  defp session_change_took_effect?(%{"success" => false}), do: false
+  defp session_change_took_effect?(event), do: not cancelled_session_change?(event)
+
+  defp cancelled_session_change?(%{"data" => %{"cancelled" => true}}), do: true
+  defp cancelled_session_change?(_event), do: false
 
   # Appends the model work a resolved session change released to the result
   # of the reply that resolved it.
@@ -1823,6 +1834,14 @@ defmodule Arbor.ACP.Adapters.Pi do
         finish_control_error(
           group,
           Envelope.error(group.acp_id, -32_603, to_string(event["error"])),
+          state
+        )
+
+      # An extension can cancel the change; Pi then stays on its session.
+      kind in [:new_session, :switch] and cancelled_session_change?(event) ->
+        finish_control_error(
+          group,
+          Envelope.error(group.acp_id, -32_603, "Pi cancelled the session change"),
           state
         )
 

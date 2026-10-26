@@ -417,6 +417,40 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
                only_error_result(transcript)
     end
 
+    test "managed_failed_load_drops_model_work_for_the_replaced_process" do
+      # A managed load replaces the Pi process before Pi answers the switch, so
+      # a model switch requested meanwhile has no session left to apply to.
+      steps =
+        [{:init, managed: true}] ++
+          Flows.open_session(1) ++
+          [
+            Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+            Flows.session_load(2, "mapped"),
+            Flows.set_model(3, "openai/gpt-5.1"),
+            {:respond_error, "switch_session", "no such session"},
+            {:respond, "get_state", Flows.state_data(%{"sessionId" => "mapped"})}
+          ]
+
+      transcript =
+        PiGolden.assert_golden(
+          @area,
+          "managed_failed_load_drops_model_work_for_the_replaced_process",
+          steps
+        )
+
+      [set_model, rejection, _late_state] =
+        transcript |> Enum.take(-3) |> Enum.map(& &1.result)
+
+      # The switch waits for the pending load and is never written.
+      assert %{tag: :messages_and_reply} = set_model
+      refute Map.has_key?(set_model, :port_writes)
+      assert %{messages: [%{"id" => 2, "error" => %{"message" => "no such session"}}]} = rejection
+      refute Map.has_key?(rejection, :writes)
+
+      refute Enum.any?(PiGolden.writes(transcript), &(&1["type"] == "set_model")),
+             "the held switch reached the replacement Pi process"
+    end
+
     test "load_with_empty_models_is_auth_required" do
       steps = [
         Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),

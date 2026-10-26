@@ -1103,10 +1103,14 @@ defmodule Arbor.ACP.Adapters.PiTest do
       end
     end
 
-    for method <- ["session/load", "session/resume", "session/new"] do
+    # Pi rejects the change, or an extension cancels it (`cancelled: true`).
+    for method <- ["session/load", "session/resume", "session/new"],
+        outcome <- [:rejected, :cancelled] do
       @rejected_method method
-      test "a rejected #{method} still sends s1's waiting switch", ctx do
+      @change_outcome outcome
+      test "a #{outcome} #{method} still sends s1's waiting switch", ctx do
         method = @rejected_method
+        outcome = @change_outcome
         state = switch_ready_state(ctx.state)
         {refresh, state, pi} = refresh_with_waiting_switch(state)
 
@@ -1114,10 +1118,12 @@ defmodule Arbor.ACP.Adapters.PiTest do
         state = feed_without_effect(refresh, state, pi, method)
 
         assert {:messages_and_write, [error], next, state} =
-                 reject_session_setup(setup, state, ctx)
+                 reject_session_setup(setup, state, ctx, outcome)
 
+        # The ACP request fails; it never reports s2 as the active session.
         assert error["id"] == 70
-        assert error["error"]["message"] =~ "Session file is locked"
+        refute Map.has_key?(error, "result")
+        assert error["error"]["message"] == change_failure_message(outcome)
 
         assert [%{"type" => "set_model", "modelId" => "claude-opus-4"}] = decode_many(next),
                "#{method}: s1's waiting switch was not sent after the rejected change"
@@ -1135,12 +1141,15 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
     # Pi may answer the switch before or after it rejects the session change.
     for method <- ["session/load", "session/resume", "session/new"],
-        order <- [:switch_reply_first, :rejection_first] do
+        order <- [:switch_reply_first, :rejection_first],
+        outcome <- [:rejected, :cancelled] do
       @rejected_method method
       @switch_order order
-      test "a rejected #{method} lets s1's outstanding switch refresh (#{order})", ctx do
+      @change_outcome outcome
+      test "a #{outcome} #{method} lets s1's outstanding switch refresh (#{order})", ctx do
         method = @rejected_method
         order = @switch_order
+        outcome = @change_outcome
         state = switch_ready_state(ctx.state)
         pi = %{fake_pi() | hold_switches?: true}
 
@@ -1150,7 +1159,8 @@ defmodule Arbor.ACP.Adapters.PiTest do
         {state, pi, []} = drive_fake_pi(first, state, pi)
         assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
 
-        {state, pi, messages} = reject_with_switch_outstanding(order, setup, state, pi, ctx)
+        {state, pi, messages} =
+          reject_with_switch_outstanding(order, setup, state, pi, ctx, outcome)
 
         assert state.session_id == "s1"
         assert state.current_model_id == "openai/gpt-5.1"
@@ -2184,19 +2194,22 @@ defmodule Arbor.ACP.Adapters.PiTest do
     {refresh, state, pi}
   end
 
-  defp reject_with_switch_outstanding(:switch_reply_first, setup, state, pi, ctx) do
+  defp reject_with_switch_outstanding(:switch_reply_first, setup, state, pi, ctx, outcome) do
     {state, pi, []} = settle_fake_pi(state, pi, :oldest_first)
 
     assert {:messages_and_write, [_error], refresh, state} =
-             reject_session_setup(setup, state, ctx)
+             reject_session_setup(setup, state, ctx, outcome)
 
     drive_fake_pi(refresh, state, pi)
   end
 
-  defp reject_with_switch_outstanding(:rejection_first, setup, state, pi, ctx) do
-    assert {:messages, [_error], state} = reject_session_setup(setup, state, ctx)
+  defp reject_with_switch_outstanding(:rejection_first, setup, state, pi, ctx, outcome) do
+    assert {:messages, [_error], state} = reject_session_setup(setup, state, ctx, outcome)
     settle_fake_pi(state, pi, :oldest_first)
   end
+
+  defp change_failure_message(:rejected), do: "Session file is locked"
+  defp change_failure_message(:cancelled), do: "Pi cancelled the session change"
 
   defp feed_without_effect(data, state, pi, label) do
     {replies, _pi} = fake_pi_answer(decode_many(data), pi)
@@ -2211,24 +2224,35 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
   # Pi answers the rest of the setup group, then rejects the session change
   # itself (Pi's new_session/switch_session answers last).
-  defp reject_session_setup(setup, state, ctx) do
+  defp reject_session_setup(setup, state, ctx, outcome \\ :rejected) do
     {[change], others} =
       setup
       |> decode_many()
       |> Enum.split_with(&(&1["type"] in ["new_session", "switch_session"]))
 
     {state, []} = answer_session_setup(others, state, ctx)
+    Pi.translate_inbound(Jason.encode!(change_failure(change, outcome)), state)
+  end
 
-    Pi.translate_inbound(
-      Jason.encode!(%{
-        "type" => "response",
-        "id" => change["id"],
-        "command" => change["type"],
-        "success" => false,
-        "error" => "Session file is locked"
-      }),
-      state
-    )
+  defp change_failure(change, :rejected) do
+    %{
+      "type" => "response",
+      "id" => change["id"],
+      "command" => change["type"],
+      "success" => false,
+      "error" => "Session file is locked"
+    }
+  end
+
+  # An extension vetoed the change: Pi answers success, but stays put.
+  defp change_failure(change, :cancelled) do
+    %{
+      "type" => "response",
+      "id" => change["id"],
+      "command" => change["type"],
+      "success" => true,
+      "data" => %{"cancelled" => true}
+    }
   end
 
   # Answers a session setup group for s2.
