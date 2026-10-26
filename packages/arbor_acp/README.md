@@ -8,11 +8,21 @@ Version `1.0.0-rc.3` is published for downstream migration testing. The original
 qualification and the continuous 48-hour soak remain incomplete. See the
 [ExMCP migration guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/MIGRATING_V1_TO_V2.md).
 
-Use Elixir 1.17 or newer with a compatible OTP release. Installing the transitive
-RPC source package on macOS/Darwin or Linux requires a C17 compiler. Assembled
-releases include the built helper and need no compiler at runtime; Windows native
-subprocess operations are unsupported. See the
-[RPC source-build policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates).
+Use Elixir 1.17 or newer with a compatible OTP release. Agents run as
+subprocesses through RPC's native helper, which RPC builds from C source with a
+C17 compiler on macOS/Darwin and Linux. RPC `1.0.0-rc.2` fails to install
+without a compiler. Later RPC releases warn and install without the helper, and
+starting an agent then fails with `:native_helper_unavailable`. To make a
+missing compiler fail the build instead, add this to your application's config:
+
+```elixir
+config :arbor_rpc, native_helper: :required
+```
+
+Mix doesn't track this setting, so run `mix deps.compile arbor_rpc --force`
+after changing it. Assembled releases include the built helper and need no
+compiler at runtime; Windows native subprocess operations are unsupported. See
+the [RPC source-build policy](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates).
 
 ## Installation
 

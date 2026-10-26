@@ -45,10 +45,15 @@ or `packages/arbor_acp_adapters`. This workspace is not a Mix umbrella.
 `ARBOR_RPC_PATH` and `ARBOR_V2_LOCAL` optionally select local dependency source;
 see [contributing](CONTRIBUTING.md).
 
-Source installation on macOS/Darwin and Linux requires a C17 compiler for RPC.
-`CC` selects one compiler executable. Source archives include C source; assembled
-releases include the built helper and need no compiler at runtime. Windows native
-subprocess operations are unsupported. See the
+Agents run as subprocesses through RPC's native helper, which RPC builds from C
+source with a C17 compiler on macOS/Darwin and Linux; `CC` selects one compiler
+executable. RPC `1.0.0-rc.2` fails to install without a compiler. Later RPC
+releases warn and install without the helper, and starting an agent then fails
+with `:native_helper_unavailable`. Applications that launch agents should set
+`config :arbor_rpc, native_helper: :required` so a missing compiler fails the
+build instead. Source archives include C source; assembled releases include the
+built helper and need no compiler at runtime. Windows native subprocess
+operations are unsupported. See the
 [RPC source-build contract](https://github.com/trust-arbor/arbor_rpc#source-build-and-remaining-gates).
 
 ## Version and release ownership

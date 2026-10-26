@@ -26,8 +26,11 @@ candidate availability, callback signatures and complete examples.
   `Arbor.ACP.Adapter` and use the generic bridge and documented
   `Arbor.ACP.AdapterSupport` helpers. `Internal` modules are not extension APIs.
 - Declare each package whose APIs your application calls. Shared subprocess
-  ownership belongs to `arbor_rpc`; source installation on macOS/Linux requires
-  a C17 compiler. See its README for platform limits.
+  ownership belongs to `arbor_rpc`, whose native helper is built with a C17
+  compiler on macOS/Linux. RPC releases after `1.0.0-rc.2` install without a
+  compiler, and agent starts then fail with `:native_helper_unavailable`. Set
+  `config :arbor_rpc, native_helper: :required` in applications that launch
+  agents so the build fails instead. See its README for platform limits.
 
 ## Use session capabilities and tagged operation results
 
