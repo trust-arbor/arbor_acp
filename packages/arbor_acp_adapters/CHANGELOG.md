@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Claude SDK: render Write tool calls that use Claude Code's `path`/`file_text` input aliases as file diffs.
+- Claude SDK: render Write tool calls that use Claude Code's `path`, `file_text` or `file_content` input aliases as file diffs.
 - Codex: `session/load` and `session/resume` of a thread that this connection started and has not closed now succeed before the thread's first prompt. Codex has no rollout for it yet, so the adapter reads the live thread with `thread/read`, and the session keeps the load's authorized `cwd` and requested model. Any other thread, including one closed with `session/close`, still gets Codex's "no rollout found" error: `thread/read` does not subscribe, and attaching an unsubscribed thread would leave its prompts without `turn/completed`.
 - Pi: discover thinking levels during session setup and after model switches, publish context-window usage from session stats, and forward live session rename events to ACP clients as title updates (a cleared name clears the title). Model-specific levels need Pi 0.81.0 or newer; Pi 0.80.x still works and offers the static levels, because a rejected `get_available_thinking_levels` no longer fails `session/new`, `session/load` or `session/resume`.
 - Pi: send `set_model` as a correlated request. The adapter refreshes the session's model and thinking levels only after Pi answers it, so the refresh describes the new model, and a rejected switch reports the model Pi kept. It also follows Pi's `thinking_level_changed` events, and a `set_mode` sent while a refresh is outstanding keeps its level.

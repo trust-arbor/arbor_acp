@@ -67,24 +67,25 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
     end
   end
 
-  test "Write tool calls accept the current path and file_text aliases" do
-    assert %{
-             "title" => "Write lib/a.ex",
-             "content" => [
-               %{
-                 "type" => "diff",
-                 "path" => "/tmp/project/lib/a.ex",
-                 "oldText" => nil,
-                 "newText" => "hello"
-               }
-             ]
-           } =
-             ToolInfo.from_use(
-               "Write",
-               %{"path" => "/tmp/project/lib/a.ex", "file_text" => "hello"},
-               "tool-1",
-               "/tmp/project"
-             )
+  test "Write tool calls accept the current path, file_text and file_content aliases" do
+    for input <- [
+          %{"path" => "/tmp/project/lib/a.ex", "file_text" => "hello"},
+          %{"path" => "/tmp/project/lib/a.ex", "file_content" => "hello"},
+          %{"file_path" => "/tmp/project/lib/a.ex", "file_content" => "hello"},
+          %{"file_path" => "/tmp/project/lib/a.ex", "content" => "hello", "file_content" => "x"}
+        ] do
+      assert %{
+               "title" => "Write lib/a.ex",
+               "content" => [
+                 %{
+                   "type" => "diff",
+                   "path" => "/tmp/project/lib/a.ex",
+                   "oldText" => nil,
+                   "newText" => "hello"
+                 }
+               ]
+             } = ToolInfo.from_use("Write", input, "tool-1", "/tmp/project")
+    end
   end
 
   describe "capabilities/0" do
