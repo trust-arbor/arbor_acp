@@ -31,7 +31,8 @@ defmodule Arbor.ACP.Registry do
 
   HTTP redirects are refused (`{:error, {:redirect_refused, status, location}}`)
   so request headers are not replayed onto another origin, including an
-  https-to-http downgrade.
+  https-to-http downgrade. The returned location has its userinfo, query and
+  fragment removed, since a signed URL can carry a token there.
   """
   @spec fetch(keyword()) :: {:ok, registry()} | {:error, any()}
   def fetch(opts \\ []) do
@@ -186,8 +187,13 @@ defmodule Arbor.ACP.Registry do
 
   defp location_header(headers) do
     Enum.find_value(headers, fn {name, value} ->
-      if String.downcase(to_string(name)) == "location", do: to_string(value)
+      if String.downcase(to_string(name)) == "location", do: redact_location(to_string(value))
     end)
+  end
+
+  # A signed redirect target can carry a token in its query or userinfo.
+  defp redact_location(location) do
+    URI.to_string(%{URI.parse(location) | userinfo: nil, query: nil, fragment: nil})
   end
 
   defp ensure_http_started do

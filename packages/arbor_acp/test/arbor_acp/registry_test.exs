@@ -137,6 +137,17 @@ defmodule Arbor.ACP.RegistryTest do
 
       refute_received {:target_request, _headers}
     end
+
+    test "a refused redirect's location drops its userinfo, query and fragment" do
+      {_pid, port} =
+        start_http_stub(fn _request ->
+          location = "https://user:pass@cdn.example/registry.json?sig=signed-secret#frag"
+          http_response(302, [{"location", location}], "")
+        end)
+
+      assert {:error, {:redirect_refused, 302, "https://cdn.example/registry.json"}} =
+               Registry.fetch(url: "http://127.0.0.1:#{port}/registry.json", timeout: 2_000)
+    end
   end
 
   defp start_http_stub(handler) do
