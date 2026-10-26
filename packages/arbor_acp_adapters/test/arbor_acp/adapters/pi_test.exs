@@ -1491,6 +1491,34 @@ defmodule Arbor.ACP.Adapters.PiTest do
       end
     end
 
+    for closer <- ["session/close", "session/delete"],
+        {running, queued} <- [{"session/load", "session/new"}, {"session/new", "session/load"}] do
+      @closer closer
+      @running_setup running
+      @queued_setup queued
+      test "a #{queued} waiting behind a #{running} that #{closer} drops starts at once", ctx do
+        state = switch_ready_state(ctx.state)
+        running = session_setup_request(@running_setup, 70, ctx)
+        queued = session_setup_request(@queued_setup, 71, ctx)
+
+        assert {:ok, _running_setup, state} = Pi.translate_outbound(running, state)
+        assert {:ok, :skip, state} = Pi.translate_outbound(queued, state)
+
+        close = %{"method" => @closer, "id" => 72, "params" => %{"sessionId" => "s1"}}
+
+        assert {:reply_and_write, %{}, setup, state} = Pi.translate_outbound(close, state),
+               "#{@closer} left the #{@queued_setup} waiting"
+
+        assert [%{"type" => change}] = decode_many(setup)
+        assert change in ["new_session", "switch_session"]
+        assert state.queued_session_setups == []
+
+        {state, messages} = finish_session_setup(setup, state, ctx)
+        assert %{"result" => %{"sessionId" => "s2"}} = Enum.find(messages, &(&1["id"] == 71))
+        assert state.session_id == "s2"
+      end
+    end
+
     test "thinking_level_changed events publish the level Pi applied", %{state: state} do
       state = switch_ready_state(state)
 
@@ -2666,6 +2694,11 @@ defmodule Arbor.ACP.Adapters.PiTest do
         {[session_pi_reply(request, pi)], pi}
     end)
   end
+
+  defp session_setup_request("session/new", acp_id, ctx), do: session_change_new(acp_id, ctx)
+
+  defp session_setup_request(method, acp_id, ctx),
+    do: %{session_change(method, ctx) | "id" => acp_id}
 
   defp session_change_new(acp_id, ctx),
     do: %{"method" => "session/new", "id" => acp_id, "params" => %{"cwd" => ctx.tmp_dir}}

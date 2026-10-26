@@ -269,7 +269,7 @@ defmodule Arbor.ACP.Adapters.Pi do
         state
       end
 
-    cleanup_reply(state)
+    state |> cleanup_reply() |> start_queued_setup_after_reply()
   end
 
   def translate_outbound(%{"method" => "session/delete", "params" => params}, state) do
@@ -288,7 +288,7 @@ defmodule Arbor.ACP.Adapters.Pi do
           if is_binary(session_id), do: SessionStore.delete(state.session_map_path, session_id)
 
         maybe_delete_session_file(state, entry || %{"sessionFile" => state.session_file})
-        {:reply, %{}, state}
+        start_queued_setup_after_reply({:reply, %{}, state})
 
       {:error, reason} ->
         {:error, inspect(reason), state}
@@ -896,6 +896,27 @@ defmodule Arbor.ACP.Adapters.Pi do
         result
     end
   end
+
+  # Closing or deleting the active session drops a setup in progress with
+  # it; the next waiting setup starts at once rather than behind a setup that
+  # may never come.
+  defp start_queued_setup_after_reply({:reply, result, state}) do
+    case start_queued_setup_after({:skip, state}) do
+      {:skip, state} ->
+        {:reply, result, state}
+
+      {:messages, messages, state} ->
+        {:messages_and_reply, messages, result, state}
+
+      {:skip_and_write, data, state} ->
+        {:reply_and_write, result, data, state}
+
+      {:messages_and_write, messages, data, state} ->
+        {:messages_and_reply_and_write, messages, result, data, state}
+    end
+  end
+
+  defp start_queued_setup_after_reply(result), do: result
 
   defp add_message({:skip, state}, message), do: {:messages, [message], state}
 
