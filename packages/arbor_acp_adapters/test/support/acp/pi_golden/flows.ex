@@ -207,6 +207,32 @@ defmodule Arbor.ACP.Test.PiGolden.Flows do
      }}
   end
 
+  @doc """
+  Steps that answer the outstanding `set_model` request and then the
+  `get_state` / `get_available_thinking_levels` refresh the adapter sends after
+  it, the way Pi does once the switch has finished. The adapter serializes
+  model switches, so a scenario finishes one before the next one is written.
+
+  Options: `:thinking_level` (the level `get_state` reports) and `:levels`
+  (the new model's levels).
+  """
+  @spec finish_model_switch(String.t(), String.t(), keyword()) ::
+          [Arbor.ACP.Test.PiGolden.step()]
+  def finish_model_switch(provider, model_id, opts \\ []) do
+    model = %{"provider" => provider, "id" => model_id}
+
+    [
+      {:respond, "set_model", model},
+      {:respond, "get_state",
+       state_data(%{
+         "model" => model,
+         "thinkingLevel" => Keyword.get(opts, :thinking_level, "medium")
+       })},
+      {:respond, "get_available_thinking_levels",
+       %{"levels" => Keyword.get(opts, :levels, ~w(off minimal low medium high xhigh))}}
+    ]
+  end
+
   @doc "A Pi `message_update` stream event wrapping an assistant message event."
   @spec message_update(map()) :: Arbor.ACP.Test.PiGolden.step()
   def message_update(assistant_event),

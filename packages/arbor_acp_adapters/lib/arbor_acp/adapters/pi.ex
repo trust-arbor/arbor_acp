@@ -77,12 +77,13 @@ defmodule Arbor.ACP.Adapters.Pi do
     pending_extension_ui: %{},
     last_usage: %{},
     pending_usage_request: nil,
-    # The latest set_model request awaiting Pi's reply, then the
-    # get_state/get_available_thinking_levels refresh sent after it.
+    # Model switches are serialized: at most one set_model request, or the
+    # get_state/get_available_thinking_levels refresh that follows it, is in
+    # flight. A switch requested meanwhile waits in queued_model_switch, which
+    # keeps only the latest request.
     pending_model_switch: nil,
     pending_model_refresh: nil,
-    # Replies to superseded set_model requests and refreshes.
-    ignored_rpc_ids: MapSet.new(),
+    queued_model_switch: nil,
     pending_controls: %{},
     control_groups: %{},
     msg_counter: 0,
@@ -564,7 +565,7 @@ defmodule Arbor.ACP.Adapters.Pi do
         pending_usage_request: nil,
         pending_model_switch: nil,
         pending_model_refresh: nil,
-        ignored_rpc_ids: MapSet.new()
+        queued_model_switch: nil
     }
   end
 
@@ -613,6 +614,12 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp deliver_messages_and_config_result(messages, data, %{managed?: false} = state),
     do: {:messages_and_write, messages, data, state}
+
+  # A switch that waits behind another one has nothing to write yet.
+  defp deliver_messages_and_config_result(messages, "", state) do
+    {:messages_and_reply, messages,
+     %{"configOptions" => Config.confirmation_config_options_for_state(state)}, state}
+  end
 
   defp deliver_messages_and_config_result(messages, data, state) do
     case write_managed(data, state) do
@@ -1134,7 +1141,10 @@ defmodule Arbor.ACP.Adapters.Pi do
   # set_model assigns the model only after an asynchronous auth check. A
   # get_state written alongside set_model therefore describes the previous
   # model, so the refresh is sent only once Pi has answered the set_model
-  # request.
+  # request. For the same reason two set_model requests in flight can finish
+  # in either order, and nothing tells which model Pi ended on. Switches are
+  # therefore serialized: a switch requested while another one or its refresh
+  # is in flight waits, and only the latest waiting switch is sent.
   defp translate_set_model(model_id, session_id_override, state) do
     case Config.set_model_plan(model_id, session_id_override, state) do
       {:ok, messages, fields, state} ->
@@ -1147,64 +1157,69 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   defp request_model_switch(fields, state) do
-    state = supersede_model_switch(state)
+    switch = %{fields: fields, session_id: state.session_id}
+
+    if model_switch_in_flight?(state) do
+      {"", %{state | queued_model_switch: switch}}
+    else
+      send_model_switch(switch, state)
+    end
+  end
+
+  defp model_switch_in_flight?(state),
+    do: state.pending_model_switch != nil or state.pending_model_refresh != nil
+
+  defp send_model_switch(%{fields: fields, session_id: session_id}, state) do
     {id, request, state} = rpc(state, RPC.method(:set_model), fields)
 
-    switch =
-      if is_binary(state.session_id) and state.session_id != "",
-        do: %{rpc_id: id, session_id: state.session_id}
+    pending =
+      if is_binary(session_id) and session_id != "",
+        do: %{rpc_id: id, session_id: session_id}
 
-    {RPC.line(request), %{state | pending_model_switch: switch}}
-  end
-
-  # A newer model switch makes the previous switch's reply and refresh stale;
-  # their replies are dropped when they arrive.
-  defp supersede_model_switch(state) do
-    stale_ids =
-      case state.pending_model_switch do
-        %{rpc_id: id} -> [id]
-        nil -> []
-      end ++ outstanding_refresh_ids(state.pending_model_refresh)
-
-    %{
-      state
-      | pending_model_switch: nil,
-        pending_model_refresh: nil,
-        ignored_rpc_ids: MapSet.union(state.ignored_rpc_ids, MapSet.new(stale_ids))
-    }
-  end
-
-  defp outstanding_refresh_ids(nil), do: []
-
-  defp outstanding_refresh_ids(refresh) do
-    for {id, nil} <- [
-          {refresh.state_id, refresh.state_data},
-          {refresh.levels_id, refresh.levels_data}
-        ],
-        do: id
+    {RPC.line(request),
+     %{
+       state
+       | pending_model_switch: pending,
+         pending_model_refresh: nil,
+         queued_model_switch: nil
+     }}
   end
 
   # A rejected switch leaves Pi on its previous model, so the refresh runs
-  # either way: it also corrects the optimistically reported model.
+  # either way: it also corrects the optimistically reported model. When a
+  # newer switch is waiting it goes first, and the refresh follows it.
   defp handle_model_switch_reply(event, %{pending_model_switch: switch} = state) do
     if event["success"] == false do
       Logger.warning("[Pi Adapter] set_model failed: #{inspect(event["error"])}")
     end
 
+    state = %{state | pending_model_switch: nil}
+
+    case state.queued_model_switch do
+      nil ->
+        {data, state} = send_model_refresh(switch.session_id, state)
+        {:skip_and_write, data, state}
+
+      queued ->
+        {data, state} = send_model_switch(queued, state)
+        {:skip_and_write, data, state}
+    end
+  end
+
+  defp send_model_refresh(session_id, state) do
     {state_id, get_state, state} = rpc(state, RPC.method(:get_state))
     {levels_id, get_levels, state} = rpc(state, RPC.method(:get_available_thinking_levels))
 
     refresh = %{
       state_id: state_id,
       levels_id: levels_id,
-      session_id: switch.session_id,
+      session_id: session_id,
       state_data: nil,
       levels_data: nil,
       level_overridden?: false
     }
 
-    {:skip_and_write, RPC.encode_many([get_state, get_levels]),
-     %{state | pending_model_switch: nil, pending_model_refresh: refresh}}
+    {RPC.encode_many([get_state, get_levels]), %{state | pending_model_refresh: refresh}}
   end
 
   defp handle_model_refresh(event, %{pending_model_refresh: refresh} = state) do
@@ -1222,10 +1237,18 @@ defmodule Arbor.ACP.Adapters.Pi do
         do: %{refresh | state_data: data},
         else: %{refresh | levels_data: data}
 
-    if is_map(refresh.state_data) and is_map(refresh.levels_data) do
-      finish_model_refresh(refresh, %{state | pending_model_refresh: nil})
-    else
-      {:skip, %{state | pending_model_refresh: refresh}}
+    cond do
+      not (is_map(refresh.state_data) and is_map(refresh.levels_data)) ->
+        {:skip, %{state | pending_model_refresh: refresh}}
+
+      # A switch requested during the refresh makes it stale: send the switch,
+      # and the refresh after it publishes the result.
+      state.queued_model_switch != nil ->
+        {data, state} = send_model_switch(state.queued_model_switch, state)
+        {:skip_and_write, data, state}
+
+      true ->
+        finish_model_refresh(refresh, %{state | pending_model_refresh: nil})
     end
   end
 
@@ -1266,9 +1289,6 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
     cond do
-      MapSet.member?(state.ignored_rpc_ids, id) ->
-        {:skip, %{state | ignored_rpc_ids: MapSet.delete(state.ignored_rpc_ids, id)}}
-
       match?(%{rpc_id: ^id}, state.pending_model_switch) ->
         handle_model_switch_reply(event, state)
 
@@ -1432,7 +1452,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     cond do
       # The refresh that follows a model switch publishes the level against
       # the new model's levels.
-      state.pending_model_switch != nil or state.pending_model_refresh != nil ->
+      model_switch_in_flight?(state) ->
         {:skip, state}
 
       level == previous or not is_binary(state.session_id) ->

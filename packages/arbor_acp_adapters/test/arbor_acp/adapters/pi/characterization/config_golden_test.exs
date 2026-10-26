@@ -66,6 +66,10 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
 
   defp option(update, id), do: Enum.find(update["configOptions"] || [], &(&1["id"] == id))
 
+  defp outbound_results(transcript) do
+    for %{step: %{kind: :outbound}, result: result} <- transcript, do: result
+  end
+
   # `session/new` carries the catalog on its reply rather than in a
   # `session/update` notification.
   defp reply_options(transcript) do
@@ -150,11 +154,11 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
     test "set_model_with_full_ids_writes_set_model_and_updates_the_catalog" do
       steps =
         Flows.open_session(1) ++
-          [
-            Flows.set_model(2, "openai/gpt-5.1"),
-            Flows.set_model(3, "custom/org/model-x"),
-            Flows.set_model(4, "unknown-provider/anything")
-          ]
+          [Flows.set_model(2, "openai/gpt-5.1")] ++
+          Flows.finish_model_switch("openai", "gpt-5.1") ++
+          [Flows.set_model(3, "custom/org/model-x")] ++
+          Flows.finish_model_switch("custom", "org/model-x") ++
+          [Flows.set_model(4, "unknown-provider/anything")]
 
       transcript =
         PiGolden.assert_golden(
@@ -174,13 +178,15 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
                |> updates()
                |> Enum.map(&option(&1, "model")["currentValue"])
                |> Enum.reject(&is_nil/1)
+               |> Enum.dedup()
     end
 
     test "set_model_resolves_bare_ids_against_the_catalog" do
       steps =
         Flows.open_session(1) ++
+          [Flows.set_model(2, "gpt-5.1")] ++
+          Flows.finish_model_switch("openai", "gpt-5.1") ++
           [
-            Flows.set_model(2, "gpt-5.1"),
             Flows.set_model(3, "claude-sonnet-4"),
             Flows.set_model(4, "missing-model"),
             Flows.set_model(5, ""),
@@ -274,8 +280,9 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
     test "model_option_routes_to_set_model" do
       steps =
         Flows.open_session(1) ++
+          [Flows.set_config(2, "model", "openai/gpt-5.1")] ++
+          Flows.finish_model_switch("openai", "gpt-5.1") ++
           [
-            Flows.set_config(2, "model", "openai/gpt-5.1"),
             Flows.set_config(3, "model", "claude-sonnet-4"),
             Flows.set_config(4, "model", "nope"),
             Flows.set_config(5, "model", nil)
@@ -296,8 +303,9 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
                %{tag: :error, error: "session/set_model requires modelId"}
              ] =
                transcript
+               |> outbound_results()
                |> Enum.take(-4)
-               |> Enum.map(&Map.take(&1.result, [:tag, :writes, :error]))
+               |> Enum.map(&Map.take(&1, [:tag, :writes, :error]))
     end
 
     test "thought_level_option_routes_to_set_thinking_level" do
@@ -482,8 +490,9 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
       steps =
         [{:init, managed: true}] ++
           Flows.open_session(1) ++
+          [Flows.set_config(2, "model", "openai/gpt-5.1")] ++
+          Flows.finish_model_switch("openai", "gpt-5.1") ++
           [
-            Flows.set_config(2, "model", "openai/gpt-5.1"),
             Flows.set_config(3, "thought_level", "high"),
             Flows.set_config(4, "auto_compaction", false),
             Flows.set_mode(5, "low"),
@@ -498,7 +507,7 @@ defmodule Arbor.ACP.Adapters.Pi.ConfigGoldenTest do
         )
 
       [model_reply, thought_reply, bool_reply, mode_reply, set_model_reply] =
-        transcript |> Enum.take(-5) |> Enum.map(& &1.result)
+        transcript |> outbound_results() |> Enum.take(-5)
 
       assert %{
                tag: :messages_and_reply,

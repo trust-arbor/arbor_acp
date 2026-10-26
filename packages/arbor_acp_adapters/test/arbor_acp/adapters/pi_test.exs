@@ -961,46 +961,122 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert mode_update["params"]["update"]["currentModeId"] == "low"
     end
 
-    test "an older model switch cannot repoint a newer selection", %{state: state} do
+    test "overlapping model switches converge on the model Pi applied", %{state: state} do
+      # Pi finishes set_model requests in whatever order their auth checks
+      # resolve. Try both orders.
+      for order <- [:newest_first, :oldest_first] do
+        state = switch_ready_state(state)
+        pi = %{fake_pi() | hold_switches?: true}
+
+        assert {:messages_and_write, _, first, state} =
+                 Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+        {state, pi, []} = drive_fake_pi(first, state, pi)
+
+        assert {:messages_and_write, _, second, state} =
+                 Pi.translate_outbound(set_model_request("anthropic/claude-opus-4"), state)
+
+        {state, pi, _} = drive_fake_pi(second, state, pi)
+        {state, pi, messages} = settle_fake_pi(state, pi, order)
+
+        assert state.current_model_id == "#{pi.model["provider"]}/#{pi.model["id"]}",
+               "#{order}: the adapter reports a model Pi did not end on"
+
+        assert state.available_thinking_levels == pi.levels
+        assert state.thinking_level == pi.level
+
+        # The latest request is the one that sticks.
+        assert pi.applied == ["openai/gpt-5.1", "anthropic/claude-opus-4"]
+        assert state.current_model_id == "anthropic/claude-opus-4"
+        assert state.pending_model_switch == nil
+        assert state.pending_model_refresh == nil
+        assert state.queued_model_switch == nil
+
+        assert [mode_update, config_update] = messages
+        assert mode_update["params"]["update"]["currentModeId"] == "xhigh"
+
+        assert Enum.find(
+                 config_update["params"]["update"]["configOptions"],
+                 &(&1["id"] == "model")
+               )[
+                 "currentValue"
+               ] == "anthropic/claude-opus-4"
+      end
+    end
+
+    test "a switch requested during a refresh waits and the stale refresh is dropped", %{
+      state: state
+    } do
       state = switch_ready_state(state)
+      pi = fake_pi()
 
       assert {:messages_and_write, _, first, state} =
                Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
 
-      assert {:messages_and_write, _, second, state} =
-               Pi.translate_outbound(set_model_request("anthropic/claude-sonnet-4"), state)
-
-      [first_switch] = decode_many(first)
-      [second_switch] = decode_many(second)
-
-      # The first switch's reply is stale and starts no refresh.
-      assert {:skip, state} =
-               Pi.translate_inbound(response_line(first_switch["id"], "set_model", %{}), state)
-
-      assert state.current_model_id == "anthropic/claude-sonnet-4"
-      assert state.pending_model_switch.rpc_id == second_switch["id"]
+      {[level_event, switch_reply], pi} = fake_pi_answer(decode_many(first), pi)
+      assert {:skip, state} = Pi.translate_inbound(Jason.encode!(level_event), state)
 
       assert {:skip_and_write, refresh, state} =
-               Pi.translate_inbound(response_line(second_switch["id"], "set_model", %{}), state)
+               Pi.translate_inbound(Jason.encode!(switch_reply), state)
 
-      [old_state_request, _levels_request] = decode_many(refresh)
+      assert {:messages_and_write, [optimistic], "", state} =
+               Pi.translate_outbound(set_model_request("anthropic/claude-opus-4"), state)
 
-      assert {:messages_and_write, _, _third, state} =
+      assert Enum.find(optimistic["params"]["update"]["configOptions"], &(&1["id"] == "model"))[
+               "currentValue"
+             ] == "anthropic/claude-opus-4"
+
+      # The refresh describes gpt-5.1; it is not published, and the waiting
+      # switch goes out once it completes.
+      {state, pi, messages} = drive_fake_pi(refresh, state, pi)
+
+      assert pi.applied == ["openai/gpt-5.1", "anthropic/claude-opus-4"]
+      assert [mode_update, _config_update] = messages
+      assert mode_update["params"]["update"]["currentModeId"] == "xhigh"
+      assert state.current_model_id == "anthropic/claude-opus-4"
+      assert state.available_thinking_levels == ~w(off low medium high xhigh)
+    end
+
+    test "model switches stay bounded while Pi has not answered", %{state: state} do
+      state = switch_ready_state(state)
+      pi = %{fake_pi() | hold_switches?: true}
+
+      assert {:messages_and_write, _, first, state} =
                Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
 
-      # A refresh superseded by a newer switch is dropped, too.
-      assert {:skip, state} =
-               Pi.translate_inbound(
-                 response_line(old_state_request["id"], "get_state", %{
-                   "sessionId" => "wrong-session",
-                   "thinkingLevel" => "off"
-                 }),
-                 state
-               )
+      [%{"id" => first_id}] = decode_many(first)
+      {state, pi, []} = drive_fake_pi(first, state, pi)
 
-      assert state.session_id == "s1"
-      assert state.thinking_level == "high"
-      assert state.current_model_id == "openai/gpt-5.1"
+      request_switches = fn state, count ->
+        Enum.map_reduce(1..count, state, fn n, state ->
+          model = if rem(n, 2) == 0, do: "anthropic/claude-opus-4", else: "openai/gpt-5.1"
+
+          assert {:messages_and_write, [_update], data, state} =
+                   Pi.translate_outbound(set_model_request(model), state)
+
+          {data, state}
+        end)
+      end
+
+      {_writes, after_two} = request_switches.(state, 2)
+      {writes, after_many} = request_switches.(state, 200)
+
+      # The adapter state does not depend on how many switches were requested,
+      # and nothing reaches Pi while the first switch is outstanding.
+      assert after_many == after_two
+      assert Enum.uniq(writes) == [""]
+      assert after_many.pending_model_switch.rpc_id == first_id
+
+      assert after_many.queued_model_switch.fields == %{
+               "provider" => "anthropic",
+               "modelId" => "claude-opus-4"
+             }
+
+      # Once Pi answers, only the latest waiting switch is sent.
+      {state, pi, _messages} = settle_fake_pi(after_many, pi, :oldest_first)
+      assert pi.applied == ["openai/gpt-5.1", "anthropic/claude-opus-4"]
+      assert state.current_model_id == "anthropic/claude-opus-4"
+      assert state.queued_model_switch == nil
     end
 
     test "thinking_level_changed events publish the level Pi applied", %{state: state} do
@@ -1877,6 +1953,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
         current_model_id: "anthropic/claude-sonnet-4",
         available_models: [
           %{"modelId" => "anthropic/claude-sonnet-4", "name" => "anthropic/Claude Sonnet 4"},
+          %{"modelId" => "anthropic/claude-opus-4", "name" => "anthropic/Claude Opus 4"},
           %{"modelId" => "openai/gpt-5.1", "name" => "openai/GPT-5.1"}
         ]
     }
@@ -1896,24 +1973,50 @@ defmodule Arbor.ACP.Adapters.PiTest do
       level: "high",
       levels: ["off", "medium", "high"],
       models: %{
-        "openai/gpt-5.1" => %{level: "low", levels: ["off", "minimal", "low"]}
+        "openai/gpt-5.1" => %{level: "low", levels: ["off", "minimal", "low"]},
+        "anthropic/claude-opus-4" => %{level: "xhigh", levels: ~w(off low medium high xhigh)}
       },
       reject_set_model: nil,
-      thinking_levels_command?: true
+      thinking_levels_command?: true,
+      # With hold_switches?, set_model requests stay unanswered until
+      # settle_fake_pi/3 finishes them, in the order the test picks.
+      hold_switches?: false,
+      held: [],
+      applied: []
     }
   end
 
   defp fake_pi_answer(requests, pi) do
     {switches, others} = Enum.split_with(requests, &(&1["type"] == "set_model"))
-    {replies, pi} = Enum.flat_map_reduce(others ++ switches, pi, &fake_pi_reply/2)
-    {replies, pi}
+
+    if pi.hold_switches? do
+      {replies, pi} = Enum.flat_map_reduce(others, pi, &fake_pi_reply/2)
+      {replies, %{pi | held: pi.held ++ switches}}
+    else
+      Enum.flat_map_reduce(others ++ switches, pi, &fake_pi_reply/2)
+    end
+  end
+
+  # Finishes the held set_model requests one at a time, feeding Pi's output
+  # to the adapter and anything the adapter writes back to Pi.
+  defp settle_fake_pi(state, pi, order, messages \\ []) do
+    case pi.held do
+      [] ->
+        {state, pi, messages}
+
+      held ->
+        request = if order == :newest_first, do: List.last(held), else: hd(held)
+        {replies, pi} = fake_pi_reply(request, %{pi | held: List.delete(held, request)})
+        {state, pi, messages} = feed_fake_pi_output(replies, state, pi, messages)
+        settle_fake_pi(state, pi, order, messages)
+    end
   end
 
   defp fake_pi_reply(%{"type" => "set_model"} = request, %{reject_set_model: nil} = pi) do
     key = "#{request["provider"]}/#{request["modelId"]}"
     %{level: level, levels: levels} = Map.fetch!(pi.models, key)
     model = %{"provider" => request["provider"], "id" => request["modelId"]}
-    pi = %{pi | model: model, level: level, levels: levels}
+    pi = %{pi | model: model, level: level, levels: levels, applied: pi.applied ++ [key]}
 
     {[
        %{"type" => "thinking_level_changed", "level" => level},
@@ -1965,7 +2068,10 @@ defmodule Arbor.ACP.Adapters.PiTest do
   # adapter, until the adapter stops writing.
   defp drive_fake_pi(data, state, pi, messages \\ []) do
     {replies, pi} = fake_pi_answer(decode_many(data), pi)
+    feed_fake_pi_output(replies, state, pi, messages)
+  end
 
+  defp feed_fake_pi_output(replies, state, pi, messages) do
     Enum.reduce(replies, {state, pi, messages}, fn reply, {state, pi, messages} ->
       case Pi.translate_inbound(Jason.encode!(reply), state) do
         {:skip, state} -> {state, pi, messages}
