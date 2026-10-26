@@ -413,7 +413,7 @@ defmodule Arbor.ACP.Types do
   String-keyed JSON object for mcp server. Wire field/variant shape:
 
   ```text
-  stdio_mcp_server() | http_mcp_server() | sse_mcp_server()
+  stdio_mcp_server() | http_mcp_server() | sse_mcp_server() | acp_mcp_server()
   ```
   """
   @type mcp_server :: json_object()
@@ -460,6 +460,21 @@ defmodule Arbor.ACP.Types do
   ```
   """
   @type sse_mcp_server :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for an UNSTABLE ACP-transport MCP server.
+  Wire field/variant shape:
+
+  ```text
+  %{
+  required "type" => "acp",
+  required "name" => String.t(),
+  required "serverId" => String.t(),
+  optional "_meta" => map() | nil
+  }
+  ```
+  """
+  @type acp_mcp_server :: json_object()
 
   @typedoc """
   String-keyed JSON object for env variable. Wire field/variant shape:
@@ -1064,6 +1079,10 @@ defmodule Arbor.ACP.Types do
   `:beam_mcp`, `:image`, `:audio`, `:embedded_context`,
   `:session_list`, `:session_resume`, `:session_close`, `:session_delete`,
   `:session_fork`, `:additional_directories`, and `:logout`.
+
+  `:acp_mcp` sets `mcpCapabilities.acp` to `true`. That flag is the UNSTABLE
+  MCP-over-ACP advertisement: the agent can consume MCP methods on
+  `type: "acp"` servers. Only the boolean `true` enables the transport.
   """
   @spec agent_capabilities(keyword()) :: agent_capabilities()
   def agent_capabilities(opts \\ []) do
@@ -1244,12 +1263,30 @@ defmodule Arbor.ACP.Types do
   end
 
   @doc """
+  Creates an UNSTABLE ACP-transport MCP server descriptor (`type: "acp"`).
+
+  A client includes this in `mcpServers` only when the agent advertised
+  `mcpCapabilities.acp == true` and a provider is registered for `server_id`.
+  `name` and `server_id` must be non-empty strings.
+  """
+  @spec acp_mcp_server(String.t(), String.t(), keyword()) :: acp_mcp_server()
+  def acp_mcp_server(name, server_id, opts \\ []) when is_list(opts) do
+    if not (mcp_id?(name) and mcp_id?(server_id)) do
+      raise ArgumentError, "ACP MCP server name and server_id must be non-empty strings"
+    end
+
+    %{"type" => "acp", "name" => name, "serverId" => server_id}
+    |> maybe_put_kw("_meta", opts, :meta)
+  end
+
+  @doc """
   Creates params for a new session request.
 
   ## Options
 
   - `:mcp_servers` - list of MCP server maps, preferably from
-    `stdio_mcp_server/3`, `http_mcp_server/3`, or `sse_mcp_server/3`
+    `stdio_mcp_server/3`, `http_mcp_server/3`, `sse_mcp_server/3`, or
+    `acp_mcp_server/3`
   - `:additional_directories` - extra absolute workspace root paths
   """
   @spec new_session_params(String.t(), keyword()) :: json_object()
@@ -1322,6 +1359,8 @@ defmodule Arbor.ACP.Types do
       "update" => update
     })
   end
+
+  defp mcp_id?(value), do: is_binary(value) and value != "" and String.valid?(value)
 
   defp maybe_put_bool(map, key, opts, opt_key) do
     case Keyword.get(opts, opt_key) do

@@ -284,5 +284,23 @@ defmodule Arbor.ACP.TypesTest do
                "headers" => []
              }
     end
+
+    test "creates an acp server config" do
+      assert Types.acp_mcp_server("tools", "srv-1") == %{
+               "type" => "acp",
+               "name" => "tools",
+               "serverId" => "srv-1"
+             }
+
+      assert Types.acp_mcp_server("tools", "srv-1", meta: %{"trace" => "1"}) == %{
+               "type" => "acp",
+               "name" => "tools",
+               "serverId" => "srv-1",
+               "_meta" => %{"trace" => "1"}
+             }
+
+      assert_raise ArgumentError, fn -> Types.acp_mcp_server("", "srv-1") end
+      assert_raise ArgumentError, fn -> Types.acp_mcp_server("tools", "") end
+    end
   end
 end

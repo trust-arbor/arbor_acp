@@ -71,6 +71,13 @@ defmodule Arbor.ACP.Capabilities do
     end
   end
 
+  def supported?(caps, :mcp_acp) do
+    caps
+    |> Maps.get("mcpCapabilities")
+    |> Maps.get("acp")
+    |> Kernel.==(true)
+  end
+
   def supported?(caps, capability) when is_map_key(@session_keys, capability) do
     key = Map.fetch!(@session_keys, capability)
 

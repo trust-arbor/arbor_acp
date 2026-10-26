@@ -345,4 +345,84 @@ defmodule Arbor.ACP.RequestValidationTest do
                "content" => "not an object"
              })
   end
+
+  describe "mcp/message" do
+    test "accepts a request with optional params and meta" do
+      assert :ok =
+               RequestValidation.validate_agent_request("mcp/message", %{
+                 "serverId" => "tools",
+                 "requestId" => "req-1",
+                 "method" => "tools/list",
+                 "params" => %{"cursor" => nil},
+                 "_meta" => %{}
+               })
+    end
+
+    test "rejects an empty id, a missing method, and a non-object params value" do
+      assert {:error, :invalid_params} =
+               RequestValidation.validate_agent_request("mcp/message", %{
+                 "serverId" => "tools",
+                 "requestId" => "",
+                 "method" => "tools/list"
+               })
+
+      assert {:error, :invalid_params} =
+               RequestValidation.validate_agent_request("mcp/message", %{
+                 "serverId" => "tools",
+                 "requestId" => "req-1"
+               })
+
+      assert {:error, :invalid_params} =
+               RequestValidation.validate_agent_request("mcp/message", %{
+                 "serverId" => "tools",
+                 "requestId" => "req-1",
+                 "method" => "tools/list",
+                 "params" => ["tools"]
+               })
+    end
+  end
+
+  describe "acp mcp servers on session/new" do
+    test "accepts an acp server with json meta beside a stdio server" do
+      assert :ok =
+               RequestValidation.validate_client_request("session/new", %{
+                 "cwd" => "/tmp/project",
+                 "mcpServers" => [
+                   %{
+                     "name" => "local",
+                     "command" => "/usr/bin/server",
+                     "args" => [],
+                     "env" => []
+                   },
+                   %{
+                     "type" => "acp",
+                     "name" => "tools",
+                     "serverId" => "tools",
+                     "_meta" => %{"trace" => "1"}
+                   }
+                 ]
+               })
+    end
+
+    test "rejects an acp server with a missing id or non-json meta" do
+      assert {:error, :invalid_params} =
+               RequestValidation.validate_client_request("session/new", %{
+                 "cwd" => "/tmp/project",
+                 "mcpServers" => [%{"type" => "acp", "name" => "tools"}]
+               })
+
+      assert {:error, :invalid_params} =
+               RequestValidation.validate_client_request("session/new", %{
+                 "cwd" => "/tmp/project",
+                 "mcpServers" => [
+                   %{
+                     "type" => "acp",
+                     "name" => "tools",
+                     "serverId" => "tools",
+                     "_meta" => %{trace: "1"}
+                   }
+                 ]
+               })
+    end
+  end
 end
