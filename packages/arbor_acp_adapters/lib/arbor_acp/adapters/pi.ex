@@ -1120,6 +1120,16 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp context_usage_update(_data, _session_id), do: nil
 
+  defp session_title_update(title, state) do
+    notification =
+      AdapterEvents.session_info_update(state.session_id, %{
+        "title" => title,
+        "updatedAt" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+      })
+
+    {:messages, [notification], state}
+  end
+
   # Pi dispatches each input line without awaiting the previous one, and its
   # set_model assigns the model only after an asynchronous auth check. A
   # get_state written alongside set_model therefore describes the previous
@@ -1395,17 +1405,20 @@ defmodule Arbor.ACP.Adapters.Pi do
     end
   end
 
-  defp process_event(%{"type" => "session_info_changed", "name" => name}, state)
-       when is_binary(name) or is_nil(name) do
-    title = if is_binary(name), do: String.trim(name), else: nil
+  # Pi serializes a cleared session name as a missing `name` key, so a missing
+  # (or null) name clears the ACP title.
+  defp process_event(%{"type" => "session_info_changed"} = event, state) do
+    case Map.get(event, "name") do
+      name when is_binary(name) ->
+        session_title_update(String.trim(name), state)
 
-    notification =
-      AdapterEvents.session_info_update(state.session_id, %{
-        "title" => title,
-        "updatedAt" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
-      })
+      nil ->
+        session_title_update(nil, state)
 
-    {:messages, [notification], state}
+      _invalid ->
+        Logger.debug("[Pi Adapter] Ignoring session_info_changed with a non-string name")
+        {:skip, state}
+    end
   end
 
   # Pi reports every effective thinking-level change, including the level a

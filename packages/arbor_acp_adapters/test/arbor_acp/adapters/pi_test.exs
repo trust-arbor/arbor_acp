@@ -201,6 +201,28 @@ defmodule Arbor.ACP.Adapters.PiTest do
     assert update["params"]["update"]["sessionUpdate"] == "session_info_update"
   end
 
+  test "a cleared Pi session name clears the ACP session title", %{state: state} do
+    state = %{state | session_id: "s1"}
+
+    # Pi serializes an unset name as a missing key; null is accepted as well.
+    for event <- [
+          %{"type" => "session_info_changed"},
+          %{"type" => "session_info_changed", "name" => nil}
+        ] do
+      assert {:messages, [update], ^state} = Pi.translate_inbound(Jason.encode!(event), state)
+      assert update["params"]["sessionId"] == "s1"
+      assert update["params"]["update"]["sessionUpdate"] == "session_info_update"
+      assert Map.fetch!(update["params"]["update"], "title") == nil
+      assert is_binary(update["params"]["update"]["updatedAt"])
+    end
+
+    assert {:skip, ^state} =
+             Pi.translate_inbound(
+               Jason.encode!(%{"type" => "session_info_changed", "name" => 42}),
+               state
+             )
+  end
+
   describe "config_options/0" do
     test "returns Pi static runtime config options and the thinking selector" do
       ids = Pi.config_options() |> Enum.map(& &1["id"])
