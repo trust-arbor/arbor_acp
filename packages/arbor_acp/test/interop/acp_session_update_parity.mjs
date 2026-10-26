@@ -3,8 +3,10 @@
 // interop suite can compare ArborACP's normalization with the SDK's tolerance.
 //
 // Usage: node acp_session_update_parity.mjs <fixtures.json>
-// Prints {results, rejected}: one {delivered, update?} entry per fixture and
-// the number of notifications the SDK reported as invalid.
+// Each fixture is session/update params without `sessionId`, for example
+// {"update": {...}, "_meta": {...}}. Prints {results, rejected}: one
+// {delivered, params?} entry per fixture, with the params the SDK delivered
+// minus `sessionId`, and the number of notifications it reported as invalid.
 import * as acp from "@agentclientprotocol/sdk";
 import { readFile } from "node:fs/promises";
 
@@ -28,10 +30,11 @@ const marker = new Promise((resolve) => {
 
 class RecordingClient {
   async sessionUpdate(params) {
-    if (params.sessionId === "marker") {
+    const { sessionId, ...rest } = params;
+    if (sessionId === "marker") {
       markerSeen();
     } else {
-      delivered.set(params.sessionId, params.update);
+      delivered.set(sessionId, rest);
     }
   }
 
@@ -50,19 +53,18 @@ new acp.ClientSideConnection(() => new RecordingClient(), stream);
 const writer = agentToClient.writable.getWriter();
 const encoder = new TextEncoder();
 
-async function sendUpdate(sessionId, update) {
-  const frame = { jsonrpc: "2.0", method: "session/update", params: { sessionId, update } };
+async function sendUpdate(sessionId, params) {
+  const frame = { jsonrpc: "2.0", method: "session/update", params: { ...params, sessionId } };
   await writer.write(encoder.encode(JSON.stringify(frame) + "\n"));
 }
 
-for (const [index, update] of fixtures.entries()) {
-  await sendUpdate(`fixture-${index}`, update);
+for (const [index, params] of fixtures.entries()) {
+  await sendUpdate(`fixture-${index}`, params);
 }
 
 // Notifications are handled in order, so the marker settles every fixture.
 await sendUpdate("marker", {
-  sessionUpdate: "agent_message_chunk",
-  content: { type: "text", text: "marker" },
+  update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "marker" } },
 });
 
 const timedOut = await Promise.race([
@@ -77,7 +79,7 @@ if (timedOut) {
 
 const results = fixtures.map((_update, index) => {
   const key = `fixture-${index}`;
-  return delivered.has(key) ? { delivered: true, update: delivered.get(key) } : { delivered: false };
+  return delivered.has(key) ? { delivered: true, params: delivered.get(key) } : { delivered: false };
 });
 
 process.stdout.write(JSON.stringify({ results, rejected }) + "\n");

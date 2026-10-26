@@ -11,6 +11,7 @@ defmodule Arbor.ACP.RequestValidation do
   @tool_statuses ~w(pending in_progress completed failed)
   @plan_priorities ~w(high medium low)
   @plan_statuses ~w(pending in_progress completed)
+  @salvaged_session_updates ~w(notice compaction_update compaction_summary_chunk)
 
   @spec validate_protocol_version(term(), [non_neg_integer()]) ::
           :ok | {:error, :invalid_protocol_version | {:unsupported_protocol_version, term()}}
@@ -260,15 +261,17 @@ defmodule Arbor.ACP.RequestValidation do
 
   Most update kinds are returned unchanged or rejected. For the opt-in
   `notice`, `compaction_update` and `compaction_summary_chunk` kinds the result
-  matches the ACP SDK 1.9.0 v1 deserializer: an invalid optional value is
-  removed instead of rejecting the update, and invalid summary items are
-  skipped. Missing or invalid required fields still reject the update.
+  matches the ACP SDK 1.9.0 v1 deserializer: an invalid optional value
+  (including the notification's own `_meta`) is removed instead of rejecting
+  the update, and invalid summary items are skipped. Missing or invalid
+  required fields still reject the update.
   """
   @spec normalize_session_update(term()) :: {:ok, map()} | {:error, :invalid_params}
   def normalize_session_update(%{"sessionId" => session_id, "update" => update} = params)
       when is_map(update) do
-    with true <- valid_session_id?(session_id) and optional_meta?(params),
-         {:ok, update} <- normalize_update(update) do
+    with true <- valid_session_id?(session_id),
+         {:ok, update} <- normalize_update(update),
+         {:ok, params} <- normalize_notification_meta(params, update) do
       {:ok, Map.put(params, "update", update)}
     else
       _invalid -> {:error, :invalid_params}
@@ -276,6 +279,15 @@ defmodule Arbor.ACP.RequestValidation do
   end
 
   def normalize_session_update(_params), do: {:error, :invalid_params}
+
+  # The SDK salvages an invalid notification `_meta` for every kind; only the
+  # opt-in kinds follow it here, the others keep their existing strictness.
+  defp normalize_notification_meta(params, %{"sessionUpdate" => type})
+       when type in @salvaged_session_updates,
+       do: {:ok, drop_invalid_meta(params)}
+
+  defp normalize_notification_meta(params, _update),
+    do: if(optional_meta?(params), do: {:ok, params}, else: :error)
 
   @spec absolute_path?(term()) :: boolean()
   def absolute_path?(path) when is_binary(path) and path != "",
@@ -545,9 +557,8 @@ defmodule Arbor.ACP.RequestValidation do
     end
   end
 
-  defp normalize_update(%{"sessionUpdate" => type})
-       when type in ["notice", "compaction_update", "compaction_summary_chunk"],
-       do: :error
+  defp normalize_update(%{"sessionUpdate" => type}) when type in @salvaged_session_updates,
+    do: :error
 
   defp normalize_update(update),
     do: if(valid_session_update?(update), do: {:ok, update}, else: :error)
@@ -576,7 +587,8 @@ defmodule Arbor.ACP.RequestValidation do
      |> drop_invalid("description", &is_binary/1)
      |> drop_invalid("mimeType", &is_binary/1)
      |> drop_invalid("title", &is_binary/1)
-     |> drop_invalid("size", &is_integer/1)
+     # The schema says int64, but the SDK accepts and delivers any number.
+     |> drop_invalid("size", &is_number/1)
      |> salvage_block_common()}
   end
 
@@ -584,17 +596,18 @@ defmodule Arbor.ACP.RequestValidation do
          %{"type" => "resource", "resource" => %{"uri" => uri} = resource} = block
        )
        when is_binary(uri) do
-    if is_binary(resource["text"]) or is_binary(resource["blob"]) do
-      resource =
-        resource
-        |> drop_invalid("text", &is_binary/1)
-        |> drop_invalid("blob", &is_binary/1)
-        |> drop_invalid("mimeType", &is_binary/1)
-        |> drop_invalid_meta()
+    # The SDK tries its text-resource branch first and its blob branch second,
+    # and each branch drops the other's content field.
+    resource =
+      cond do
+        is_binary(resource["text"]) -> {:ok, Map.delete(resource, "blob")}
+        is_binary(resource["blob"]) -> {:ok, Map.delete(resource, "text")}
+        true -> :error
+      end
 
+    with {:ok, resource} <- resource do
+      resource = resource |> drop_invalid("mimeType", &is_binary/1) |> drop_invalid_meta()
       {:ok, block |> Map.put("resource", resource) |> salvage_block_common()}
-    else
-      :error
     end
   end
 

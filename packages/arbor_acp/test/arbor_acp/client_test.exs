@@ -1992,12 +1992,25 @@ defmodule Arbor.ACP.ClientTest do
         Map.merge(@notice, %{"description" => 1, "_meta" => "x"})
       ]
 
+      # An invalid notification-level _meta is dropped, not the notice.
+      outer_meta_notice = Map.put(@notice, "title", "Outer meta")
+
+      send(
+        client,
+        {:transport_message,
+         Jason.encode!(%{
+           "jsonrpc" => "2.0",
+           "method" => "session/update",
+           "params" => %{"sessionId" => session_id, "update" => outer_meta_notice, "_meta" => 7}
+         })}
+      )
+
       send_updates_then_marker(client, session_id, updates)
 
       expected_compaction = Map.put(@compaction_update, "summary", [kept])
       expected_notice = Map.delete(@notice, "description")
 
-      for expected <- [expected_compaction, expected_notice] do
+      for expected <- [outer_meta_notice, expected_compaction, expected_notice] do
         assert_received {:acp_session_update, ^session_id, ^expected}
         assert_received {:handler_session_update, ^session_id, ^expected}
       end

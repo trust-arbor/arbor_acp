@@ -396,8 +396,9 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
     # Each fixture goes through the official SDK's v1 ClientSideConnection and
     # through RequestValidation.normalize_session_update/1. Both must make the
     # same accept/reject decision and, when they accept, deliver the same
-    # update. Fixtures avoid unknown keys, which the SDK strips and ArborACP
-    # preserves.
+    # params. Fixtures avoid unknown keys, which the SDK strips and ArborACP
+    # preserves. @parity_fixtures are updates; @parity_notification_fixtures
+    # are whole params, to cover the notification's own `_meta`.
     @text %{"type" => "text", "text" => "Kept the failing test names"}
     @parity_fixtures [
       # notice
@@ -551,7 +552,24 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
           %{
             "type" => "resource",
             "resource" => %{"uri" => "file:///b", "text" => 1, "blob" => "AA==", "mimeType" => 1}
-          }
+          },
+          # Both contents valid: the SDK's text-resource branch wins and drops `blob`.
+          %{
+            "type" => "resource",
+            "resource" => %{
+              "uri" => "file:///tb",
+              "text" => "body",
+              "blob" => "AA==",
+              "mimeType" => "text/plain"
+            }
+          },
+          %{
+            "type" => "resource",
+            "resource" => %{"uri" => "file:///tb", "text" => "t", "blob" => 5}
+          },
+          # The schema says int64, but the SDK delivers any number.
+          %{"type" => "resource_link", "name" => "half", "uri" => "file:///h", "size" => 1.5},
+          %{"type" => "resource_link", "name" => "negative", "uri" => "file:///n", "size" => -3}
         ]
       },
       %{
@@ -592,6 +610,24 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
         "content" => %{"type" => "text", "text" => "Kept", "annotations" => 1, "_meta" => "x"},
         "_meta" => 1
       },
+      %{
+        "sessionUpdate" => "compaction_summary_chunk",
+        "compactionId" => "c-1",
+        "content" => %{
+          "type" => "resource",
+          "resource" => %{"uri" => "file:///tb", "text" => "body", "blob" => "AA=="}
+        }
+      },
+      %{
+        "sessionUpdate" => "compaction_summary_chunk",
+        "compactionId" => "c-1",
+        "content" => %{
+          "type" => "resource_link",
+          "name" => "q",
+          "uri" => "file:///q",
+          "size" => 2.25
+        }
+      },
       %{"sessionUpdate" => "compaction_summary_chunk", "content" => @text},
       %{"sessionUpdate" => "compaction_summary_chunk", "compactionId" => "c-1"},
       %{"sessionUpdate" => "compaction_summary_chunk", "compactionId" => "c-1", "content" => nil},
@@ -613,13 +649,41 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
       %{"sessionUpdate" => "compaction_summary_chunk", "compactionId" => 7, "content" => @text}
     ]
 
+    @parity_notice %{"sessionUpdate" => "notice", "severity" => "info", "title" => "Indexed"}
+    @parity_notification_fixtures [
+      %{"update" => @parity_notice, "_meta" => 7},
+      %{"update" => @parity_notice, "_meta" => [1]},
+      %{"update" => @parity_notice, "_meta" => %{"trace" => "t"}},
+      %{
+        "update" => %{
+          "sessionUpdate" => "compaction_update",
+          "compactionId" => "c-1",
+          "status" => "completed",
+          "_meta" => []
+        },
+        "_meta" => "x"
+      },
+      %{
+        "update" => %{
+          "sessionUpdate" => "compaction_summary_chunk",
+          "compactionId" => "c-1",
+          "content" => @text
+        },
+        "_meta" => nil
+      },
+      %{"update" => Map.delete(@parity_notice, "title"), "_meta" => 7}
+    ]
+
     @tag :tmp_dir
     test "ArborACP accepts, rejects and salvages exactly as the SDK 1.9.0 client does",
          %{tmp_dir: tmp_dir} = context do
       skip_without_node(context)
 
+      fixtures =
+        Enum.map(@parity_fixtures, &%{"update" => &1}) ++ @parity_notification_fixtures
+
       fixtures_path = Path.join(tmp_dir, "session_update_fixtures.json")
-      File.write!(fixtures_path, Jason.encode!(@parity_fixtures))
+      File.write!(fixtures_path, Jason.encode!(fixtures))
 
       {output, exit_code} =
         System.cmd(context.node_path, [@session_update_parity_script, fixtures_path],
@@ -628,21 +692,21 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
 
       assert exit_code == 0, "SDK parity script failed: #{output}"
       %{"results" => sdk_results, "rejected" => rejected} = Jason.decode!(output)
-      assert length(sdk_results) == length(@parity_fixtures)
+      assert length(sdk_results) == length(fixtures)
       # Every undelivered fixture was rejected by the SDK's deserializer.
       assert rejected == Enum.count(sdk_results, &(not &1["delivered"]))
 
       mismatches =
-        @parity_fixtures
+        fixtures
         |> Enum.zip(sdk_results)
         |> Enum.reject(fn {fixture, sdk} ->
           arbor =
-            case RequestValidation.normalize_session_update(%{
-                   "sessionId" => "parity",
-                   "update" => fixture
-                 }) do
-              {:ok, %{"update" => update}} ->
-                %{"delivered" => true, "update" => update |> Jason.encode!() |> Jason.decode!()}
+            case RequestValidation.normalize_session_update(
+                   Map.put(fixture, "sessionId", "parity")
+                 ) do
+              {:ok, params} ->
+                params = params |> Map.delete("sessionId") |> Jason.encode!() |> Jason.decode!()
+                %{"delivered" => true, "params" => params}
 
               {:error, :invalid_params} ->
                 %{"delivered" => false}
@@ -655,7 +719,7 @@ defmodule Arbor.ACP.Integration.ACPInteropTest do
              "ArborACP and the SDK disagree: #{inspect(mismatches, pretty: true)}"
 
       delivered = Enum.count(sdk_results, & &1["delivered"])
-      assert delivered > 0 and delivered < length(@parity_fixtures)
+      assert delivered > 0 and delivered < length(fixtures)
     end
   end
 

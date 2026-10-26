@@ -343,6 +343,44 @@ defmodule Arbor.ACP.RequestValidationTest do
              "type" => "resource",
              "resource" => %{"uri" => "file:///r", "blob" => "AA=="}
            }
+         }},
+        # With both contents valid the SDK's text-resource branch wins.
+        {%{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => "c-1",
+           "content" => %{
+             "type" => "resource",
+             "resource" => %{"uri" => "file:///r", "text" => "body", "blob" => "AA=="}
+           }
+         },
+         %{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => "c-1",
+           "content" => %{
+             "type" => "resource",
+             "resource" => %{"uri" => "file:///r", "text" => "body"}
+           }
+         }},
+        # The SDK delivers any numeric size, although the schema says int64.
+        {%{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => "c-1",
+           "content" => %{
+             "type" => "resource_link",
+             "name" => "n",
+             "uri" => "file:///n",
+             "size" => 1.5
+           }
+         },
+         %{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => "c-1",
+           "content" => %{
+             "type" => "resource_link",
+             "name" => "n",
+             "uri" => "file:///n",
+             "size" => 1.5
+           }
          }}
       ]
 
@@ -359,6 +397,42 @@ defmodule Arbor.ACP.RequestValidationTest do
                    "update" => update
                  })
       end
+    end
+
+    test "remove an invalid notification _meta for these kinds only" do
+      notice = %{"sessionUpdate" => "notice", "severity" => "info", "title" => "T"}
+
+      for meta <- [7, [1], "x"] do
+        assert {:ok, params} =
+                 RequestValidation.normalize_session_update(%{
+                   "sessionId" => @session_id,
+                   "update" => notice,
+                   "_meta" => meta
+                 })
+
+        assert params == %{"sessionId" => @session_id, "update" => notice}
+      end
+
+      kept = %{"sessionId" => @session_id, "update" => notice, "_meta" => %{"trace" => "t"}}
+      assert {:ok, ^kept} = RequestValidation.normalize_session_update(kept)
+
+      assert {:error, :invalid_params} =
+               RequestValidation.normalize_session_update(%{
+                 "sessionId" => @session_id,
+                 "update" => Map.delete(notice, "title"),
+                 "_meta" => 7
+               })
+
+      # Already-supported kinds keep rejecting an invalid notification _meta.
+      assert {:error, :invalid_params} =
+               RequestValidation.normalize_session_update(%{
+                 "sessionId" => @session_id,
+                 "update" => %{
+                   "sessionUpdate" => "agent_message_chunk",
+                   "content" => %{"type" => "text", "text" => "hi"}
+                 },
+                 "_meta" => 7
+               })
     end
 
     test "leave the other update kinds strict and unchanged" do
