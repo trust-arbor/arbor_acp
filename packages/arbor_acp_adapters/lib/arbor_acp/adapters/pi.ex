@@ -257,7 +257,7 @@ defmodule Arbor.ACP.Adapters.Pi do
 
     state =
       if is_nil(session_id) or session_id == state.session_id do
-        close_active_session(state)
+        close_session(state)
       else
         state
       end
@@ -270,7 +270,7 @@ defmodule Arbor.ACP.Adapters.Pi do
 
     state =
       if is_nil(session_id) or session_id == state.session_id do
-        close_active_session(state)
+        close_session(state)
       else
         state
       end
@@ -474,6 +474,7 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp prepare_session_process(cwd, _session_file, %{managed?: false} = state) do
     settings = Settings.load(cwd, state.opts)
+    state = abandon_session_requests(state)
 
     {:ok,
      %{
@@ -519,6 +520,42 @@ defmodule Arbor.ACP.Adapters.Pi do
         {:error, inspect(reason), state}
     end
   end
+
+  # A managed close ends the Pi process, so nothing it was asked can still
+  # answer. An unmanaged consumer's Pi process outlives the session: its reply
+  # to an outstanding model switch or refresh still arrives, and is consumed
+  # without effect.
+  defp close_session(%{managed?: false} = state) do
+    abandoned = abandon_session_requests(state)
+    state = close_active_session(abandoned)
+
+    %{
+      state
+      | pending_model_switch: abandoned.pending_model_switch,
+        pending_model_refresh: abandoned.pending_model_refresh
+    }
+  end
+
+  defp close_session(state), do: close_active_session(state)
+
+  # The session the requests below were made for is going away while Pi keeps
+  # running. A waiting model switch is dropped; an outstanding switch or
+  # refresh stays tracked, so model switches stay serialized and its replies
+  # are consumed, but they are marked stale: they no longer refresh or publish
+  # anything, because the next session's state comes from its own setup. The
+  # usage request is dropped, so its reply is untracked and ignored.
+  defp abandon_session_requests(state) do
+    %{
+      state
+      | pending_model_switch: mark_stale(state.pending_model_switch),
+        pending_model_refresh: mark_stale(state.pending_model_refresh),
+        queued_model_switch: nil,
+        pending_usage_request: nil
+    }
+  end
+
+  defp mark_stale(nil), do: nil
+  defp mark_stale(request), do: Map.put(request, :stale?, true)
 
   defp close_active_session(%{port: nil} = state) do
     demonitor_port(state)
@@ -1169,6 +1206,14 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp model_switch_in_flight?(state),
     do: state.pending_model_switch != nil or state.pending_model_refresh != nil
 
+  defp refresh_will_publish?(state) do
+    state.queued_model_switch != nil or live_request?(state.pending_model_switch) or
+      live_request?(state.pending_model_refresh)
+  end
+
+  defp live_request?(nil), do: false
+  defp live_request?(request), do: not Map.get(request, :stale?, false)
+
   defp send_model_switch(%{fields: fields, session_id: session_id}, state) do
     {id, request, state} = rpc(state, RPC.method(:set_model), fields)
 
@@ -1195,13 +1240,16 @@ defmodule Arbor.ACP.Adapters.Pi do
 
     state = %{state | pending_model_switch: nil}
 
-    case state.queued_model_switch do
-      nil ->
-        {data, state} = send_model_refresh(switch.session_id, state)
+    cond do
+      state.queued_model_switch != nil ->
+        {data, state} = send_model_switch(state.queued_model_switch, state)
         {:skip_and_write, data, state}
 
-      queued ->
-        {data, state} = send_model_switch(queued, state)
+      Map.get(switch, :stale?, false) ->
+        {:skip, state}
+
+      true ->
+        {data, state} = send_model_refresh(switch.session_id, state)
         {:skip_and_write, data, state}
     end
   end
@@ -1246,6 +1294,10 @@ defmodule Arbor.ACP.Adapters.Pi do
       state.queued_model_switch != nil ->
         {data, state} = send_model_switch(state.queued_model_switch, state)
         {:skip_and_write, data, state}
+
+      # The refresh was for a session that has since been replaced or closed.
+      Map.get(refresh, :stale?, false) ->
+        {:skip, %{state | pending_model_refresh: nil}}
 
       true ->
         finish_model_refresh(refresh, %{state | pending_model_refresh: nil})
@@ -1452,7 +1504,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     cond do
       # The refresh that follows a model switch publishes the level against
       # the new model's levels.
-      model_switch_in_flight?(state) ->
+      refresh_will_publish?(state) ->
         {:skip, state}
 
       level == previous or not is_binary(state.session_id) ->

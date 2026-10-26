@@ -1079,6 +1079,138 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert state.queued_model_switch == nil
     end
 
+    test "a model switch waiting when the session changes never reaches the next session",
+         ctx do
+      for method <- ["session/load", "session/resume", "session/new"] do
+        state = switch_ready_state(ctx.state)
+        pi = fake_pi()
+
+        assert {:messages_and_write, _, first, state} =
+                 Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+        {[level_event, switch_reply], pi} = fake_pi_answer(decode_many(first), pi)
+        assert {:skip, state} = Pi.translate_inbound(Jason.encode!(level_event), state)
+
+        assert {:skip_and_write, refresh, state} =
+                 Pi.translate_inbound(Jason.encode!(switch_reply), state)
+
+        # s1 asks for another model while the refresh is outstanding.
+        assert {:messages_and_write, _, "", state} =
+                 Pi.translate_outbound(set_model_request("anthropic/claude-opus-4"), state)
+
+        assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
+        assert state.queued_model_switch == nil, "#{method} kept s1's waiting switch"
+
+        # Pi answers the refresh it read before the session change. Nothing is
+        # sent to Pi and nothing is published for either session.
+        {replies, _pi} = fake_pi_answer(decode_many(refresh), pi)
+
+        state =
+          Enum.reduce(replies, state, fn reply, state ->
+            assert {:skip, state} = Pi.translate_inbound(Jason.encode!(reply), state),
+                   "#{method}: a reply to s1's refresh acted on the next session"
+
+            state
+          end)
+
+        assert state.pending_model_refresh == nil
+        assert state.pending_model_switch == nil
+
+        {state, messages} = finish_session_setup(setup, state, ctx)
+        assert state.session_id == "s2"
+        assert state.current_model_id == "anthropic/claude-sonnet-4"
+        assert state.available_thinking_levels == ["off", "high"]
+        refute Enum.any?(messages, &(&1["params"]["sessionId"] == "s1"))
+      end
+    end
+
+    test "a model switch outstanding when the session changes is consumed without effect", ctx do
+      for method <- ["session/load", "session/new", "session/close"] do
+        state = switch_ready_state(ctx.state)
+        pi = %{fake_pi() | hold_switches?: true}
+
+        assert {:messages_and_write, _, first, state} =
+                 Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+        {state, pi, []} = drive_fake_pi(first, state, pi)
+
+        state =
+          case Pi.translate_outbound(session_change(method, ctx), state) do
+            {:ok, setup, state} -> setup |> finish_session_setup(state, ctx) |> elem(0)
+            {:reply, %{}, state} -> state
+          end
+
+        # Pi's reply to the old switch arrives after the session changed. Pi
+        # rebinds its event stream on a switch, so only the response arrives.
+        {[_level_event, switch_reply], _pi} = fake_pi_reply(hd(pi.held), pi)
+
+        assert {:skip, state} = Pi.translate_inbound(Jason.encode!(switch_reply), state),
+               "#{method}: the old switch's reply started a refresh"
+
+        assert state.pending_model_switch == nil
+        assert state.pending_model_refresh == nil
+
+        if method != "session/close" do
+          assert state.current_model_id == "anthropic/claude-sonnet-4"
+        end
+      end
+    end
+
+    test "a switch for the next session waits for the old outstanding switch", ctx do
+      state = switch_ready_state(ctx.state)
+      pi = %{fake_pi() | hold_switches?: true}
+
+      assert {:messages_and_write, _, first, state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+      {state, pi, []} = drive_fake_pi(first, state, pi)
+
+      assert {:ok, setup, state} =
+               Pi.translate_outbound(session_change("session/load", ctx), state)
+
+      {state, _messages} = finish_session_setup(setup, state, ctx)
+
+      # Model switches stay serialized across the session change.
+      assert {:messages_and_write, _, "", state} =
+               Pi.translate_outbound(
+                 %{
+                   "method" => "session/set_model",
+                   "params" => %{"sessionId" => "s2", "modelId" => "anthropic/claude-opus-4"}
+                 },
+                 state
+               )
+
+      {[_level_event, old_reply], pi} = fake_pi_reply(hd(pi.held), %{pi | held: []})
+
+      assert {:skip_and_write, next, state} =
+               Pi.translate_inbound(Jason.encode!(old_reply), state)
+
+      assert [%{"type" => "set_model", "modelId" => "claude-opus-4"}] = decode_many(next)
+
+      {state, _pi, messages} = drive_fake_pi(next, state, %{pi | hold_switches?: false})
+      assert state.current_model_id == "anthropic/claude-opus-4"
+      assert [mode_update, config_update] = messages
+      assert mode_update["params"]["sessionId"] == "s2"
+      assert config_update["params"]["sessionId"] == "s2"
+    end
+
+    test "a usage request outstanding when the session changes is not published", ctx do
+      state = %{switch_ready_state(ctx.state) | pending_usage_request: {"pi-90", "s1"}}
+
+      assert {:ok, _setup, state} =
+               Pi.translate_outbound(session_change("session/load", ctx), state)
+
+      assert {:skip, state} =
+               Pi.translate_inbound(
+                 response_line("pi-90", "get_session_stats", %{
+                   "contextUsage" => %{"tokens" => 120, "contextWindow" => 200_000}
+                 }),
+                 state
+               )
+
+      assert state.pending_usage_request == nil
+    end
+
     test "thinking_level_changed events publish the level Pi applied", %{state: state} do
       state = switch_ready_state(state)
 
@@ -1957,6 +2089,64 @@ defmodule Arbor.ACP.Adapters.PiTest do
           %{"modelId" => "openai/gpt-5.1", "name" => "openai/GPT-5.1"}
         ]
     }
+  end
+
+  # The request that moves the adapter from s1 to s2 (or closes s1).
+  defp session_change("session/new", ctx),
+    do: %{"method" => "session/new", "id" => 70, "params" => %{"cwd" => ctx.tmp_dir}}
+
+  defp session_change("session/close", _ctx),
+    do: %{"method" => "session/close", "id" => 70, "params" => %{"sessionId" => "s1"}}
+
+  defp session_change(method, ctx) do
+    file = Path.join(ctx.session_dir, "s2.jsonl")
+    File.write!(file, "")
+
+    File.write!(
+      ctx.session_map_path,
+      Jason.encode!(%{
+        "version" => 1,
+        "sessions" => %{
+          "s2" => %{"sessionId" => "s2", "cwd" => ctx.tmp_dir, "sessionFile" => file}
+        }
+      })
+    )
+
+    %{"method" => method, "id" => 70, "params" => %{"sessionId" => "s2", "cwd" => ctx.tmp_dir}}
+  end
+
+  # Answers a session setup group for s2.
+  defp finish_session_setup(setup, state, ctx) do
+    data = %{
+      "new_session" => %{},
+      "switch_session" => %{},
+      "get_messages" => %{"messages" => []},
+      "get_state" => %{
+        "sessionId" => "s2",
+        "sessionFile" => Path.join(ctx.session_dir, "s2.jsonl"),
+        "cwd" => ctx.tmp_dir,
+        "thinkingLevel" => "off",
+        "model" => %{"provider" => "anthropic", "id" => "claude-sonnet-4"}
+      },
+      "get_available_models" => %{
+        "models" => [
+          %{"provider" => "anthropic", "id" => "claude-sonnet-4"},
+          %{"provider" => "anthropic", "id" => "claude-opus-4"},
+          %{"provider" => "openai", "id" => "gpt-5.1"}
+        ]
+      },
+      "get_available_thinking_levels" => %{"levels" => ["off", "high"]},
+      "get_commands" => %{"commands" => []}
+    }
+
+    Enum.reduce(decode_many(setup), {state, []}, fn request, {state, messages} ->
+      line = response_line(request["id"], request["type"], Map.fetch!(data, request["type"]))
+
+      case Pi.translate_inbound(line, state) do
+        {:skip, state} -> {state, messages}
+        {:messages, new, state} -> {state, messages ++ new}
+      end
+    end)
   end
 
   defp set_model_request(model_id) do
