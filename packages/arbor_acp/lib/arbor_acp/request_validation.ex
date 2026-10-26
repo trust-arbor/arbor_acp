@@ -483,6 +483,37 @@ defmodule Arbor.ACP.RequestValidation do
          uint?(used, @uint64_max) and uint?(size, @uint64_max) and
            optional_cost?(update) and optional_meta?(update)
 
+  # `notice`, `compaction_update` and `compaction_summary_chunk` follow the ACP
+  # SDK 1.9.0 v1 schema. Severity and status are open string unions (known
+  # values plus custom or future strings); only the notice title has a minimum
+  # length. The client also requires the matching opt-in session capability.
+  defp valid_session_update?(%{"sessionUpdate" => "notice", "severity" => severity} = update),
+    do:
+      is_binary(severity) and non_empty_string?(update["title"]) and
+        optional_nullable_string?(update, "description") and optional_meta?(update)
+
+  defp valid_session_update?(
+         %{
+           "sessionUpdate" => "compaction_update",
+           "compactionId" => compaction_id,
+           "status" => status
+         } = update
+       ),
+       do:
+         is_binary(compaction_id) and is_binary(status) and
+           optional_nullable_list?(update, "summary", &valid_content_block?/1) and
+           optional_nullable_string?(update, "error") and optional_meta?(update)
+
+  defp valid_session_update?(
+         %{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => compaction_id
+         } = update
+       ),
+       do:
+         is_binary(compaction_id) and valid_content_block?(update["content"]) and
+           optional_meta?(update)
+
   defp valid_session_update?(_update), do: false
 
   defp valid_tool_call_content?(%{"type" => "content", "content" => content} = value),

@@ -929,11 +929,20 @@ defmodule Arbor.ACP.Client do
   defp handle_parsed_message({:notification, "session/update", params}, state, message) do
     case RequestValidation.validate_session_update(params) do
       :ok ->
-        if authorized_session_id?(params["sessionId"], state) do
-          handle_session_update(params, state, message)
-        else
-          Logger.warning("ACP client ignored an update for an unknown session")
-          state
+        cond do
+          not authorized_session_id?(params["sessionId"], state) ->
+            Logger.warning("ACP client ignored an update for an unknown session")
+            state
+
+          not advertised_session_update?(params["update"], state) ->
+            Logger.warning("ACP client ignored a session update it did not advertise",
+              session_update: params["update"]["sessionUpdate"]
+            )
+
+            state
+
+          true ->
+            handle_session_update(params, state, message)
         end
 
       {:error, :invalid_params} ->
@@ -1631,6 +1640,22 @@ defmodule Arbor.ACP.Client do
         sessions: %{}
     }
   end
+
+  # ACP v1: agents MUST only send these updates after the client advertised the
+  # matching `clientCapabilities.session` entry; `{}` advertises it, while an
+  # omitted or null entry does not. Dropping them keeps handlers that never
+  # opted in from receiving update kinds they did not ask for.
+  defp advertised_session_update?(%{"sessionUpdate" => "notice"}, state),
+    do: advertised_client_session_capability?(state, "notices")
+
+  defp advertised_session_update?(%{"sessionUpdate" => type}, state)
+       when type in ["compaction_update", "compaction_summary_chunk"],
+       do: advertised_client_session_capability?(state, "compaction")
+
+  defp advertised_session_update?(_update, _state), do: true
+
+  defp advertised_client_session_capability?(state, key),
+    do: is_map(state.client_capabilities |> Maps.get("session") |> Maps.get(key))
 
   defp handle_session_update(params, state, message) do
     session_id = params["sessionId"]

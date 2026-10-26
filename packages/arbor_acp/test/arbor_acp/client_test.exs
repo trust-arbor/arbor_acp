@@ -461,6 +461,23 @@ defmodule Arbor.ACP.ClientTest do
     end
   end
 
+  defmodule ForwardingUpdateHandler do
+    @behaviour Arbor.ACP.Client.Handler
+
+    @impl true
+    def init(opts), do: {:ok, %{parent: Keyword.fetch!(opts, :parent)}}
+
+    @impl true
+    def handle_session_update(session_id, update, state) do
+      send(state.parent, {:handler_session_update, session_id, update})
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_permission_request(_session_id, _tool_call, _options, state),
+      do: {:ok, %{"outcome" => "cancelled"}, state}
+  end
+
   defmodule BlockingPermissionHandler do
     @behaviour Arbor.ACP.Client.Handler
 
@@ -577,6 +594,14 @@ defmodule Arbor.ACP.ClientTest do
       )
 
     {client, agent_pid}
+  end
+
+  defp raw_session_update_frame(session_id, update) do
+    Jason.encode!(%{
+      "jsonrpc" => "2.0",
+      "method" => "session/update",
+      "params" => %{"sessionId" => session_id, "update" => update}
+    })
   end
 
   defp session_update_frame(session_id, text) do
@@ -1839,6 +1864,143 @@ defmodule Arbor.ACP.ClientTest do
 
       assert {:message_queue_len, queued} = Process.info(listener, :message_queue_len)
       assert queued <= 2
+    end
+  end
+
+  describe "opt-in notice and compaction updates" do
+    @notice %{
+      "sessionUpdate" => "notice",
+      "severity" => "warning",
+      "title" => "Rate limited",
+      "description" => "Retrying in 5 seconds"
+    }
+    @compaction_update %{
+      "sessionUpdate" => "compaction_update",
+      "compactionId" => "compact-1",
+      "status" => "completed",
+      "summary" => [%{"type" => "text", "text" => "Kept the failing test names"}]
+    }
+    @compaction_chunk %{
+      "sessionUpdate" => "compaction_summary_chunk",
+      "compactionId" => "compact-1",
+      "content" => %{"type" => "text", "text" => "Kept"}
+    }
+    @marker %{
+      "sessionUpdate" => "agent_message_chunk",
+      "content" => %{"type" => "text", "text" => "marker"}
+    }
+
+    defp start_opt_in_client(capabilities) do
+      {client, _agent} =
+        start_client([],
+          capabilities: capabilities,
+          event_listener: self(),
+          handler: ForwardingUpdateHandler,
+          handler_opts: [parent: self()]
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      {client, session_id}
+    end
+
+    # Updates are dispatched in arrival order, so once the trailing marker has
+    # reached both consumers every earlier update has either arrived or been
+    # dropped.
+    defp send_updates_then_marker(client, session_id, updates) do
+      for update <- updates do
+        send(client, {:transport_message, raw_session_update_frame(session_id, update)})
+      end
+
+      send(client, {:transport_message, raw_session_update_frame(session_id, @marker)})
+      assert_receive {:acp_session_update, ^session_id, @marker}, 1_000
+      assert_receive {:handler_session_update, ^session_id, @marker}, 1_000
+    end
+
+    test "reach the listener and handler when the client advertised both capabilities" do
+      {client, session_id} =
+        start_opt_in_client(%{"session" => %{"notices" => %{}, "compaction" => %{}}})
+
+      updates = [@notice, @compaction_update, @compaction_chunk]
+      send_updates_then_marker(client, session_id, updates)
+
+      for update <- updates do
+        assert_received {:acp_session_update, ^session_id, ^update}
+        assert_received {:handler_session_update, ^session_id, ^update}
+      end
+    end
+
+    test "are dropped when the client did not advertise the matching capability" do
+      {client, session_id} = start_opt_in_client(%{})
+
+      send_updates_then_marker(client, session_id, [
+        @notice,
+        @compaction_update,
+        @compaction_chunk
+      ])
+
+      refute_received {:acp_session_update, ^session_id, %{"sessionUpdate" => "notice"}}
+      refute_received {:handler_session_update, ^session_id, %{"sessionUpdate" => "notice"}}
+      refute_received {:acp_session_update, ^session_id, %{"sessionUpdate" => "compaction_" <> _}}
+
+      refute_received {:handler_session_update, ^session_id,
+                       %{"sessionUpdate" => "compaction_" <> _}}
+    end
+
+    test "deliver notices without compaction, which `true` does not advertise" do
+      {client, session_id} =
+        start_opt_in_client(%{"session" => %{"notices" => %{}, "compaction" => true}})
+
+      send_updates_then_marker(client, session_id, [
+        @notice,
+        @compaction_update,
+        @compaction_chunk
+      ])
+
+      assert_received {:acp_session_update, ^session_id, @notice}
+      assert_received {:handler_session_update, ^session_id, @notice}
+      refute_received {:acp_session_update, ^session_id, %{"sessionUpdate" => "compaction_" <> _}}
+
+      refute_received {:handler_session_update, ^session_id,
+                       %{"sessionUpdate" => "compaction_" <> _}}
+    end
+
+    test "deliver compaction without notices when only compaction is advertised" do
+      {client, session_id} =
+        start_opt_in_client(%{"session" => %{"notices" => nil, "compaction" => %{}}})
+
+      send_updates_then_marker(client, session_id, [
+        @notice,
+        @compaction_update,
+        @compaction_chunk
+      ])
+
+      refute_received {:acp_session_update, ^session_id, %{"sessionUpdate" => "notice"}}
+      refute_received {:handler_session_update, ^session_id, %{"sessionUpdate" => "notice"}}
+      assert_received {:acp_session_update, ^session_id, @compaction_update}
+      assert_received {:acp_session_update, ^session_id, @compaction_chunk}
+      assert_received {:handler_session_update, ^session_id, @compaction_chunk}
+    end
+
+    test "are rejected when malformed even though the client opted in" do
+      {client, session_id} =
+        start_opt_in_client(%{"session" => %{"notices" => %{}, "compaction" => %{}}})
+
+      malformed = [
+        Map.put(@notice, "title", ""),
+        Map.delete(@notice, "severity"),
+        Map.put(@compaction_update, "summary", [%{"type" => "text"}]),
+        Map.delete(@compaction_update, "status"),
+        Map.put(@compaction_chunk, "content", "Kept")
+      ]
+
+      send_updates_then_marker(client, session_id, malformed)
+
+      refute_received {:acp_session_update, ^session_id, %{"sessionUpdate" => "notice"}}
+      refute_received {:handler_session_update, ^session_id, %{"sessionUpdate" => "notice"}}
+      refute_received {:acp_session_update, ^session_id, %{"sessionUpdate" => "compaction_" <> _}}
+
+      refute_received {:handler_session_update, ^session_id,
+                       %{"sessionUpdate" => "compaction_" <> _}}
     end
   end
 
