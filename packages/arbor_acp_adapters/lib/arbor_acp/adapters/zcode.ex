@@ -44,9 +44,11 @@ defmodule Arbor.ACP.Adapters.ZCode do
     pending_client_requests: %{},
     sessions: %{},
     prompt_queue: PromptQueue.new(),
-    # The first native id the latest outbound translation used; see
+    # The first native id the latest outbound translation used, and the
+    # native request a client response in it answered; see
     # outbound_write_failed/3.
     last_write_first_id: 1,
+    last_answered: nil,
     opts: []
   ]
 
@@ -151,15 +153,33 @@ defmodule Arbor.ACP.Adapters.ZCode do
 
   @impl true
   def translate_outbound(msg, state) do
-    msg |> route_outbound(state) |> remember_write(state.next_id)
+    msg |> route_outbound(state) |> remember_write(state)
   end
 
-  defp remember_write(result, first_id) do
+  # Only a translation that writes can fail to; the others leave the record
+  # of the last write alone.
+  defp writes?({:ok, data, _state}), do: data not in [:skip, :pending]
+  defp writes?({:pending_and_write, _data, _state}), do: true
+  defp writes?({:reply_and_write, _result, _data, _state}), do: true
+  defp writes?({:messages_and_write, _messages, _data, _state}), do: true
+  defp writes?({:messages_and_reply_and_write, _messages, _result, _data, _state}), do: true
+  defp writes?(_result), do: false
+
+  defp remember_write(result, before) do
     last = tuple_size(result) - 1
 
-    case elem(result, last) do
-      %__MODULE__{} = state -> put_elem(result, last, %{state | last_write_first_id: first_id})
-      _reason -> result
+    case {writes?(result), elem(result, last)} do
+      {true, %__MODULE__{} = state} ->
+        answered =
+          Enum.find_value(before.pending_client_requests, fn {acp_id, entry} ->
+            if not Map.has_key?(state.pending_client_requests, acp_id), do: entry.zcode_id
+          end)
+
+        state = %{state | last_write_first_id: before.next_id, last_answered: answered}
+        put_elem(result, last, state)
+
+      _other ->
+        result
     end
   end
 
@@ -370,7 +390,24 @@ defmodule Arbor.ACP.Adapters.ZCode do
     first = state.last_write_first_id
     written = first..(state.next_id - 1)//1
     pending = Map.reject(state.pending_requests, fn {id, _entry} -> id in written end)
-    retire_unsent_prompt(message, %{state | pending_requests: pending})
+    state = retire_unsent_prompt(message, %{state | pending_requests: pending})
+
+    # ZCode waits for the answers to its permission requests, so when a
+    # client's answer cannot be written a small denial on the same id takes
+    # its place.
+    case state.last_answered do
+      nil ->
+        state
+
+      zcode_id ->
+        denial = %{
+          "decision" => "deny",
+          "reason" => "The ACP client's response could not be forwarded"
+        }
+
+        response = zcode_id |> Protocol.encode_response(denial) |> Protocol.line()
+        {:write, response, %{state | last_answered: nil}}
+    end
   end
 
   defp retire_unsent_prompt(%{"id" => acp_id, "method" => "session/prompt"} = message, state) do

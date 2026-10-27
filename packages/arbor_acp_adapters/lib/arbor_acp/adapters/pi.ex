@@ -78,6 +78,10 @@ defmodule Arbor.ACP.Adapters.Pi do
     current_tool_calls: %{},
     edit_snapshots: %{},
     pending_extension_ui: %{},
+    # The extension request the latest client response (or its cancel)
+    # answered, so a write that fails can be replaced; see
+    # outbound_write_failed/3.
+    answered_ui: nil,
     last_usage: %{},
     # Pi requests that read or change the session run as serialized
     # operations, one in flight and the rest queued (see "Serialized Pi
@@ -385,9 +389,21 @@ defmodule Arbor.ACP.Adapters.Pi do
         reason,
         state
       ),
-      do: retire_switch_back(cancelled, reason, state)
+      do: cancelled |> retire_switch_back(reason, state) |> replace_ui_answer(cancelled)
+
+  # A client's answer to a Pi extension dialog: Pi is still waiting for it.
+  def outbound_write_failed(%{"id" => acp_id} = message, _reason, state)
+      when not is_map_key(message, "method"),
+      do: replace_ui_answer(state, acp_id)
 
   def outbound_write_failed(_message, _reason, state), do: state
+
+  # A cancel, which is small, takes the place of the answer that could not be
+  # written; if it cannot be written either, the bridge closes Pi.
+  defp replace_ui_answer(%{answered_ui: %{acp_id: acp_id, pi_id: pi_id}} = state, acp_id),
+    do: {:write, RPC.line(cancelled_extension_ui_response(pi_id)), %{state | answered_ui: nil}}
+
+  defp replace_ui_answer(state, _acp_id), do: state
 
   defp retire_prompt(%{pending_prompt: %{acp_id: acp_id}} = state, acp_id),
     do: %{state | pending_prompt: nil, text_acc: []}
@@ -766,16 +782,6 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp deliver_ack(data, state) do
     case write_managed(data, state) do
       :ok -> {:reply, %{}, state}
-      {:error, reason} -> {:error, inspect(reason), state}
-    end
-  end
-
-  defp deliver_messages_and_write(messages, data, %{managed?: false} = state),
-    do: {:messages_and_write, messages, data, state}
-
-  defp deliver_messages_and_write(messages, data, state) do
-    case write_managed(data, state) do
-      :ok -> {:messages, messages, state}
       {:error, reason} -> {:error, inspect(reason), state}
     end
   end
@@ -2354,9 +2360,10 @@ defmodule Arbor.ACP.Adapters.Pi do
     )
   end
 
+  # Inbound, so a managed adapter's own write of the cancel, and its failure,
+  # go through the managed follow-up path.
   defp cancel_extension_ui(pi_id, messages, state) do
-    data = RPC.line(cancelled_extension_ui_response(pi_id))
-    deliver_messages_and_write(messages, data, state)
+    {:messages_and_write, messages, RPC.line(cancelled_extension_ui_response(pi_id)), state}
   end
 
   defp resolve_extension_ui_response(acp_id, result, state) do
@@ -2366,7 +2373,25 @@ defmodule Arbor.ACP.Adapters.Pi do
 
       {request, pending} ->
         response = extension_ui_response(request, result)
-        deliver_pending(RPC.line(response), %{state | pending_extension_ui: pending})
+        answered = %{acp_id: acp_id, pi_id: request.pi_id}
+        state = %{state | pending_extension_ui: pending, answered_ui: answered}
+        deliver_ui_answer(RPC.line(response), request.pi_id, state)
+    end
+  end
+
+  defp deliver_ui_answer(data, _pi_id, %{managed?: false} = state), do: {:ok, data, state}
+
+  # Pi waits for the dialog's answer with no timeout, so when it cannot be
+  # written a cancel takes its place; when that fails too, Pi's input is
+  # broken and the process is treated as gone.
+  defp deliver_ui_answer(data, pi_id, state) do
+    with {:error, reason} <- write_managed(data, state) do
+      case write_managed(RPC.line(cancelled_extension_ui_response(pi_id)), state) do
+        :ok -> {:error, inspect(reason), state}
+        {:error, _reason} -> fail_managed_input(state, {:write_failed, reason})
+      end
+    else
+      :ok -> {:ok, :pending, state}
     end
   end
 

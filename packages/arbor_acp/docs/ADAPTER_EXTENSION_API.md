@@ -25,6 +25,12 @@ outcome; the callback does not undo native side effects or emit another
 response. Responses the translation emitted for other requests are still
 delivered when its write fails; its notifications are not.
 
+When the failed write was a client's response to an agent request, the agent
+is still waiting for it. The callback may return `{:write, data, state}`, and
+the bridge writes that small replacement, such as an error answer on the same
+native id, in its place. If the replacement cannot be written either, the
+native connection is broken and the bridge closes it.
+
 For `session/new`, `session/load` and `session/resume`, a translation without a
 result (`{:ok, :pending, _}`, a write, `:messages`, `:messages_and_write`,
 `:pending_and_write` or `:one_shot`) leaves the response to the adapter;

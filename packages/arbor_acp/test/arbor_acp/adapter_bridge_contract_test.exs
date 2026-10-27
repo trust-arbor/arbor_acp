@@ -63,7 +63,12 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
     @impl true
     def outbound_write_failed(message, reason, state) do
       send(state.test_pid, {:write_failed, message["id"], reason})
-      state
+
+      # A client response the agent waits for gets a replacement answer.
+      case get_in(message, ["result", "replacement"]) do
+        nil -> state
+        replacement -> {:write, replacement, state}
+      end
     end
   end
 
@@ -139,6 +144,9 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
     end
   end
 
+  # `cat` echoing a replacement answer back.
+  def inbound("rep", state), do: {:messages, [notification("replaced")], state}
+
   def inbound(_line, state), do: {:skip, state}
 
   @doc false
@@ -209,6 +217,38 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
       assert_received {:write_failed, 7, :write_too_large}
       close(bridge)
     end
+  end
+
+  test "a replacement for a client response that cannot be written is written instead" do
+    bridge = start_bridge(false)
+    # Within the 4-byte limit the rejected answer exceeded.
+    response = %{"id" => 7, "result" => %{"shape" => "ok_write", "replacement" => "rep\n"}}
+
+    assert {:error, :write_too_large} =
+             AdapterBridge.send_message(
+               bridge,
+               Jason.encode!(Map.put(response, "jsonrpc", "2.0"))
+             )
+
+    # `cat` echoes what reached the native process.
+    assert {:ok, raw} = AdapterBridge.receive_message(bridge, 2_000)
+    assert Jason.decode!(raw)["params"]["for"] == "replaced"
+    assert :sys.get_state(bridge).status == :ready
+    close(bridge)
+  end
+
+  test "a native connection that cannot take the replacement either is closed" do
+    bridge = start_bridge(false)
+    response = %{"id" => 7, "result" => %{"shape" => "ok_write", "replacement" => @write}}
+
+    assert {:error, :write_too_large} =
+             AdapterBridge.send_message(
+               bridge,
+               Jason.encode!(Map.put(response, "jsonrpc", "2.0"))
+             )
+
+    assert :sys.get_state(bridge).status == :closed
+    assert {:error, :closed} = AdapterBridge.send_message(bridge, Jason.encode!(response))
   end
 
   for shape <- ~w(messages messages_and_write skip_and_write partial skip) do

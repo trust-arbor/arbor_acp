@@ -141,8 +141,15 @@ defmodule Arbor.ACP.Adapter do
 
   Required when `:pending_and_write` retains a pending correlation, or when
   any other form that writes leaves the request to be answered later.
+
+  When the failed write was a client's response to an agent request, the agent
+  is still waiting for it. Return `{:write, iodata, state}` to have the bridge
+  write a small replacement in its place, such as an error answer on the same
+  native id. If that write fails too, the native connection is broken and the
+  bridge closes it. The client's `send_message/2` gets the original error.
   """
-  @callback outbound_write_failed(acp_message :: map(), reason :: term(), state()) :: state()
+  @callback outbound_write_failed(acp_message :: map(), reason :: term(), state()) ::
+              state() | {:write, iodata(), state()}
 
   @doc """
   Handle raw messages for adapter-managed subprocesses.

@@ -1243,14 +1243,28 @@ defmodule Arbor.ACP.AdapterBridge do
   defp writes?(_translated), do: false
 
   # The request is answered with the write's error, so the adapter stops
-  # tracking anything it expected that write to start.
+  # tracking anything it expected that write to start. An adapter may hand
+  # back a small replacement to write instead, such as an error answer to the
+  # native request a client's response was for, so the agent is not left
+  # waiting; when even that cannot be written the native connection is
+  # broken, and it is closed the way a failed reply to native output is.
   defp write_failed(state, msg, reason) do
-    if function_exported?(state.adapter_mod, :outbound_write_failed, 3),
-      do: %{
-        state
-        | adapter_state: state.adapter_mod.outbound_write_failed(msg, reason, state.adapter_state)
-      },
-      else: state
+    if function_exported?(state.adapter_mod, :outbound_write_failed, 3) do
+      case state.adapter_mod.outbound_write_failed(msg, reason, state.adapter_state) do
+        {:write, data, adapter_state} ->
+          state = %{state | adapter_state: adapter_state}
+
+          case write_to_port(state, data) do
+            :ok -> state
+            {:error, reason} -> overflow_close(state, {:native_write_failed, reason})
+          end
+
+        adapter_state ->
+          %{state | adapter_state: adapter_state}
+      end
+    else
+      state
+    end
   end
 
   defp write_pending_translation(msg, data, adapter_state, state) do

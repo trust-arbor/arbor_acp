@@ -107,11 +107,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     message_ids: %{},
     background_subagents: MapSet.new(),
     deferred_result: nil,
-    # What the latest outbound translation started before its write (the
-    # prompt, control request ids, and the Auto fallback notice it consumed),
-    # so a write the bridge could not make can be retired; see
-    # outbound_write_failed/3.
-    last_write: %{prompt: nil, controls: [], notice: nil}
+    # What the latest outbound translation started or answered before its
+    # write (the prompt, control request ids, the Auto fallback notice it
+    # consumed, and the Claude request a client response answered), so a write
+    # the bridge could not make can be retired; see outbound_write_failed/3.
+    last_write: %{prompt: nil, controls: [], notice: nil, answered: nil}
   ]
 
   @impl true
@@ -264,18 +264,31 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   # message's id instead would confuse directions: the client's response to a
   # request Claude made can carry the same id as a prompt already running.
   @impl true
-  def outbound_write_failed(_message, _reason, state) do
-    %{prompt: prompt, controls: controls, notice: notice} = state.last_write
+  def outbound_write_failed(_message, reason, state) do
+    %{prompt: prompt, controls: controls, notice: notice, answered: answered} = state.last_write
 
     state = %{
       state
       | pending_controls: Map.drop(state.pending_controls, controls),
-        last_write: %{prompt: nil, controls: [], notice: nil}
+        last_write: %{prompt: nil, controls: [], notice: nil, answered: nil}
     }
 
     # The notice went out with the write's notifications, which were dropped.
     state = if notice, do: Map.merge(state, notice), else: state
-    retire_unsent_prompt(prompt, state)
+    state = retire_unsent_prompt(prompt, state)
+
+    # Claude is still waiting on the request the client answered; a small
+    # error takes the place of the answer that could not be written.
+    case answered do
+      %{request_id: request_id} ->
+        error = "The ACP client's response could not be forwarded: #{inspect(reason)}"
+
+        {:write, request_id |> ClaudeProtocol.control_error(error) |> ClaudeProtocol.line(),
+         state}
+
+      nil ->
+        state
+    end
   end
 
   defp retire_unsent_prompt(id, %{pending_prompt_id: id} = state) when id != nil do
@@ -297,11 +310,20 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp retire_unsent_prompt(_prompt, state), do: state
 
+  # Only a translation that writes can fail to; the others leave the record
+  # of the last write alone.
+  defp writes?({:ok, data, _state}), do: data not in [:skip, :pending]
+  defp writes?({:pending_and_write, _data, _state}), do: true
+  defp writes?({:reply_and_write, _result, _data, _state}), do: true
+  defp writes?({:messages_and_write, _messages, _data, _state}), do: true
+  defp writes?({:messages_and_reply_and_write, _messages, _result, _data, _state}), do: true
+  defp writes?(_result), do: false
+
   defp remember_write(result, before) do
     last = tuple_size(result) - 1
 
-    case elem(result, last) do
-      %__MODULE__{} = state ->
+    case {writes?(result), elem(result, last)} do
+      {true, %__MODULE__{} = state} ->
         controls =
           state.pending_controls
           |> Map.keys()
@@ -314,10 +336,16 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
         prompt =
           if state.pending_prompt_id != before.pending_prompt_id, do: state.pending_prompt_id
 
-        last_write = %{prompt: prompt, controls: controls, notice: notice}
+        answered =
+          before.pending_client_requests
+          |> Enum.find_value(fn {acp_id, entry} ->
+            if not Map.has_key?(state.pending_client_requests, acp_id), do: entry
+          end)
+
+        last_write = %{prompt: prompt, controls: controls, notice: notice, answered: answered}
         put_elem(result, last, %{state | last_write: last_write})
 
-      _reason ->
+      _other ->
         result
     end
   end

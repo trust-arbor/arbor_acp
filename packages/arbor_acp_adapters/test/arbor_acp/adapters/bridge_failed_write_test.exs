@@ -55,15 +55,31 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
 
     native = Path.join(dir, "native")
 
+    # Prints what the test sends it with `__emit__`, and answers on its own
+    # once it reads a line holding a pattern registered with `__when__`, so a
+    # turn can finish only when the agent really received what it waits for.
+    # Everything the adapter writes is logged to `received`.
     File.write!(native, """
     #!/bin/sh
+    dir=$(dirname "$0")
+    tab=$(printf '\\t')
+    : > "$dir/triggers"
     while IFS= read -r line; do
       case "$line" in
         "__emit__ "*) printf '%s\\n' "${line#__emit__ }" ;;
-        # An event too large to send through the limited stdin.
+        "__when__ "*) printf '%s\\n' "${line#__when__ }" >> "$dir/triggers" ;;
+        # Requests too large to send through the limited stdin.
         "__big_select__")
           option=$(head -c 4096 /dev/zero | tr '\\0' x)
           printf '{"type":"extension_ui_request","id":"ui-1","method":"select","title":"Pick","options":["%s"]}\\n' "$option" ;;
+        "__big_permission__")
+          note=$(head -c 4096 /dev/zero | tr '\\0' x)
+          printf '{"id":"perm-1","method":"interaction/requestPermission","params":{"sessionId":"zcode-1","options":[{"optionId":"allow","name":"Allow","kind":"allow_once","response":{"decision":"allow","note":"%s"}}]}}\\n' "$note" ;;
+        *)
+          printf '%s\\n' "$line" >> "$dir/received"
+          while IFS="$tab" read -r pattern reply; do
+            case "$line" in *"$pattern"*) printf '%s\\n' "$reply" ;; esac
+          done < "$dir/triggers" ;;
       esac
     done
     """)
@@ -80,11 +96,14 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
     end
   end
 
-  # An agent's request to the client and the client's own request can share
-  # an id, because each side numbers its requests itself. A failed write of
-  # the client's response must not retire, or answer, the client's request.
-  describe "a failed response write when ids overlap across directions" do
-    test "claude: a file-read answer that cannot be written leaves the prompt running", ctx do
+  # The agent waits, with no timeout, for the client's answer to its own
+  # request. When that answer cannot be written, a small error must reach the
+  # agent in its place, so its turn ends on its own and the next prompt runs.
+  # Each turn here finishes only through the fake's triggers, which fire on
+  # what the adapter actually wrote. The Claude and Pi requests share their
+  # id with the running prompt, since each side numbers its requests itself.
+  describe "a client response too large to write" do
+    test "claude: a file-read answer is replaced by an error and the turn ends", ctx do
       ctx = ctx |> Map.put(:adapter, :claude) |> scenario("session/prompt") |> start()
       open_session(ctx, "session/new", %{"cwd" => ctx.dir, "sessionId" => "claude-session"}, [])
 
@@ -97,57 +116,180 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
       assert %{"method" => "fs/read_text_file", "id" => shared} =
                ctx |> collect_until(&(&1["method"] == "fs/read_text_file")) |> List.last()
 
-      # The client's prompt takes the id of Claude's open request.
+      on_receipt(ctx, "could not be forwarded", [claude_result("done")])
       send_request(ctx, shared, "session/prompt", prompt_params("claude-session", "hello"))
-      assert adapter_state(ctx).pending_prompt_id == shared
 
-      answer = %{"jsonrpc" => "2.0", "id" => shared, "result" => %{"content" => @huge}}
-      assert {:error, _reason} = AdapterBridge.send_message(ctx.bridge, Jason.encode!(answer))
+      answer_too_large(ctx, %{"id" => shared, "result" => %{"content" => @huge}})
+      # The turn ends only after the agent read, and logged, the replacement.
+      assert_turn_ended(ctx, shared)
+      assert_received_native(ctx, ~s("request_id":"read-1"))
 
-      assert answers(drain(ctx), shared) == []
-      assert adapter_state(ctx).pending_prompt_id == shared
-
-      emit(ctx, claude_result("done"))
-      later = collect_until(ctx, &response_to?(&1, shared))
-      assert [%{"result" => %{"stopReason" => "end_turn"}}] = answers(later, shared)
-      AdapterBridge.close(ctx.bridge)
+      on_receipt(ctx, "second prompt", [claude_result("second")])
+      send_request(ctx, @next, "session/prompt", prompt_params("claude-session", "second prompt"))
+      assert_turn_ended(ctx, @next)
     end
 
-    test "pi: an extension answer that cannot be written leaves the prompt running", ctx do
-      ctx = ctx |> Map.put(:adapter, :pi) |> scenario("session/prompt") |> start()
+    for mode <- [:unmanaged, :managed] do
+      @mode mode
+      test "pi #{mode}: a dialog answer is replaced by a cancel and the turn ends", ctx do
+        ctx = ctx |> Map.put(:adapter, :pi) |> scenario("session/prompt")
+        ctx = if @mode == :managed, do: managed_pi(ctx), else: ctx
+        ctx = ctx |> start() |> then(& &1.setup.(&1))
+
+        # Pi names its next dialog after the prompt counter.
+        shared = "pi-extension-#{adapter_state(ctx).msg_counter + 2}"
+        on_receipt(ctx, ~s("message":"hello"), [pi_response("msg-1", "prompt", %{})])
+        on_receipt(ctx, ~s("cancelled":true), [pi_agent_end(), %{"type" => "agent_settled"}])
+        send_request(ctx, shared, "session/prompt", prompt_params("N1", "hello"))
+
+        assert :ok = PortRunner.command(native_port(ctx), "__big_select__\n")
+
+        assert %{"method" => "session/request_permission", "id" => ^shared} =
+                 ctx
+                 |> collect_until(&(&1["method"] == "session/request_permission"))
+                 |> List.last()
+
+        answer_too_large(ctx, %{
+          "id" => shared,
+          "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "choice-0"}}
+        })
+
+        # The turn ends only after the agent read, and logged, the replacement.
+        assert_turn_ended(ctx, shared)
+        assert_received_native(ctx, ~s("id":"ui-1"))
+
+        on_receipt(ctx, "second prompt", [
+          pi_response("msg-2", "prompt", %{}),
+          pi_agent_end(),
+          %{"type" => "agent_settled"}
+        ])
+
+        send_request(ctx, @next, "session/prompt", prompt_params("N1", "second prompt"))
+        assert_turn_ended(ctx, @next)
+      end
+    end
+
+    test "codex: a user-input answer is replaced by an error and the turn ends", ctx do
+      ctx = ctx |> Map.put(:adapter, :codex) |> scenario("session/prompt") |> start()
+      capabilities = %{"clientCapabilities" => %{"elicitation" => %{"form" => %{}}}}
+      send_request(ctx, 0, "initialize", Map.put(capabilities, "protocolVersion", 1))
+      _ = collect_until(ctx, &response_to?(&1, 0))
       ctx = ctx.setup.(ctx)
 
-      # Pi names its next extension request after the prompt counter.
-      shared = "pi-extension-#{adapter_state(ctx).msg_counter + 2}"
-      send_request(ctx, shared, "session/prompt", prompt_params("N1", "hello"))
-      assert %{acp_id: ^shared} = adapter_state(ctx).pending_prompt
+      turn_start = adapter_state(ctx).next_id
 
-      port = :sys.get_state(ctx.bridge).port
-      assert :ok = PortRunner.command(port, "__big_select__\n")
+      on_receipt(ctx, "hello", [
+        %{"id" => turn_start, "result" => %{"turn" => %{"id" => "turn-1"}}}
+      ])
 
-      assert %{"method" => "session/request_permission", "id" => ^shared} =
+      on_receipt(ctx, "could not be forwarded", [codex_turn_completed("turn-1")])
+      send_request(ctx, 10, "session/prompt", prompt_params("thread-1", "hello"))
+
+      emit(ctx, %{
+        "id" => 900,
+        "method" => "item/tool/requestUserInput",
+        "params" => %{
+          "threadId" => "thread-1",
+          "itemId" => "item-1",
+          "questions" => [%{"id" => "q1", "question" => "Name?"}]
+        }
+      })
+
+      assert %{"method" => "elicitation/create", "id" => asked} =
+               ctx |> collect_until(&(&1["method"] == "elicitation/create")) |> List.last()
+
+      answer_too_large(ctx, %{
+        "id" => asked,
+        "result" => %{"action" => "accept", "content" => %{"q1" => @huge}}
+      })
+
+      # The turn ends only after the agent read, and logged, the replacement.
+      assert_turn_ended(ctx, 10)
+      assert_received_native(ctx, ~s("id":900))
+
+      turn_start = adapter_state(ctx).next_id
+
+      on_receipt(ctx, "second prompt", [
+        %{"id" => turn_start, "result" => %{"turn" => %{"id" => "turn-2"}}},
+        codex_turn_completed("turn-2")
+      ])
+
+      send_request(ctx, @next, "session/prompt", prompt_params("thread-1", "second prompt"))
+      assert_turn_ended(ctx, @next)
+    end
+
+    test "zcode: a permission answer is replaced by a denial and the turn ends", ctx do
+      ctx = ctx |> Map.put(:adapter, :zcode) |> scenario("session/prompt") |> start()
+      ctx = ctx.setup.(ctx)
+
+      send_id = adapter_state(ctx).next_id
+      on_receipt(ctx, "hello", [%{"id" => send_id, "result" => %{}}])
+      on_receipt(ctx, "could not be forwarded", [zcode_turn_completed()])
+      send_request(ctx, 10, "session/prompt", prompt_params("zcode-1", "hello"))
+
+      assert :ok = PortRunner.command(native_port(ctx), "__big_permission__\n")
+
+      assert %{"method" => "session/request_permission", "id" => asked} =
                ctx
                |> collect_until(&(&1["method"] == "session/request_permission"))
                |> List.last()
 
-      answer = %{
-        "jsonrpc" => "2.0",
-        "id" => shared,
-        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "choice-0"}}
-      }
+      answer_too_large(ctx, %{
+        "id" => asked,
+        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "allow"}}
+      })
 
-      assert {:error, _reason} = AdapterBridge.send_message(ctx.bridge, Jason.encode!(answer))
-      assert answers(drain(ctx), shared) == []
-      assert %{acp_id: ^shared} = adapter_state(ctx).pending_prompt
+      # The turn ends only after the agent read, and logged, the replacement.
+      assert_turn_ended(ctx, 10)
+      assert_received_native(ctx, ~s("id":"perm-1"))
 
-      {msg_id, _counter} = RPC.next_prompt_id(0)
-      emit(ctx, pi_response(msg_id, "prompt", %{}))
-      emit(ctx, %{"type" => "agent_settled"})
-      later = collect_until(ctx, &response_to?(&1, shared))
-      assert [%{"result" => %{"stopReason" => "end_turn"}}] = answers(later, shared)
-      AdapterBridge.close(ctx.bridge)
+      send_id = adapter_state(ctx).next_id
+
+      on_receipt(ctx, "second prompt", [
+        %{"id" => send_id, "result" => %{}},
+        zcode_turn_completed()
+      ])
+
+      send_request(ctx, @next, "session/prompt", prompt_params("zcode-1", "second prompt"))
+      assert_turn_ended(ctx, @next)
     end
   end
+
+  defp managed_pi(ctx) do
+    opts = ctx.opts |> Keyword.put(:managed, true)
+    %{ctx | adapter_mod: Arbor.ACP.Adapters.Pi, opts: opts}
+  end
+
+  defp on_receipt(ctx, pattern, replies) do
+    for reply <- replies do
+      line = ["__when__ ", pattern, "\t", Jason.encode!(reply), "\n"]
+      assert :ok = PortRunner.command(native_port(ctx), line)
+    end
+  end
+
+  # The client's answer is refused, and only the client hears of it.
+  defp answer_too_large(ctx, response) do
+    message = Map.put(response, "jsonrpc", "2.0")
+    assert {:error, _reason} = AdapterBridge.send_message(ctx.bridge, Jason.encode!(message))
+  end
+
+  defp assert_received_native(ctx, fragment) do
+    received = File.read!(Path.join(ctx.dir, "received"))
+
+    assert Enum.any?(
+             String.split(received, "\n"),
+             &((String.contains?(&1, fragment) and String.contains?(&1, "could not be forwarded")) or
+                 (String.contains?(&1, fragment) and String.contains?(&1, ~s("cancelled":true))))
+           ),
+           "the agent never received a replacement answer: #{received}"
+  end
+
+  defp assert_turn_ended(ctx, id) do
+    messages = collect_until(ctx, &response_to?(&1, id))
+    assert [%{"result" => %{"stopReason" => _reason}}] = answers(messages, id)
+  end
+
+  defp pi_agent_end, do: %{"type" => "agent_end", "messages" => []}
 
   # -- the check --------------------------------------------------------------
 
@@ -560,8 +702,13 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
   end
 
   defp emit(ctx, message) do
-    port = :sys.get_state(ctx.bridge).port
-    assert :ok = PortRunner.command(port, ["__emit__ ", Jason.encode!(message), "\n"])
+    assert :ok = PortRunner.command(native_port(ctx), ["__emit__ ", Jason.encode!(message), "\n"])
+  end
+
+  # The bridge owns the native process, unless the adapter manages its own.
+  defp native_port(ctx) do
+    state = :sys.get_state(ctx.bridge)
+    state.port || state.adapter_state.port
   end
 
   defp drain(ctx) do
