@@ -161,7 +161,11 @@ defmodule Arbor.ACP.Client.Handler do
   `:session_id`, `:server_id`, `:request_id`, and `:token`. Pass `:token` to
   `Arbor.ACP.Client.mcp_notify/5`. Return the handler state as the last
   element: `{:ok, json, state}`, `{:mcp_error, error_map, state}`, or
-  `{:error, reason, state}`. The design note is `docs/MCP_OVER_ACP.md`.
+  `{:error, reason, state}`.
+
+  `:handler` callbacks run one at a time, and the state this callback
+  returns is stored. A session update that arrives while it is running is
+  applied after it returns. The design note is `docs/MCP_OVER_ACP.md`.
   """
   @callback handle_mcp_request(session_id :: String.t(), request :: map(), map(), state()) ::
               {:ok, term(), state()}

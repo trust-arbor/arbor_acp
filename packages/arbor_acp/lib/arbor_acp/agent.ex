@@ -1351,14 +1351,14 @@ defmodule Arbor.ACP.Agent do
       {%{kind: :new_session, request_id: id} = callback, pending} ->
         cancel_timer(Map.get(callback, :timer_ref))
         state = %{state | pending_callbacks: pending}
-        state = settle_mcp_session(state, callback, result)
+        {state, result} = settle_mcp_session(state, callback, result)
         handle_session_result(id, result, state)
 
       {%{kind: kind, request_id: id} = callback, pending}
       when kind in [:load_session, :resume_session, :fork_session] ->
         cancel_timer(Map.get(callback, :timer_ref))
         state = %{state | pending_callbacks: pending}
-        state = settle_mcp_session(state, callback, result)
+        {state, result} = settle_mcp_session(state, callback, result)
         handle_session_result(id, result, state)
 
       {%{kind: :list_sessions, request_id: id} = callback, pending} ->
@@ -1576,27 +1576,43 @@ defmodule Arbor.ACP.Agent do
          %{mcp_kind: :new, mcp_token: token, mcp_ids: ids},
          {:reply, result}
        ) do
-    case session_id_of(result) do
-      {:ok, session_id} -> %{state | mcp: Mcp.commit_new(state.mcp, token, session_id, ids)}
-      :error -> %{state | mcp: Mcp.abort(state.mcp, token)}
-    end
+    state =
+      case session_id_of(result) do
+        {:ok, session_id} -> %{state | mcp: Mcp.commit_new(state.mcp, token, session_id, ids)}
+        :error -> abort_mcp_token(state, token)
+      end
+
+    {state, {:reply, result}}
   end
 
   defp settle_mcp_session(
          state,
          %{mcp_kind: {:existing, session_id}, mcp_token: token, mcp_ids: ids},
-         {:reply, _result}
+         {:reply, result}
        )
        when is_list(ids) do
+    closed? = Mcp.release_pending?(state.mcp, session_id)
     {mcp, dropped} = Mcp.commit_existing(state.mcp, token, session_id, ids)
+    state = fail_mcp_entries(%{state | mcp: mcp}, dropped, :session_closed)
+
+    result =
+      if closed?,
+        do: {:error, {-32_602, "MCP server id is already in use", nil}},
+        else: {:reply, result}
+
+    {state, result}
+  end
+
+  defp settle_mcp_session(state, %{mcp_token: token}, result) do
+    {abort_mcp_token(state, token), result}
+  end
+
+  defp settle_mcp_session(state, _callback, result), do: {state, result}
+
+  defp abort_mcp_token(state, token) do
+    {mcp, dropped} = Mcp.abort(state.mcp, token)
     fail_mcp_entries(%{state | mcp: mcp}, dropped, :session_closed)
   end
-
-  defp settle_mcp_session(state, %{mcp_token: token}, _result) do
-    %{state | mcp: Mcp.abort(state.mcp, token)}
-  end
-
-  defp settle_mcp_session(state, _callback, _result), do: state
 
   defp release_mcp_on_success(state, %{mcp_release: session_id}, {:reply, _result}) do
     release_mcp_session(state, session_id)
@@ -1643,7 +1659,7 @@ defmodule Arbor.ACP.Agent do
     end
   end
 
-  defp abort_mcp(state, %{mcp_token: token}), do: %{state | mcp: Mcp.abort(state.mcp, token)}
+  defp abort_mcp(state, %{mcp_token: token}), do: abort_mcp_token(state, token)
   defp abort_mcp(state, _callback), do: state
 
   defp session_id_of(session_id) when is_binary(session_id) and session_id != "" do

@@ -6,7 +6,10 @@ defmodule Arbor.ACP.Internal.Mcp do
   # A server id is pending for one in-flight session call or bound to one live
   # session. A lifecycle call that reuses a session also holds every id that
   # session owns until the call commits or aborts, so a concurrent call cannot
-  # release or claim those ids. The hold does not change the bound session:
+  # release or claim those ids. Closing a session while one of those holds is
+  # active records the release and applies it when the hold commits or aborts,
+  # instead of freeing the ids for another session. The hold does not change
+  # the bound session:
   # in-flight MCP requests keep working. An inner request id is unique per
   # server while that request is in flight, and its ref is the notify token.
   # Both agent and client keep this table beside their existing pending
@@ -17,7 +20,11 @@ defmodule Arbor.ACP.Internal.Mcp do
   @int32_min -2_147_483_648
   @int32_max 2_147_483_647
 
-  defstruct sessions: %{}, servers: %{}, requests: %{}, by_outer: %{}
+  defstruct sessions: %{},
+            servers: %{},
+            requests: %{},
+            by_outer: %{},
+            pending_releases: MapSet.new()
 
   @type entry :: %{
           required(:session_id) => String.t(),
@@ -37,7 +44,8 @@ defmodule Arbor.ACP.Internal.Mcp do
           sessions: %{optional(String.t()) => MapSet.t(String.t())},
           servers: %{optional(String.t()) => server()},
           requests: %{optional({String.t(), String.t()}) => entry()},
-          by_outer: %{optional(term()) => {String.t(), String.t()}}
+          by_outer: %{optional(term()) => {String.t(), String.t()}},
+          pending_releases: MapSet.t(String.t())
         }
 
   @spec new() :: t()
@@ -129,8 +137,20 @@ defmodule Arbor.ACP.Internal.Mcp do
     end
   end
 
-  @spec abort(t(), term()) :: t()
-  def abort(%__MODULE__{} = table, token), do: clear_pending(table, token)
+  @spec abort(t(), term()) :: {t(), [entry()]}
+  def abort(%__MODULE__{} = table, token) do
+    sessions = sessions_held(table, token)
+    table = clear_pending(table, token)
+
+    Enum.reduce(sessions, {table, []}, fn session_id, {table, acc} ->
+      if release_pending?(table, session_id) do
+        {table, dropped} = drop_session(forget_release(table, session_id), session_id)
+        {table, acc ++ dropped}
+      else
+        {table, acc}
+      end
+    end)
+  end
 
   @spec commit_new(t(), term(), String.t(), [String.t()]) :: t()
   def commit_new(%__MODULE__{} = table, token, session_id, ids) when is_list(ids) do
@@ -142,18 +162,31 @@ defmodule Arbor.ACP.Internal.Mcp do
 
   @spec commit_existing(t(), term(), String.t(), [String.t()]) :: {t(), [entry()]}
   def commit_existing(%__MODULE__{} = table, token, session_id, ids) when is_list(ids) do
-    table = clear_pending(table, token)
-    removed = MapSet.difference(servers_for(table, session_id), MapSet.new(ids))
-    {table, dropped} = drop_servers(table, removed)
-    table = bind_ids(table, session_id, ids)
-    owned = Enum.filter(ids, &owned_by?(table, session_id, &1))
-    {put_session(table, session_id, owned, :replace), dropped}
+    if release_pending?(table, session_id) do
+      table = clear_pending(table, token)
+      drop_session(forget_release(table, session_id), session_id)
+    else
+      table = clear_pending(table, token)
+      removed = MapSet.difference(servers_for(table, session_id), MapSet.new(ids))
+      {table, dropped} = drop_servers(table, removed)
+      table = bind_ids(table, session_id, ids)
+      owned = Enum.filter(ids, &owned_by?(table, session_id, &1))
+      {put_session(table, session_id, owned, :replace), dropped}
+    end
+  end
+
+  @spec release_pending?(t(), String.t()) :: boolean()
+  def release_pending?(%__MODULE__{} = table, session_id) do
+    MapSet.member?(table.pending_releases, session_id)
   end
 
   @spec release_session(t(), String.t()) :: {t(), [entry()]}
   def release_session(%__MODULE__{} = table, session_id) do
-    {table, dropped} = drop_servers(table, servers_for(table, session_id))
-    {%{table | sessions: Map.delete(table.sessions, session_id)}, dropped}
+    if release_blocked?(table, session_id) do
+      {%{table | pending_releases: MapSet.put(table.pending_releases, session_id)}, []}
+    else
+      drop_session(table, session_id)
+    end
   end
 
   @spec session_id(t(), String.t()) :: {:ok, String.t()} | {:error, :pending} | :error
@@ -384,6 +417,30 @@ defmodule Arbor.ACP.Internal.Mcp do
       end)
 
     %{table | servers: servers}
+  end
+
+  defp release_blocked?(table, session_id) do
+    Enum.any?(servers_for(table, session_id), fn id ->
+      match?(%{held_by: _token}, Map.get(table.servers, id))
+    end)
+  end
+
+  defp sessions_held(table, token) do
+    table.servers
+    |> Enum.flat_map(fn
+      {_id, %{held_by: ^token, owner: {:session, session_id}}} -> [session_id]
+      _other -> []
+    end)
+    |> Enum.uniq()
+  end
+
+  defp forget_release(table, session_id) do
+    %{table | pending_releases: MapSet.delete(table.pending_releases, session_id)}
+  end
+
+  defp drop_session(table, session_id) do
+    {table, dropped} = drop_servers(table, servers_for(table, session_id))
+    {%{table | sessions: Map.delete(table.sessions, session_id)}, dropped}
   end
 
   defp clear_pending(table, token) do

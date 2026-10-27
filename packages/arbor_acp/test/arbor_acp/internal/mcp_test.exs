@@ -112,7 +112,7 @@ defmodule Arbor.ACP.Internal.McpTest do
     assert {:error, :duplicate_mcp_server_id} = Mcp.begin_new(table, "open-1", ["tools", "tools"])
     assert table == Mcp.new()
 
-    aborted = Mcp.abort(pending, "open-1")
+    {aborted, []} = Mcp.abort(pending, "open-1")
     assert :error = Mcp.session_id(aborted, "tools")
 
     bound = commit_new(table, "open-1", "session-1", ["tools"])
@@ -124,7 +124,7 @@ defmodule Arbor.ACP.Internal.McpTest do
     assert {:error, :pending} = Mcp.session_id(reused, "docs")
     assert {:ok, "session-1"} = Mcp.session_id(reused, "tools")
 
-    kept = Mcp.abort(reused, "load-1")
+    {kept, []} = Mcp.abort(reused, "load-1")
     assert Mcp.declared?(kept, "session-1", "tools")
     assert :error = Mcp.session_id(kept, "docs")
 
@@ -161,7 +161,7 @@ defmodule Arbor.ACP.Internal.McpTest do
     refute Mcp.declared?(kept, "session-1", "docs")
 
     {:ok, again} = Mcp.begin_existing(table, "session-1", "keep", ["tools"])
-    released = Mcp.abort(again, "keep")
+    {released, []} = Mcp.abort(again, "keep")
     assert {:ok, "session-1"} = Mcp.session_id(released, "tools")
     assert {:ok, "session-1"} = Mcp.session_id(released, "docs")
     assert {:error, :mcp_server_id_in_use} = Mcp.begin_new(released, "open-2", ["tools"])
@@ -201,6 +201,26 @@ defmodule Arbor.ACP.Internal.McpTest do
     assert [%{request_id: "req-docs"}] = released_requests
     assert :error = Mcp.session_id(released, "docs")
     assert {:ok, _reused} = Mcp.begin_new(released, "open-2", ["docs"])
+  end
+
+  test "release_session waits for an in-flight load hold" do
+    table = commit_new(Mcp.new(), "open-1", "session-1", ["tools"])
+    {:ok, held} = Mcp.begin_existing(table, "session-1", "load-1", ["tools"])
+    {waiting, []} = Mcp.release_session(held, "session-1")
+
+    assert {:ok, "session-1"} = Mcp.session_id(waiting, "tools")
+
+    assert {:error, :mcp_server_id_in_use} = Mcp.begin_new(waiting, "open-2", ["tools"])
+
+    {released, []} = Mcp.commit_existing(waiting, "load-1", "session-1", ["tools"])
+    assert :error = Mcp.session_id(released, "tools")
+    assert {:ok, _claimed} = Mcp.begin_new(released, "open-2", ["tools"])
+
+    {:ok, again} = Mcp.begin_existing(table, "session-1", "load-2", ["tools"])
+    {waiting, []} = Mcp.release_session(again, "session-1")
+    {aborted, []} = Mcp.abort(waiting, "load-2")
+    assert :error = Mcp.session_id(aborted, "tools")
+    assert {:ok, _after_abort} = Mcp.begin_new(aborted, "open-3", ["tools"])
   end
 
   test "tracks an in-flight request until it finishes" do

@@ -457,7 +457,12 @@ defmodule Arbor.ACP.Client do
     Call.call(client, {:end_session, session_id})
   end
 
-  @doc "Disconnects the transport and settles pending requests, retaining the client process."
+  @doc """
+  Disconnects the transport and settles pending requests, retaining the client process.
+
+  An in-flight module or `:handler` MCP provider is stopped. A pid provider
+  stays the caller's process.
+  """
   @spec disconnect(GenServer.server()) :: :ok | {:error, term()}
   def disconnect(client) do
     Call.call(client, :disconnect)
@@ -1595,8 +1600,8 @@ defmodule Arbor.ACP.Client do
         cancel_timer(timer_ref)
         Process.demonitor(monitor_ref, [:flush])
         omitted = mcp_plan_omissions(state, id)
+        {reply, state} = settle_mcp_plan(id, telemetry_tag, reply, state)
         state = apply_session_resolution(telemetry_tag, reply, state)
-        state = settle_mcp_plan(id, telemetry_tag, reply, state)
         emit_resolve_telemetry(telemetry_tag, reply)
         {reply, state} = finish_prompt_collection(telemetry_tag, reply, state)
         GenServer.reply(from, with_omitted_servers(reply, omitted))
@@ -1826,6 +1831,7 @@ defmodule Arbor.ACP.Client do
 
     Enum.each(state.pending_agent_requests, fn {_ref, request} ->
       cancel_timer(Map.get(request, :timer_ref))
+      stop_mcp_worker(request)
     end)
 
     %{
@@ -2703,7 +2709,12 @@ defmodule Arbor.ACP.Client do
   defp abort_mcp_plan(state, token) do
     {plan, plans} = Map.pop(state.mcp_plans, token)
     state = %{state | mcp_plans: plans}
-    if plan, do: %{state | mcp: Mcp.abort(state.mcp, token)}, else: state
+    if plan, do: abort_mcp_token(state, token), else: state
+  end
+
+  defp abort_mcp_token(state, token) do
+    {mcp, dropped} = Mcp.abort(state.mcp, token)
+    fail_mcp_entries(%{state | mcp: mcp}, dropped)
   end
 
   defp settle_mcp_plan(token, tag, reply, state) do
@@ -2712,20 +2723,20 @@ defmodule Arbor.ACP.Client do
 
     cond do
       plan == nil and success_close?(tag, reply) ->
-        release_mcp_session(state, elem(tag, 1))
+        {reply, release_mcp_session(state, elem(tag, 1))}
 
       plan == nil ->
-        state
+        {reply, state}
 
       match?({:ok, _result}, reply) and plan.kind == :new ->
-        commit_mcp_new(state, token, reply, plan.ids)
+        {reply, commit_mcp_new(state, token, reply, plan.ids)}
 
       match?({:ok, _result}, reply) and match?({:existing, _session_id}, plan.kind) ->
         {_kind, session_id} = plan.kind
-        commit_mcp_existing(state, token, session_id, plan.ids)
+        commit_mcp_existing(state, token, session_id, plan.ids, reply)
 
       true ->
-        %{state | mcp: Mcp.abort(state.mcp, token)}
+        {reply, abort_mcp_token(state, token)}
     end
   end
 
@@ -2740,13 +2751,19 @@ defmodule Arbor.ACP.Client do
     %{state | mcp: Mcp.commit_new(state.mcp, token, session_id, ids)}
   end
 
-  defp commit_mcp_new(state, token, _reply, _ids) do
-    %{state | mcp: Mcp.abort(state.mcp, token)}
-  end
+  defp commit_mcp_new(state, token, _reply, _ids), do: abort_mcp_token(state, token)
 
-  defp commit_mcp_existing(state, token, session_id, ids) do
+  defp commit_mcp_existing(state, token, session_id, ids, reply) do
+    closed? = Mcp.release_pending?(state.mcp, session_id)
     {mcp, dropped} = Mcp.commit_existing(state.mcp, token, session_id, ids)
-    fail_mcp_entries(%{state | mcp: mcp}, dropped)
+    state = fail_mcp_entries(%{state | mcp: mcp}, dropped)
+
+    reply =
+      if closed?,
+        do: {:error, {:invalid_params, :mcp_server_id_in_use}},
+        else: reply
+
+    {reply, state}
   end
 
   defp release_mcp_session(state, session_id) do

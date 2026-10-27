@@ -108,6 +108,11 @@ Outcomes:
 - `{:error, reason}` — outer JSON-RPC error, `-32603`.
 
 The handler form also returns the handler state as the last element.
+`:handler` callbacks run one at a time, and the state they return is kept.
+A session update that arrives during a callback runs after that callback
+commits. Module providers leave handler state unchanged and run
+concurrently. Disconnect stops an in-flight module or `:handler` provider
+process. A pid provider stays the caller's process.
 
 While the request is in flight, the provider sends notifications with
 `Arbor.ACP.Client.mcp_notify/5`:
