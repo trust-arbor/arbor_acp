@@ -1400,7 +1400,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
     test "setups fail at once while a cancelled change is unanswered", ctx do
       {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
       {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
-      assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
+      assert {:ok, :pending, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
 
       assert {:messages, messages, state} = Pi.translate_outbound(cancel_request(70), state)
 
@@ -1514,6 +1514,74 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert state.control_groups |> Map.values() |> Enum.map(& &1.type) == [:session_load]
     end
 
+    test "a setup with only a prompt command running asks Pi to abort nothing", ctx do
+      {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+
+      command = %{
+        "method" => "session/prompt",
+        "id" => 62,
+        "params" => %{
+          "sessionId" => "s1",
+          "prompt" => [%{"type" => "text", "text" => "/session"}]
+        }
+      }
+
+      assert {:ok, _data, state} = Pi.translate_outbound(command, state)
+      {_state, pi, messages} = outbound(state, pi, session_change("session/load", ctx))
+
+      assert [%{"id" => 62, "result" => %{"stopReason" => "cancelled"}}] = messages
+      assert pi.requests == ["switch_session"]
+    end
+
+    test "a prompt after a refused setup waits for the turn the setup aborted", ctx do
+      state = %{
+        ordered_state(ctx)
+        | pending_prompt: %{acp_id: 9, msg_id: "msg-9", cancel_requested: false}
+      }
+
+      assert {:messages_and_write, [%{"id" => 9, "result" => %{"stopReason" => "cancelled"}}],
+              data, state} = Pi.translate_outbound(session_change("session/load", ctx), state)
+
+      assert [%{"type" => "abort"}, %{"type" => "switch_session", "id" => switch_id}] =
+               decode_many(data)
+
+      # An extension refuses the switch, so Pi stays on s1 and its aborted turn
+      # settles later.
+      refused = response_line(switch_id, "switch_session", %{"cancelled" => true})
+
+      assert {:messages, [%{"id" => 70, "error" => _}], state} =
+               Pi.translate_inbound(refused, state)
+
+      assert state.session_id == "s1"
+
+      prompt = %{
+        "method" => "session/prompt",
+        "id" => 10,
+        "params" => %{"sessionId" => "s1", "prompt" => [%{"type" => "text", "text" => "next"}]}
+      }
+
+      assert {:messages, _queued_notices, state} = Pi.translate_outbound(prompt, state)
+
+      # The aborted turn's late output answers nothing and streams nothing.
+      delta = %{
+        "type" => "message_update",
+        "assistantMessageEvent" => %{"type" => "text_delta", "delta" => "old"}
+      }
+
+      for event <- [delta, %{"type" => "agent_end", "messages" => []}] do
+        assert {:skip, state} = Pi.translate_inbound(Jason.encode!(event), state)
+        assert state.pending_prompt == nil
+      end
+
+      assert {:messages_and_write, _started_notices, next, state} =
+               Pi.translate_inbound(Jason.encode!(%{"type" => "agent_settled"}), state)
+
+      assert [%{"type" => "prompt", "message" => "next"}] = decode_many(next)
+
+      assert {:messages, [%{"id" => 10, "result" => %{"stopReason" => "end_turn"}}], _state} =
+               Pi.translate_inbound(Jason.encode!(%{"type" => "agent_settled"}), state)
+    end
+
     test "a prompt a setup cancelled sends no usage request", ctx do
       {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
       state = %{state | pending_prompt: %{acp_id: 9, msg_id: "msg-9", cancel_requested: false}}
@@ -1570,7 +1638,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
       {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
       {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
       {state, _pi, _} = outbound(state, pi, set_model_request("openai/gpt-5.1"))
-      assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
+      assert {:ok, :pending, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
 
       assert {:messages, messages, state} =
                Pi.handle_adapter_message({nil, {:exit_status, 1}}, state)
@@ -1594,7 +1662,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
     test "a waiting setup the client cancels never starts", ctx do
       {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
       {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
-      assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
+      assert {:ok, :pending, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
 
       assert {:messages, [%{"id" => 71, "error" => %{"code" => -32_800}}], state} =
                Pi.translate_outbound(cancel_request(71), state)
@@ -1610,7 +1678,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
       test "a setup waiting behind a running one starts when it ends, across #{closer}", ctx do
         {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
         {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
-        assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
+        assert {:ok, :pending, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
 
         close = %{"method" => @closer, "id" => 72, "params" => %{"sessionId" => "s1"}}
         assert {:reply, %{}, state} = Pi.translate_outbound(close, state)
@@ -1878,6 +1946,86 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
       assert {:error, "Unknown Pi config option: nonexistent", ^state} =
                Pi.translate_outbound(msg, state)
+    end
+  end
+
+  describe "outbound_write_failed/3" do
+    # Unmanaged, the consumer writes what translate_outbound/2 returns; a
+    # failed write is answered with the error, so the adapter forgets the
+    # request instead of answering it again later.
+    defp prompt_request(id, text),
+      do: %{
+        "method" => "session/prompt",
+        "id" => id,
+        "params" => %{"sessionId" => "s1", "prompt" => [%{"type" => "text", "text" => text}]}
+      }
+
+    test "a prompt Pi never received is not pending", ctx do
+      state = ordered_state(ctx)
+      request = prompt_request(5, "hello")
+      assert {:ok, _data, state} = Pi.translate_outbound(request, state)
+      state = Pi.outbound_write_failed(request, :closed, state)
+      assert state.pending_prompt == nil
+
+      # A setup then has nothing to cancel.
+      assert {:ok, _change, _state} =
+               Pi.translate_outbound(session_change("session/load", ctx), state)
+    end
+
+    test "a prompt command Pi never received leaves no group", ctx do
+      state = ordered_state(ctx)
+      request = prompt_request(6, "/session")
+      assert {:ok, _data, state} = Pi.translate_outbound(request, state)
+      state = Pi.outbound_write_failed(request, :closed, state)
+      assert state.control_groups == %{}
+      assert state.pending_controls == %{}
+    end
+
+    test "a setup Pi never received restores the previous session", ctx do
+      state = ordered_state(ctx)
+      request = session_change("session/new", ctx)
+      assert {:ok, _data, failed} = Pi.translate_outbound(request, state)
+      failed = Pi.outbound_write_failed(request, :closed, failed)
+
+      assert failed.op_in_flight == nil
+      assert failed.control_groups == %{}
+      assert failed.pending_controls == %{}
+      assert {failed.session_id, failed.cwd} == {state.session_id, state.cwd}
+    end
+
+    test "a waiting setup whose notices could not be written leaves the queue", ctx do
+      state = ordered_state(ctx)
+
+      assert {:ok, _data, state} =
+               Pi.translate_outbound(session_change("session/new", ctx), state)
+
+      waiting = session_change_new(71, ctx)
+      assert {:ok, :pending, state} = Pi.translate_outbound(waiting, state)
+      state = Pi.outbound_write_failed(waiting, :closed, state)
+      assert state.op_queue == []
+      assert %{type: :setup, acp_id: 70} = state.op_in_flight
+    end
+
+    test "only the model switch a request started is retired", ctx do
+      state = ordered_state(ctx)
+
+      set_model =
+        &%{
+          "method" => "session/set_model",
+          "id" => &1,
+          "params" => %{"sessionId" => "s1", "modelId" => &2}
+        }
+
+      first = set_model.(1, "openai/gpt-5.1")
+      assert {:messages_and_write, _messages, _data, state} = Pi.translate_outbound(first, state)
+      second = set_model.(2, "anthropic/claude-opus-4")
+      assert {:messages_and_write, _messages, "", state} = Pi.translate_outbound(second, state)
+
+      # The second switch only waited, so its failed write leaves the first.
+      assert %{type: :model_switch, acp_id: 1} =
+               Pi.outbound_write_failed(second, :closed, state).op_in_flight
+
+      assert Pi.outbound_write_failed(first, :closed, state).op_in_flight == nil
     end
   end
 
@@ -2744,6 +2892,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
     do: %{"method" => "session/new", "id" => acp_id, "params" => %{"cwd" => ctx.tmp_dir}}
 
   defp outbound_writes({:ok, :skip, state}), do: {state, "", []}
+  defp outbound_writes({:ok, :pending, state}), do: {state, "", []}
   defp outbound_writes({:ok, data, state}) when is_binary(data), do: {state, data, []}
 
   # Like session_pi_answer/2, but several changes can be pending at once and
@@ -2916,6 +3065,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
   defp outbound(state, pi, request) do
     case Pi.translate_outbound(request, state) do
       {:ok, :skip, state} -> {state, pi, []}
+      {:ok, :pending, state} -> {state, pi, []}
       {:ok, data, state} -> ordered_write(data, state, pi, [])
       {:messages, messages, state} -> {state, pi, messages}
       {:messages_and_write, messages, data, state} -> ordered_write(data, state, pi, messages)

@@ -325,7 +325,7 @@
       kind: :outbound,
       message: %{"method" => "session/cancel", "params" => %{"sessionId" => "pi-session"}}
     },
-    result: %{error: ":no_active_pi_session", tag: :error}
+    result: %{messages: [], tag: :messages}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{

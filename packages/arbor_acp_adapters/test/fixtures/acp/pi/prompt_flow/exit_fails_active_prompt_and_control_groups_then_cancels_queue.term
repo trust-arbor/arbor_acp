@@ -381,7 +381,7 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
-    result: %{skipped: true, tag: :ok}
+    result: %{pending: true, tag: :ok}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{code: 137, kind: :port_exit},

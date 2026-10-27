@@ -169,14 +169,15 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
              ] = transcript |> PiGolden.writes() |> Enum.filter(&(&1["type"] == "prompt"))
     end
 
-    test "failed_prompt_leaves_queued_prompts_stranded" do
+    test "failed_prompt_starts_the_next_queued_prompt" do
       steps =
         Flows.open_session(1) ++
           [
             Flows.prompt(2, "first"),
             Flows.prompt(3, "second"),
+            {:note,
+             "Pi runs no turn for a prompt it refused, so the queued prompt starts at once"},
             {:respond_error, "prompt", "model failed"},
-            {:note, "No settlement follows a failed prompt, so the queue is not drained"},
             Flows.agent_settled(),
             Flows.prompt(4, "third"),
             Flows.agent_settled(),
@@ -184,13 +185,19 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
           ]
 
       transcript =
-        PiGolden.assert_golden(@area, "failed_prompt_leaves_queued_prompts_stranded", steps)
+        PiGolden.assert_golden(@area, "failed_prompt_starts_the_next_queued_prompt", steps)
 
       assert [
                %{"id" => 2, "error" => %{"message" => "model failed"}},
-               %{"id" => 4, "result" => %{"stopReason" => "end_turn"}},
-               %{"id" => 3, "result" => %{"stopReason" => "end_turn"}}
+               %{"id" => 3, "result" => %{"stopReason" => "end_turn"}},
+               %{"id" => 4, "result" => %{"stopReason" => "end_turn"}}
              ] = responses(transcript) |> Enum.drop(1)
+
+      assert ["first", "second", "third"] =
+               for(
+                 %{"type" => "prompt", "message" => message} <- PiGolden.writes(transcript),
+                 do: message
+               )
     end
 
     test "settlement_without_a_pending_prompt_is_skipped" do
@@ -512,9 +519,10 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
              } =
                Enum.at(transcript, 9).result
 
+      # A cancel has nothing to answer and no Pi to abort, which is not an error.
       assert [
                %{tag: :error, error: ":no_active_pi_session"},
-               %{tag: :error, error: ":no_active_pi_session"},
+               %{tag: :messages, messages: []},
                %{tag: :error, error: ":no_active_pi_session"}
              ] = Enum.map(Enum.slice(transcript, 10..12), & &1.result)
 

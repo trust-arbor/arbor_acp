@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix: the AdapterBridge no longer crashes when `translate_outbound/2` answers `session/new`, `session/load` or `session/resume` with `:messages`, `:messages_and_write`, `:pending_and_write` or `:one_shot`. These forms leave the response to the adapter, which answers once the agent has set the session up; `{:ok, :skip, _}` is still answered with the synthesized session. The Pi adapter returns the first two when a setup cancels a running prompt.
+- Fix: the AdapterBridge accepts every `translate_outbound/2` result form on the other routes the Pi adapter uses: `session/set_config_option` takes `:messages`, `{:ok, :pending, _}`, `:one_shot` and a bare `{:error, reason}`; `authenticate` takes `:pending_and_write`, `:messages_and_reply_and_write` and `:one_shot`; and `session/close`, `session/delete`, `session/set_mode`, `session/set_model` and `logout` take `:one_shot`. A contract test drives every form through every such route, with its write accepted and rejected.
+- Fix: when the write accompanying a translation fails, the responses among its messages are still delivered: they answer other requests the adapter has already settled, such as prompts it cancelled. The notifications are still dropped with the write, and the request is answered with the write's error.
+- **Behaviour change:** the AdapterBridge calls `outbound_write_failed/3` after any failed outbound write, not only `:pending_and_write`, so an adapter can stop tracking a request the bridge answered with the write's error.
+
 ## 1.0.0-rc.4 — 2026-10-26
 
 - Require `arbor_rpc` 1.0.0-rc.3. Its `Subprocess.close/1` closes a child's stdin and waits `:eof_grace` before signalling it, and its C compiler is optional.

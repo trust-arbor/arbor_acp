@@ -14,11 +14,19 @@ still settle the caller. This explicit shape does not alter the response behavio
 of existing `:ok`, `:pending`, or immediate-reply return shapes.
 
 Adapters retaining native correlations for this form must implement
-`outbound_write_failed(acp_message, reason, state) :: state`. It is called only
-for a failed `:pending_and_write` write, before the bridge emits its ACP error.
-Retire the pending correlation so late native replies are ignored, but preserve
-the native ID sequence. A reported write failure can have an uncertain outcome;
-the callback does not undo native side effects or emit another response.
+`outbound_write_failed(acp_message, reason, state) :: state`. It is called for
+any failed outbound write, in this or any other form that writes, before the
+bridge emits its ACP error. Retire whatever the write was to start (a pending
+correlation, a request answered later) so late native replies are ignored, but
+preserve the native ID sequence. A reported write failure can have an uncertain
+outcome; the callback does not undo native side effects or emit another
+response. Responses the translation emitted for other requests are still
+delivered when its write fails; its notifications are not.
+
+For `session/new`, `session/load` and `session/resume`, a translation without a
+result (`{:ok, :pending, _}`, a write, `:messages`, `:messages_and_write`,
+`:pending_and_write` or `:one_shot`) leaves the response to the adapter;
+`{:ok, :skip, _}` is answered with the bridge's synthesized session.
 
 ## Owned child support
 

@@ -255,8 +255,10 @@ one ACP result or error. Duplicate native responses must not settle it twice.
 Write failures still become ACP errors, and client timeouts or transport closure
 remain terminal for the caller. Existing immediate-reply return forms are unchanged.
 Implement `outbound_write_failed/3` when retaining a native correlation for this
-form: remove its pending entry without reusing the native ID or emitting a
-response. The bridge emits the write error, and late native replies must be ignored.
+form, or for any other form that writes and answers later: remove its pending
+entry without reusing the native ID or emitting a response. The bridge calls it
+for every failed outbound write, emits the write error, and late native replies
+must be ignored.
 
 Use `Arbor.ACP.AdapterEvents` for ACP message construction and public
 `Arbor.ACP.AdapterSupport` helpers for shared policy and owned subprocess handles.

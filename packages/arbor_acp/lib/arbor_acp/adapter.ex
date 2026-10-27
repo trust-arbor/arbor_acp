@@ -83,6 +83,14 @@ defmodule Arbor.ACP.Adapter do
   Adapter-managed implementations may return `{:ok, :pending, state}` after
   writing to one of their own subprocesses when the ACP response will be
   emitted later from `handle_adapter_message/2`.
+
+  For `session/new`, `session/load` and `session/resume`, a form without a
+  result (`{:ok, :pending, _}`, a write, `:messages`, `:messages_and_write`,
+  `:pending_and_write`, `:one_shot`) leaves the response to the adapter, while
+  `{:ok, :skip, _}` is answered with the bridge's synthesized session. When a
+  write fails, the request is answered with the error and
+  `outbound_write_failed/3` is called; responses among the messages (answers
+  to other requests) are delivered anyway, notifications are not.
   """
   @callback translate_outbound(acp_message :: map(), state()) ::
               {:ok, iodata(), state()}
@@ -117,16 +125,20 @@ defmodule Arbor.ACP.Adapter do
               | {:skip, state()}
 
   @doc """
-  Retire deferred response tracking when a `:pending_and_write` write fails.
+  Retire deferred response tracking when an outbound write fails.
 
-  The bridge calls this optional callback with the original ACP message, the
-  write error, and the state returned by `translate_outbound/2`, before emitting
-  the ACP error itself. Return state that ignores late replies for this request.
-  Do not emit a response or rewind native request IDs: a failed write may have
-  reached the subprocess. This does not undo any native side effects.
+  The bridge calls this optional callback whenever it cannot write what
+  `translate_outbound/2` returned, in any form that writes, with the original
+  ACP message, the write error, and the state returned by
+  `translate_outbound/2`, before emitting the ACP error itself. Return state
+  that no longer tracks the request (it is answered with that error) and
+  ignores late replies for it. Do not emit a response or rewind native request
+  IDs: a failed write may have reached the subprocess. This does not undo any
+  native side effects. Responses the translation emitted for other requests
+  are still delivered; its notifications are not.
 
-  Required when `:pending_and_write` retains a pending correlation; other
-  outbound return forms do not invoke this callback.
+  Required when `:pending_and_write` retains a pending correlation, or when
+  any other form that writes leaves the request to be answered later.
   """
   @callback outbound_write_failed(acp_message :: map(), reason :: term(), state()) :: state()
 

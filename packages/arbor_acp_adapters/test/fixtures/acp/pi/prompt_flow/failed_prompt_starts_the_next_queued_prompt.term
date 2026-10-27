@@ -318,6 +318,13 @@
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
+      kind: :note,
+      text: "Pi runs no turn for a prompt it refused, so the queued prompt starts at once"
+    },
+    result: %{}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
       kind: :inbound,
       message: %{
         "command" => "prompt",
@@ -333,45 +340,6 @@
           "error" => %{"code" => -32603, "message" => "model failed"},
           "id" => 2,
           "jsonrpc" => "2.0"
-        }
-      ],
-      tag: :messages
-    }
-  },
-  %Arbor.ACP.Test.PiGolden.Entry{
-    step: %{
-      kind: :note,
-      text: "No settlement follows a failed prompt, so the queue is not drained"
-    },
-    result: %{}
-  },
-  %Arbor.ACP.Test.PiGolden.Entry{
-    step: %{kind: :inbound, message: %{"type" => "agent_settled"}},
-    result: %{skipped: true, tag: :skip}
-  },
-  %Arbor.ACP.Test.PiGolden.Entry{
-    step: %{
-      kind: :outbound,
-      message: %{
-        "id" => 4,
-        "method" => "session/prompt",
-        "params" => %{"prompt" => "third", "sessionId" => "pi-session"}
-      }
-    },
-    result: %{tag: :ok, writes: [%{"id" => "msg-2", "message" => "third", "type" => "prompt"}]}
-  },
-  %Arbor.ACP.Test.PiGolden.Entry{
-    step: %{kind: :inbound, message: %{"type" => "agent_settled"}},
-    result: %{
-      messages: [
-        %{
-          "id" => 4,
-          "jsonrpc" => "2.0",
-          "result" => %{
-            "_meta" => %{"ex_mcp" => %{"sessionId" => "pi-session", "text" => ""}},
-            "stopReason" => "end_turn",
-            "usage" => %{}
-          }
         },
         %{
           "jsonrpc" => "2.0",
@@ -397,7 +365,7 @@
         }
       ],
       tag: :messages_and_write,
-      writes: [%{"id" => "msg-3", "message" => "second", "type" => "prompt"}]
+      writes: [%{"id" => "msg-2", "message" => "second", "type" => "prompt"}]
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
@@ -416,5 +384,37 @@
       ],
       tag: :messages
     }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :outbound,
+      message: %{
+        "id" => 4,
+        "method" => "session/prompt",
+        "params" => %{"prompt" => "third", "sessionId" => "pi-session"}
+      }
+    },
+    result: %{tag: :ok, writes: [%{"id" => "msg-3", "message" => "third", "type" => "prompt"}]}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{kind: :inbound, message: %{"type" => "agent_settled"}},
+    result: %{
+      messages: [
+        %{
+          "id" => 4,
+          "jsonrpc" => "2.0",
+          "result" => %{
+            "_meta" => %{"ex_mcp" => %{"sessionId" => "pi-session", "text" => ""}},
+            "stopReason" => "end_turn",
+            "usage" => %{}
+          }
+        }
+      ],
+      tag: :messages
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{kind: :inbound, message: %{"type" => "agent_settled"}},
+    result: %{skipped: true, tag: :skip}
   }
 ]
