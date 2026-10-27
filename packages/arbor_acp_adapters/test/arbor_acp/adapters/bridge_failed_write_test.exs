@@ -60,6 +60,10 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
     while IFS= read -r line; do
       case "$line" in
         "__emit__ "*) printf '%s\\n' "${line#__emit__ }" ;;
+        # An event too large to send through the limited stdin.
+        "__big_select__")
+          option=$(head -c 4096 /dev/zero | tr '\\0' x)
+          printf '{"type":"extension_ui_request","id":"ui-1","method":"select","title":"Pick","options":["%s"]}\\n' "$option" ;;
       esac
     done
     """)
@@ -73,6 +77,75 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
     @route route
     test "#{adapter} #{route}: a rejected write leaves nothing pending", ctx do
       ctx |> Map.put(:adapter, @adapter) |> scenario(@route) |> run_case()
+    end
+  end
+
+  # An agent's request to the client and the client's own request can share
+  # an id, because each side numbers its requests itself. A failed write of
+  # the client's response must not retire, or answer, the client's request.
+  describe "a failed response write when ids overlap across directions" do
+    test "claude: a file-read answer that cannot be written leaves the prompt running", ctx do
+      ctx = ctx |> Map.put(:adapter, :claude) |> scenario("session/prompt") |> start()
+      open_session(ctx, "session/new", %{"cwd" => ctx.dir, "sessionId" => "claude-session"}, [])
+
+      emit(ctx, %{
+        "type" => "control_request",
+        "request_id" => "read-1",
+        "request" => %{"subtype" => "read_file", "path" => Path.join(ctx.dir, "notes.txt")}
+      })
+
+      assert %{"method" => "fs/read_text_file", "id" => shared} =
+               ctx |> collect_until(&(&1["method"] == "fs/read_text_file")) |> List.last()
+
+      # The client's prompt takes the id of Claude's open request.
+      send_request(ctx, shared, "session/prompt", prompt_params("claude-session", "hello"))
+      assert adapter_state(ctx).pending_prompt_id == shared
+
+      answer = %{"jsonrpc" => "2.0", "id" => shared, "result" => %{"content" => @huge}}
+      assert {:error, _reason} = AdapterBridge.send_message(ctx.bridge, Jason.encode!(answer))
+
+      assert answers(drain(ctx), shared) == []
+      assert adapter_state(ctx).pending_prompt_id == shared
+
+      emit(ctx, claude_result("done"))
+      later = collect_until(ctx, &response_to?(&1, shared))
+      assert [%{"result" => %{"stopReason" => "end_turn"}}] = answers(later, shared)
+      AdapterBridge.close(ctx.bridge)
+    end
+
+    test "pi: an extension answer that cannot be written leaves the prompt running", ctx do
+      ctx = ctx |> Map.put(:adapter, :pi) |> scenario("session/prompt") |> start()
+      ctx = ctx.setup.(ctx)
+
+      # Pi names its next extension request after the prompt counter.
+      shared = "pi-extension-#{adapter_state(ctx).msg_counter + 2}"
+      send_request(ctx, shared, "session/prompt", prompt_params("N1", "hello"))
+      assert %{acp_id: ^shared} = adapter_state(ctx).pending_prompt
+
+      port = :sys.get_state(ctx.bridge).port
+      assert :ok = PortRunner.command(port, "__big_select__\n")
+
+      assert %{"method" => "session/request_permission", "id" => ^shared} =
+               ctx
+               |> collect_until(&(&1["method"] == "session/request_permission"))
+               |> List.last()
+
+      answer = %{
+        "jsonrpc" => "2.0",
+        "id" => shared,
+        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "choice-0"}}
+      }
+
+      assert {:error, _reason} = AdapterBridge.send_message(ctx.bridge, Jason.encode!(answer))
+      assert answers(drain(ctx), shared) == []
+      assert %{acp_id: ^shared} = adapter_state(ctx).pending_prompt
+
+      {msg_id, _counter} = RPC.next_prompt_id(0)
+      emit(ctx, pi_response(msg_id, "prompt", %{}))
+      emit(ctx, %{"type" => "agent_settled"})
+      later = collect_until(ctx, &response_to?(&1, shared))
+      assert [%{"result" => %{"stopReason" => "end_turn"}}] = answers(later, shared)
+      AdapterBridge.close(ctx.bridge)
     end
   end
 

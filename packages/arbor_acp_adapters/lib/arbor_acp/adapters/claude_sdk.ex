@@ -107,10 +107,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     message_ids: %{},
     background_subagents: MapSet.new(),
     deferred_result: nil,
-    # What the latest outbound translation started before its write (control
-    # request ids, and the Auto fallback notice it consumed), so a write the
-    # bridge could not make can be retired; see outbound_write_failed/3.
-    last_write: %{controls: [], notice: nil}
+    # What the latest outbound translation started before its write (the
+    # prompt, control request ids, and the Auto fallback notice it consumed),
+    # so a write the bridge could not make can be retired; see
+    # outbound_write_failed/3.
+    last_write: %{prompt: nil, controls: [], notice: nil}
   ]
 
   @impl true
@@ -258,22 +259,26 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   # The bridge writes what translate_outbound/2 returns. When it cannot, it
   # answers the request with the error and calls this, so nothing the write
   # was to start is tracked any more: Claude never received it.
+  #
+  # Only what that translation recorded is retired. Matching the failed
+  # message's id instead would confuse directions: the client's response to a
+  # request Claude made can carry the same id as a prompt already running.
   @impl true
-  def outbound_write_failed(message, _reason, state) do
-    %{controls: controls, notice: notice} = state.last_write
+  def outbound_write_failed(_message, _reason, state) do
+    %{prompt: prompt, controls: controls, notice: notice} = state.last_write
 
     state = %{
       state
       | pending_controls: Map.drop(state.pending_controls, controls),
-        last_write: %{controls: [], notice: nil}
+        last_write: %{prompt: nil, controls: [], notice: nil}
     }
 
     # The notice went out with the write's notifications, which were dropped.
     state = if notice, do: Map.merge(state, notice), else: state
-    retire_unsent_prompt(message, state)
+    retire_unsent_prompt(prompt, state)
   end
 
-  defp retire_unsent_prompt(%{"id" => id}, %{pending_prompt_id: id} = state) when id != nil do
+  defp retire_unsent_prompt(id, %{pending_prompt_id: id} = state) when id != nil do
     %{
       state
       | pending_prompt_id: nil,
@@ -290,7 +295,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     }
   end
 
-  defp retire_unsent_prompt(_message, state), do: state
+  defp retire_unsent_prompt(_prompt, state), do: state
 
   defp remember_write(result, before) do
     last = tuple_size(result) - 1
@@ -306,7 +311,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           if before.auto_fallback_pending? and not state.auto_fallback_pending?,
             do: Map.take(before, [:auto_fallback_pending?, :auto_fallback_warned?])
 
-        put_elem(result, last, %{state | last_write: %{controls: controls, notice: notice}})
+        prompt =
+          if state.pending_prompt_id != before.pending_prompt_id, do: state.pending_prompt_id
+
+        last_write = %{prompt: prompt, controls: controls, notice: notice}
+        put_elem(result, last, %{state | last_write: last_write})
 
       _reason ->
         result

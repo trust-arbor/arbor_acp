@@ -44,6 +44,10 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
     def translate_outbound(%{"params" => %{"shape" => shape}} = message, state),
       do: Arbor.ACP.AdapterBridgeContractTest.outbound(shape, message, state)
 
+    # A client's response to an agent request.
+    def translate_outbound(%{"result" => %{"shape" => shape}} = message, state),
+      do: Arbor.ACP.AdapterBridgeContractTest.outbound(shape, message, state)
+
     def translate_outbound(_message, state), do: {:ok, :skip, state}
 
     @impl true
@@ -185,6 +189,24 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
         assert Enum.any?(output, &(&1["id"] == "other-"))
       end
 
+      close(bridge)
+    end
+  end
+
+  # The response carries the agent's id, which the client may also use for
+  # one of its own requests; answering it would answer that request.
+  for shape <- ~w(ok_write messages_and_write) do
+    @tag shape: shape
+    test "a client response whose #{shape} write is rejected is not answered", context do
+      bridge = start_bridge(false)
+      response = %{"jsonrpc" => "2.0", "id" => 7, "result" => %{"shape" => context.shape}}
+
+      assert {:error, :write_too_large} =
+               AdapterBridge.send_message(bridge, Jason.encode!(response))
+
+      assert Process.alive?(bridge)
+      assert collect(bridge, nil) |> Enum.filter(&response_to?(&1, 7)) == []
+      assert_received {:write_failed, 7, :write_too_large}
       close(bridge)
     end
   end

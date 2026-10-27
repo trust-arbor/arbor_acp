@@ -978,7 +978,7 @@ defmodule Arbor.ACP.AdapterBridge do
             {:reply, :ok, state}
 
           {:error, reason} ->
-            reply_translation_error(%{"id" => id}, reason, write_failed(state, msg, reason))
+            reply_translation_error(msg, reason, write_failed(state, msg, reason))
         end
 
       {:messages, messages, adapter_state} ->
@@ -993,13 +993,13 @@ defmodule Arbor.ACP.AdapterBridge do
 
           {:error, reason} ->
             state = state |> push_responses(messages) |> write_failed(msg, reason)
-            reply_translation_error(%{"id" => id}, reason, state)
+            reply_translation_error(msg, reason, state)
         end
 
       {:pending_and_write, data, adapter_state} ->
         case write_pending_translation(msg, data, adapter_state, state) do
           {:pending_and_write, :sent, state} -> {:reply, :ok, state}
-          {:error, reason, state} -> reply_translation_error(%{"id" => id}, reason, state)
+          {:error, reason, state} -> reply_translation_error(msg, reason, state)
         end
 
       {:one_shot, cmd_fn, adapter_state} ->
@@ -1112,7 +1112,7 @@ defmodule Arbor.ACP.AdapterBridge do
     end
   end
 
-  defp synthesize_translated_reply(%{"id" => id}, result, state) do
+  defp synthesize_translated_reply(%{"id" => id, "method" => _method}, result, state) do
     {:reply, :ok, synthesize_result(state, id, result || %{})}
   end
 
@@ -1204,7 +1204,10 @@ defmodule Arbor.ACP.AdapterBridge do
   defp push_encoded_messages(state, messages),
     do: push_messages(state, Enum.map(messages, &Jason.encode!/1))
 
-  defp reply_translation_error(%{"id" => id}, reason, state) do
+  # Only a request is answered. A client's response to an agent request
+  # carries the agent's id, which may equal one of the client's own request
+  # ids, so an error under it would answer the wrong request.
+  defp reply_translation_error(%{"id" => id, "method" => _method}, reason, state) do
     {:reply, :ok, synthesize_error(state, id, -32_603, to_string(reason))}
   end
 

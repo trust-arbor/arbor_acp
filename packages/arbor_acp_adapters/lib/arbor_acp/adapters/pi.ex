@@ -368,8 +368,11 @@ defmodule Arbor.ACP.Adapters.Pi do
   # Unmanaged, the consumer writes what translate_outbound/2 returns. When that
   # write fails the request is answered with the error, so nothing it started
   # is tracked any more: Pi never received it.
+  # Only requests start prompts, commands, setups and model switches; a
+  # client's response to a Pi extension request is never retired, even when
+  # its id equals one of the client's requests.
   @impl true
-  def outbound_write_failed(%{"id" => acp_id}, _reason, state) do
+  def outbound_write_failed(%{"id" => acp_id, "method" => _method}, _reason, state) do
     state
     |> retire_prompt(acp_id)
     |> retire_prompt_commands(acp_id)
