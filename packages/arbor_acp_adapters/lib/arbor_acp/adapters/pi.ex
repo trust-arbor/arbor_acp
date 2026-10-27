@@ -259,24 +259,24 @@ defmodule Arbor.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "session/close", "params" => params}, state) do
     session_id = params["sessionId"]
 
-    {messages, state} =
+    {messages, abort, state} =
       if is_nil(session_id) or session_id == state.session_id do
         close_session(state)
       else
-        {[], state}
+        {[], nil, state}
       end
 
-    state |> cleanup_reply() |> with_reply_messages(messages) |> advance_after_reply()
+    state |> cleanup_reply() |> with_reply_extras(messages, abort) |> advance_after_reply()
   end
 
   def translate_outbound(%{"method" => "session/delete", "params" => params}, state) do
     session_id = params["sessionId"]
 
-    {messages, state} =
+    {messages, abort, state} =
       if is_nil(session_id) or session_id == state.session_id do
         close_session(state)
       else
-        {[], state}
+        {[], nil, state}
       end
 
     case state.cleanup_result do
@@ -285,7 +285,7 @@ defmodule Arbor.ACP.Adapters.Pi do
           if is_binary(session_id), do: SessionStore.delete(state.session_map_path, session_id)
 
         maybe_delete_session_file(state, entry || %{"sessionFile" => state.session_file})
-        {:reply, %{}, state} |> with_reply_messages(messages) |> advance_after_reply()
+        {:reply, %{}, state} |> with_reply_extras(messages, abort) |> advance_after_reply()
 
       {:error, reason} ->
         {:error, inspect(reason), state}
@@ -542,15 +542,24 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   @closed_during_setup "The session was closed before this session setup completed"
 
-  # A managed close ends the Pi process and the operation in flight with it.
-  # A running setup is answered with an error, queued model work was for the
-  # closed session, and waiting setups start next. An unmanaged consumer's Pi
-  # process outlives the session, so the operation in flight, and a running
-  # setup's group, still get their replies.
-  defp close_session(%{managed?: false} = state), do: {[], keep_operation_across_close(state)}
+  # Closing a session answers its running and queued prompts and running
+  # prompt commands as cancelled, so none waits for its timeout; an unmanaged
+  # Pi, which keeps running, is asked to abort. A managed close also ends the
+  # Pi process and the operation in flight with it: a running setup is
+  # answered with an error, queued model work was for the closed session, and
+  # waiting setups start next. An unmanaged consumer's Pi process outlives
+  # the session, so the operation in flight, and a running setup's group,
+  # still get their replies.
+  defp close_session(%{managed?: false} = state) do
+    {cancelled, abort?, state} = cancel_session_prompts(state)
+    {abort, state} = abort_running_prompt(abort?, state)
+    {cancelled, abort, keep_operation_across_close(state)}
+  end
 
   defp close_session(state) do
-    messages =
+    {cancelled, _abort?, state} = cancel_session_prompts(state)
+
+    setup_errors =
       case state.op_in_flight do
         %{type: :setup, acp_id: acp_id} = op ->
           if Map.get(op, :cancelled?, false),
@@ -562,7 +571,9 @@ defmodule Arbor.ACP.Adapters.Pi do
       end
 
     state = close_active_session(state)
-    {messages, %{state | op_queue: Enum.filter(state.op_queue, &(&1.type == :setup))}}
+
+    {cancelled ++ setup_errors, nil,
+     %{state | op_queue: Enum.filter(state.op_queue, &(&1.type == :setup))}}
   end
 
   defp keep_operation_across_close(state) do
@@ -583,12 +594,18 @@ defmodule Arbor.ACP.Adapters.Pi do
       else: state
   end
 
-  defp with_reply_messages(result, []), do: result
+  defp with_reply_extras({:reply, result, state}, [], nil), do: {:reply, result, state}
 
-  defp with_reply_messages({:reply, result, state}, messages),
+  defp with_reply_extras({:reply, result, state}, messages, nil),
     do: {:messages_and_reply, messages, result, state}
 
-  defp with_reply_messages(result, _messages), do: result
+  defp with_reply_extras({:reply, result, state}, [], data),
+    do: {:reply_and_write, result, data, state}
+
+  defp with_reply_extras({:reply, result, state}, messages, data),
+    do: {:messages_and_reply_and_write, messages, result, data, state}
+
+  defp with_reply_extras(result, _messages, _data), do: result
 
   defp close_active_session(%{port: nil} = state) do
     demonitor_port(state)
@@ -891,7 +908,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     if cancelled_change_unanswered?(state) do
       {:error, @unanswered_change, state}
     else
-      {cancelled, abort?, state} = cancel_prompts_for_setup(state)
+      {cancelled, abort?, state} = cancel_session_prompts(state)
       {abort, state} = abort_running_prompt(abort?, state)
 
       result =
@@ -911,7 +928,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     if changing?, do: {:error, @changing_sessions}, else: :ok
   end
 
-  defp cancel_prompts_for_setup(state) do
+  defp cancel_session_prompts(state) do
     {queued, state} = PromptFlow.cancel_queued(state)
 
     {running, abort?, state} =
@@ -1099,39 +1116,35 @@ defmodule Arbor.ACP.Adapters.Pi do
     |> add_write(data)
   end
 
-  defp advance_after_reply({:reply, result, state}) do
-    case advance_after({:skip, state}) do
-      {:skip, state} ->
-        {:reply, result, state}
+  # Adds what advancing the operation queue sends or answers to a reply.
+  defp advance_after_reply(result) do
+    case split_reply(result) do
+      {messages, reply, data, state} ->
+        {more_data, more_messages, state} = advance_ops(state)
 
-      {:messages, messages, state} ->
-        {:messages_and_reply, messages, result, state}
+        data =
+          if data && more_data,
+            do: IO.iodata_to_binary([data, more_data]),
+            else: data || more_data
 
-      {:skip_and_write, data, state} ->
-        {:reply_and_write, result, data, state}
+        with_reply_extras({:reply, reply, state}, messages ++ more_messages, data)
 
-      {:messages_and_write, messages, data, state} ->
-        {:messages_and_reply_and_write, messages, result, data, state}
+      :error ->
+        result
     end
   end
 
-  defp advance_after_reply({:messages_and_reply, messages, result, state}) do
-    case advance_after_reply({:reply, result, state}) do
-      {:reply, result, state} ->
-        {:messages_and_reply, messages, result, state}
+  defp split_reply({:reply, reply, state}), do: {[], reply, nil, state}
 
-      {:messages_and_reply, new, result, state} ->
-        {:messages_and_reply, messages ++ new, result, state}
+  defp split_reply({:messages_and_reply, messages, reply, state}),
+    do: {messages, reply, nil, state}
 
-      {:reply_and_write, result, data, state} ->
-        {:messages_and_reply_and_write, messages, result, data, state}
+  defp split_reply({:reply_and_write, reply, data, state}), do: {[], reply, data, state}
 
-      {:messages_and_reply_and_write, new, result, data, state} ->
-        {:messages_and_reply_and_write, messages ++ new, result, data, state}
-    end
-  end
+  defp split_reply({:messages_and_reply_and_write, messages, reply, data, state}),
+    do: {messages, reply, data, state}
 
-  defp advance_after_reply(result), do: result
+  defp split_reply(_result), do: :error
 
   defp add_message({:skip, state}, message), do: {:messages, [message], state}
 

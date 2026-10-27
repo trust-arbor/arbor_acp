@@ -787,7 +787,9 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert Enum.any?(messages, &(&1["id"] == 14))
     end
 
-    test "session/close clears active runtime state", %{state: state} do
+    test "session/close answers its prompts as cancelled and clears runtime state", %{
+      state: state
+    } do
       state = %{
         state
         | session_id: "s1",
@@ -797,12 +799,18 @@ defmodule Arbor.ACP.Adapters.PiTest do
             |> PromptQueue.enqueue(%{acp_id: 2, message: "queued", images: [], params: %{}})
       }
 
-      assert {:reply, %{}, new_state} =
+      assert {:messages_and_reply_and_write, cancelled, %{}, abort, new_state} =
                Pi.translate_outbound(
                  %{"method" => "session/close", "params" => %{"sessionId" => "s1"}},
                  state
                )
 
+      assert Enum.map(cancelled, &{&1["id"], &1["result"]}) == [
+               {1, %{"stopReason" => "cancelled"}},
+               {2, %{"stopReason" => "cancelled"}}
+             ]
+
+      assert [%{"type" => "abort"}] = decode_many(abort)
       assert new_state.pending_prompt == nil
       assert PromptQueue.empty?(new_state.prompt_queue)
     end

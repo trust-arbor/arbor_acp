@@ -551,7 +551,7 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
   end
 
   describe "close and shutdown" do
-    test "close_discards_active_prompt_and_queue_silently" do
+    test "close_answers_active_prompt_and_queue_as_cancelled" do
       steps =
         Flows.open_session(1) ++
           [
@@ -565,12 +565,41 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
           ]
 
       transcript =
-        PiGolden.assert_golden(@area, "close_discards_active_prompt_and_queue_silently", steps)
+        PiGolden.assert_golden(@area, "close_answers_active_prompt_and_queue_as_cancelled", steps)
 
-      assert [%{"id" => 1}, %{"id" => 5}] = responses(transcript)
+      assert [
+               %{"id" => 1},
+               %{"id" => 2, "result" => %{"stopReason" => "cancelled"}},
+               %{"id" => 3, "result" => %{"stopReason" => "cancelled"}},
+               %{"id" => 5}
+             ] = responses(transcript)
 
       assert %{"id" => "msg-2", "message" => "fresh"} =
                transcript |> PiGolden.writes() |> List.last()
+    end
+
+    test "managed_close_answers_the_running_prompt_as_cancelled" do
+      steps =
+        [{:init, managed: true}] ++
+          Flows.open_session(1) ++
+          [Flows.prompt(2, "working"), Flows.prompt(3, "queued"), close_session(4)]
+
+      transcript =
+        PiGolden.assert_golden(
+          @area,
+          "managed_close_answers_the_running_prompt_as_cancelled",
+          steps
+        )
+
+      assert %{
+               tag: :messages_and_reply,
+               messages: [
+                 %{"id" => 2, "result" => %{"stopReason" => "cancelled"}},
+                 %{"id" => 3, "result" => %{"stopReason" => "cancelled"}}
+               ],
+               reply: %{},
+               port: :closed
+             } = PiGolden.last_result(transcript)
     end
 
     test "shutdown_discards_pending_work_silently" do

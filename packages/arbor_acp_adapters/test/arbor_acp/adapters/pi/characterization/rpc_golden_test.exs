@@ -322,23 +322,29 @@ defmodule Arbor.ACP.Adapters.Pi.RpcGoldenTest do
                Enum.map(Enum.take(transcript, -3), & &1.result)
     end
 
-    test "session_close_drops_pending_prompt_without_response" do
+    test "session_close_answers_pending_prompt_as_cancelled" do
       steps =
         Flows.open_session(1) ++
           [
             Flows.prompt(2, "hello"),
             {:outbound,
              %{"method" => "session/close", "id" => 3, "params" => %{"sessionId" => "pi-session"}}},
-            {:note, "The closed session's prompt is never answered"},
+            {:note, "Close answered the prompt as cancelled; its late settlement is skipped"},
             Flows.agent_settled()
           ]
 
       transcript =
         PiGolden.assert_golden(
           @area,
-          "session_close_drops_pending_prompt_without_response",
+          "session_close_answers_pending_prompt_as_cancelled",
           steps
         )
+
+      assert %{
+               messages: [%{"id" => 2, "result" => %{"stopReason" => "cancelled"}}],
+               reply: %{},
+               writes: [%{"type" => "abort"}]
+             } = transcript |> Enum.at(-3) |> Map.fetch!(:result)
 
       assert %{tag: :skip} = PiGolden.last_result(transcript)
     end

@@ -365,7 +365,12 @@
         "params" => %{"sessionId" => "pi-session"}
       }
     },
-    result: %{reply: %{}, tag: :reply}
+    result: %{
+      messages: [%{"id" => 4, "jsonrpc" => "2.0", "result" => %{"stopReason" => "cancelled"}}],
+      reply: %{},
+      tag: :messages_and_reply_and_write,
+      writes: [%{"type" => "abort"}]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :inbound, message: %{"type" => "agent_settled"}},

@@ -83,11 +83,14 @@ defmodule Arbor.ACP.Test.PiGolden do
   object lacks its terminator, or that contains an empty line, raises rather
   than silently producing the same transcript.
 
-  The `Arbor.ACP.Adapter` behaviour also allows `{:one_shot, fun, state}`,
-  `{:partial, state}` and `{:reply_and_write, result, data, state}`. The Pi
-  adapter never returns them and `normalize_result/1` deliberately has no
-  clauses for them; a step that produced one raises a `FunctionClauseError`
-  here, which is the right signal to extend the harness.
+  The `Arbor.ACP.Adapter` behaviour also allows `{:one_shot, fun, state}` and
+  `{:partial, state}`. The Pi adapter never returns them and
+  `normalize_result/1` deliberately has no clauses for them; a step that
+  produced one raises a `FunctionClauseError` here, which is the right
+  signal to extend the harness. `session/close` and `session/delete` can
+  reply and write at once (the cancelled prompts' `abort`, or a waiting
+  setup's change), so `{:reply_and_write, ...}` and
+  `{:messages_and_reply_and_write, ...}` are recorded.
 
   ## Managed mode
 
@@ -575,6 +578,18 @@ defmodule Arbor.ACP.Test.PiGolden do
 
   defp normalize_result({:messages_and_write, messages, data, state}),
     do: {%{tag: :messages_and_write, messages: messages, writes: decode_writes(data)}, state}
+
+  defp normalize_result({:reply_and_write, result, data, state}),
+    do: {%{tag: :reply_and_write, reply: result, writes: decode_writes(data)}, state}
+
+  defp normalize_result({:messages_and_reply_and_write, messages, result, data, state}) do
+    {%{
+       tag: :messages_and_reply_and_write,
+       messages: messages,
+       reply: result,
+       writes: decode_writes(data)
+     }, state}
+  end
 
   defp normalize_result({:skip_and_write, data, state}),
     do: {%{tag: :skip_and_write, skipped: true, writes: decode_writes(data)}, state}

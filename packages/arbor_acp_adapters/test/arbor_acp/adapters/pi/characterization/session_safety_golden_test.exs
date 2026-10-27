@@ -347,7 +347,7 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
             delete(3, nil),
             {:read_file, Flows.session_file("pi-session")},
             {:read_file, @map},
-            {:note, "The dropped prompt is never answered"},
+            {:note, "Delete answered the prompt as cancelled; its late settlement is skipped"},
             Flows.agent_settled()
           ]
 
@@ -386,8 +386,11 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
           steps
         )
 
-      assert [%{"id" => 1}, %{"id" => 2, "result" => %{"stopReason" => "end_turn"}}] =
-               transcript |> PiGolden.messages() |> Enum.filter(&Map.has_key?(&1, "id"))
+      assert [
+               %{"id" => 1},
+               %{"id" => 2, "result" => %{"stopReason" => "end_turn"}},
+               %{"id" => 4, "result" => %{"stopReason" => "cancelled"}}
+             ] = transcript |> PiGolden.messages() |> Enum.filter(&Map.has_key?(&1, "id"))
 
       assert [{_, %{content: %{"sessions" => %{}}}}] = file_results(transcript)
     end
