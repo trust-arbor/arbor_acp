@@ -64,9 +64,12 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
     dir=$(dirname "$0")
     tab=$(printf '\\t')
     : > "$dir/triggers"
+    hold=0
     while IFS= read -r line; do
       case "$line" in
         "__emit__ "*) printf '%s\\n' "${line#__emit__ }" ;;
+        # Stay up after stdin closes, so writes fail while the agent lives.
+        "__hold__") hold=1 ;;
         "__when__ "*) printf '%s\\n' "${line#__when__ }" >> "$dir/triggers" ;;
         # Requests too large to send through the limited stdin.
         "__big_select__")
@@ -82,6 +85,7 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
           done < "$dir/triggers" ;;
       esac
     done
+    if [ "$hold" = 1 ]; then while :; do sleep 1; done; fi
     """)
 
     File.chmod!(native, 0o755)
@@ -253,6 +257,87 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
       send_request(ctx, @next, "session/prompt", prompt_params("zcode-1", "second prompt"))
       assert_turn_ended(ctx, @next)
     end
+  end
+
+  # A managed Pi whose stdin is gone, while the process is still up.
+  describe "managed Pi with its input broken" do
+    setup ctx do
+      ctx = ctx |> Map.put(:adapter, :pi) |> scenario("session/prompt") |> managed_pi() |> start()
+      ctx = ctx.setup.(ctx)
+      send_request(ctx, 10, "session/prompt", prompt_params("N1", "hello"))
+      emit(ctx, pi_response("msg-1", "prompt", %{}))
+      Map.put(ctx, :port, native_port(ctx))
+    end
+
+    test "a dialog answer that cannot be written reports the error and ends Pi", ctx do
+      emit(ctx, %{
+        "type" => "extension_ui_request",
+        "id" => "ui-1",
+        "method" => "select",
+        "title" => "Pick",
+        "options" => ["a"]
+      })
+
+      assert %{"method" => "session/request_permission", "id" => asked} =
+               ctx
+               |> collect_until(&(&1["method"] == "session/request_permission"))
+               |> List.last()
+
+      break_input(ctx.port)
+
+      answer = %{
+        "jsonrpc" => "2.0",
+        "id" => asked,
+        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "choice-0"}}
+      }
+
+      # Neither the answer nor the cancel in its place reaches Pi.
+      assert {:error, _reason} = AdapterBridge.send_message(ctx.bridge, Jason.encode!(answer))
+
+      # Pi is closed, and its exit answers the running prompt.
+      assert [%{"error" => %{"message" => "Pi process exited" <> _}}] =
+               ctx |> collect_until(&response_to?(&1, 10)) |> answers(10)
+
+      assert Process.alive?(ctx.bridge)
+      assert adapter_state(ctx).port == nil
+      AdapterBridge.close(ctx.bridge)
+    end
+
+    test "an auto-cancel that cannot be written ends Pi instead of crashing the bridge", ctx do
+      # Pi's notification is already queued for the bridge when its input breaks.
+      :sys.suspend(ctx.bridge)
+
+      notify = %{
+        "type" => "extension_ui_request",
+        "id" => "ui-2",
+        "method" => "notify",
+        "message" => "heads up"
+      }
+
+      assert :ok = PortRunner.command(ctx.port, ["__emit__ ", Jason.encode!(notify), "\n"])
+
+      Arbor.ACP.TestHelpers.wait_until(
+        fn ->
+          match?({:message_queue_len, n} when n > 0, Process.info(ctx.bridge, :message_queue_len))
+        end,
+        interval: 1
+      )
+
+      break_input(ctx.port)
+      :sys.resume(ctx.bridge)
+
+      assert [%{"error" => %{"message" => "Pi process exited" <> _}}] =
+               ctx |> collect_until(&response_to?(&1, 10)) |> answers(10)
+
+      assert Process.alive?(ctx.bridge)
+      assert adapter_state(ctx).port == nil
+      AdapterBridge.close(ctx.bridge)
+    end
+  end
+
+  defp break_input(port) do
+    assert :ok = PortRunner.command(port, "__hold__\n")
+    assert :ok = Arbor.RPC.Subprocess.close_input(port)
   end
 
   defp managed_pi(ctx) do

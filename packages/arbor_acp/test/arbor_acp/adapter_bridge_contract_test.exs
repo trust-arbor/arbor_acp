@@ -64,8 +64,10 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
     def outbound_write_failed(message, reason, state) do
       send(state.test_pid, {:write_failed, message["id"], reason})
 
-      # A client response the agent waits for gets a replacement answer.
-      case get_in(message, ["result", "replacement"]) do
+      # A replacement answer, such as the one a client response the agent
+      # waits for gets.
+      case get_in(message, ["result", "replacement"]) ||
+             get_in(message, ["params", "replacement"]) do
         nil -> state
         replacement -> {:write, replacement, state}
       end
@@ -219,6 +221,38 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
     end
   end
 
+  # Every failed-write path hands the callback's replacement to the native
+  # process the same way, and keeps the adapter's state intact for the next.
+  for method <- @requests, shape <- @writes do
+    @tag method: method, shape: shape
+    test "#{method} returning #{shape}: a replacement for the rejected write is written",
+         context do
+      bridge = start_bridge(false)
+
+      for id <- [7, 8] do
+        params = %{"shape" => context.shape, "replacement" => "rep\n", "sessionId" => "s"}
+
+        request = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "method" => context.method,
+          "params" => params
+        }
+
+        assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(request))
+        assert_received {:write_failed, ^id, :write_too_large}
+
+        # `cat` echoes what reached the native process.
+        output = collect_until_replaced(bridge)
+        assert Enum.any?(output, &(&1["params"]["for"] == "replaced"))
+        assert [%{"error" => _}] = Enum.filter(output, &response_to?(&1, id))
+      end
+
+      assert :sys.get_state(bridge).status == :ready
+      close(bridge)
+    end
+  end
+
   test "a replacement for a client response that cannot be written is written instead" do
     bridge = start_bridge(false)
     # Within the 4-byte limit the rejected answer exceeded.
@@ -359,6 +393,20 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
     case AdapterBridge.receive_message(bridge, 0) do
       {:ok, raw} -> [Jason.decode!(raw) | collect(bridge, nil)]
       {:error, _reason} -> []
+    end
+  end
+
+  defp collect_until_replaced(bridge) do
+    case AdapterBridge.receive_message(bridge, 2_000) do
+      {:ok, raw} ->
+        message = Jason.decode!(raw)
+
+        if message["params"]["for"] == "replaced",
+          do: [message | collect(bridge, nil)],
+          else: [message | collect_until_replaced(bridge)]
+
+      {:error, _reason} ->
+        []
     end
   end
 

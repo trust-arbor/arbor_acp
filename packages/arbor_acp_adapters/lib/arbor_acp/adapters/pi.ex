@@ -2382,14 +2382,18 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp deliver_ui_answer(data, _pi_id, %{managed?: false} = state), do: {:ok, data, state}
 
   # Pi waits for the dialog's answer with no timeout, so when it cannot be
-  # written a cancel takes its place; when that fails too, Pi's input is
-  # broken and the process is treated as gone.
+  # written a cancel takes its place. When that fails too, Pi's input is
+  # broken: Pi is closed, and its exit is handled, answering what it had
+  # pending, once the bridge sees it go. Either way the client hears of the
+  # write error.
   defp deliver_ui_answer(data, pi_id, state) do
     with {:error, reason} <- write_managed(data, state) do
       case write_managed(RPC.line(cancelled_extension_ui_response(pi_id)), state) do
-        :ok -> {:error, inspect(reason), state}
-        {:error, _reason} -> fail_managed_input(state, {:write_failed, reason})
+        :ok -> :ok
+        {:error, _reason} -> PortRunner.close(state.port)
       end
+
+      {:error, inspect(reason), state}
     else
       :ok -> {:ok, :pending, state}
     end

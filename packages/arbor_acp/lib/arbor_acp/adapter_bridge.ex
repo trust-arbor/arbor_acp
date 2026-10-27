@@ -1275,12 +1275,7 @@ defmodule Arbor.ACP.AdapterBridge do
         {:pending_and_write, :sent, state}
 
       {:error, reason} ->
-        adapter_state =
-          if function_exported?(state.adapter_mod, :outbound_write_failed, 3),
-            do: state.adapter_mod.outbound_write_failed(msg, reason, adapter_state),
-            else: adapter_state
-
-        {:error, reason, %{state | adapter_state: adapter_state}}
+        {:error, reason, write_failed(state, msg, reason)}
     end
   end
 
