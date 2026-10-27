@@ -76,29 +76,13 @@ defmodule Arbor.ACP.Adapters.Pi do
     edit_snapshots: %{},
     pending_extension_ui: %{},
     last_usage: %{},
-    pending_usage_request: nil,
-    # Model switches are serialized: at most one set_model request, or the
-    # get_state/get_available_thinking_levels refresh that follows it, is in
-    # flight. A switch requested meanwhile waits in queued_model_switch, which
-    # keeps only the latest request.
-    pending_model_switch: nil,
-    pending_model_refresh: nil,
-    queued_model_switch: nil,
-    # Ids of new_session/switch_session requests Pi has not answered. Model
-    # work waits while any is pending, since Pi would apply it to whichever
-    # session ends up active.
-    pending_session_changes: MapSet.new(),
-    # Session changes Pi has not answered whose setup the client cancelled,
-    # and switches back to the previous session; both map the Pi request id
-    # to the previous session. Their ids stay in pending_session_changes.
-    orphaned_session_changes: %{},
-    restoring_session_changes: %{},
-    # Requests of setup or command groups that ended before Pi answered them.
-    # Their replies are dropped when they arrive; Pi exiting clears the set.
-    retired_rpc_ids: MapSet.new(),
-    # session/new, session/load and session/resume requests waiting for the
-    # setup in progress to finish; one setup runs at a time.
-    queued_session_setups: [],
+    # Pi requests that read or change the session run as serialized
+    # operations, one in flight and the rest queued (see "Serialized Pi
+    # operations").
+    op_in_flight: nil,
+    op_queue: [],
+    # Set when Pi could not return to the session the adapter serves.
+    desynced: nil,
     pending_controls: %{},
     control_groups: %{},
     msg_counter: 0,
@@ -255,8 +239,12 @@ defmodule Arbor.ACP.Adapters.Pi do
         %{"method" => "session/prompt", "id" => acp_id, "params" => params},
         state
       ) do
-    {message, images} = Prompt.to_pi_message(params["prompt"])
-    translate_prompt_message(message, images, acp_id, params, state)
+    with :ok <- check_synced(state) do
+      {message, images} = Prompt.to_pi_message(params["prompt"])
+      translate_prompt_message(message, images, acp_id, params, state)
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
   end
 
   def translate_outbound(%{"method" => "session/cancel"}, state) do
@@ -277,7 +265,7 @@ defmodule Arbor.ACP.Adapters.Pi do
         state
       end
 
-    state |> cleanup_reply() |> start_queued_setup_after_reply()
+    state |> cleanup_reply() |> advance_after_reply()
   end
 
   def translate_outbound(%{"method" => "session/delete", "params" => params}, state) do
@@ -296,7 +284,7 @@ defmodule Arbor.ACP.Adapters.Pi do
           if is_binary(session_id), do: SessionStore.delete(state.session_map_path, session_id)
 
         maybe_delete_session_file(state, entry || %{"sessionFile" => state.session_file})
-        start_queued_setup_after_reply({:reply, %{}, state})
+        advance_after_reply({:reply, %{}, state})
 
       {:error, reason} ->
         {:error, inspect(reason), state}
@@ -306,12 +294,13 @@ defmodule Arbor.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "session/set_mode", "params" => params}, state) do
     mode = params["modeId"]
 
-    case Config.set_thinking_plan(mode, params["sessionId"], state) do
-      {:ok, messages, data, state} ->
-        deliver_messages_and_ack(messages, data, override_refresh_level(state))
-
-      :error ->
-        {:error, "Unknown modeId: #{inspect(mode)}", state}
+    with :ok <- check_synced(state),
+         {:ok, messages, data, state} <-
+           Config.set_thinking_plan(mode, params["sessionId"], state) do
+      deliver_messages_and_ack(messages, data, override_refresh_level(state))
+    else
+      {:error, reason} -> {:error, reason, state}
+      :error -> {:error, "Unknown modeId: #{inspect(mode)}", state}
     end
   end
 
@@ -320,7 +309,10 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   def translate_outbound(%{"method" => "session/set_config_option", "params" => params}, state) do
-    translate_config_option(params["configId"], params["value"], state)
+    case check_synced(state) do
+      :ok -> translate_config_option(params["configId"], params["value"], state)
+      {:error, reason} -> {:error, reason, state}
+    end
   end
 
   def translate_outbound(%{"id" => acp_id, "result" => result}, state) do
@@ -335,15 +327,15 @@ defmodule Arbor.ACP.Adapters.Pi do
         %{"method" => "$/cancel_request", "params" => %{"requestId" => acp_id}},
         state
       ) do
-    {queued, waiting} = Enum.split_with(state.queued_session_setups, &(elem(&1, 1) == acp_id))
+    {cancelled, waiting} = Enum.split_with(state.op_queue, &queued_setup?(&1, acp_id))
 
     cond do
-      queued != [] ->
+      cancelled != [] ->
         error = Envelope.error(acp_id, -32_800, "Request cancelled")
-        {:messages, [error], %{state | queued_session_setups: waiting}}
+        {:messages, [error], %{state | op_queue: waiting}}
 
-      group = setup_group(acp_id, state) ->
-        cancel_session_setup(group, state)
+      running_setup?(state.op_in_flight, acp_id) ->
+        cancel_session_setup(state.op_in_flight, state)
 
       true ->
         resolve_extension_ui_response(acp_id, %{"action" => "cancel"}, state)
@@ -465,7 +457,7 @@ defmodule Arbor.ACP.Adapters.Pi do
         cleanup_result: cleanup
     }
 
-    state = %{clear_pending_runtime_state(state) | queued_session_setups: []}
+    state = %{clear_pending_runtime_state(state) | op_queue: [], desynced: nil}
 
     if messages == [], do: {:skip, state}, else: {:messages, messages, state}
   end
@@ -547,48 +539,32 @@ defmodule Arbor.ACP.Adapters.Pi do
     end
   end
 
-  # A managed close ends the Pi process, so nothing it was asked can still
-  # answer. An unmanaged consumer's Pi process outlives the session: its reply
-  # to an outstanding model switch or refresh still arrives, and is consumed
-  # without effect.
+  # A managed close ends the Pi process and the operation in flight with it;
+  # queued model work was for the closed session, and waiting setups start
+  # next. An unmanaged consumer's Pi process outlives the session, so the
+  # operation in flight, and a running setup's group, still get their replies.
   defp close_session(%{managed?: false} = state) do
-    abandoned = abandon_session_requests(state)
-    state = close_active_session(abandoned)
+    in_flight = state.op_in_flight
+    group = running_setup_group(state)
+    refs = if group, do: MapSet.to_list(group.refs), else: []
+    controls = Map.take(state.pending_controls, refs)
+    state = close_active_session(state)
 
-    %{
+    state = %{
       state
-      | pending_model_switch: abandoned.pending_model_switch,
-        pending_model_refresh: abandoned.pending_model_refresh
+      | op_in_flight: in_flight,
+        pending_controls: Map.merge(state.pending_controls, controls)
     }
+
+    if group,
+      do: %{state | control_groups: Map.put(state.control_groups, group.group_id, group)},
+      else: state
   end
 
-  defp close_session(state), do: close_active_session(state)
-
-  # The session the requests below were made for has been replaced or closed
-  # while Pi keeps running. A waiting model switch, and the follow-up of a
-  # switch Pi already answered, are dropped. An outstanding switch or refresh
-  # stays tracked, so model switches stay serialized and its replies are
-  # consumed, but it is marked stale: it no longer refreshes or publishes
-  # anything, because the next session's state comes from its own setup. The
-  # usage request is dropped, so its reply is untracked and ignored.
-  defp abandon_session_requests(state) do
-    switch =
-      case state.pending_model_switch do
-        %{replied?: true} -> nil
-        switch -> mark_stale(switch)
-      end
-
-    %{
-      state
-      | pending_model_switch: switch,
-        pending_model_refresh: mark_stale(state.pending_model_refresh),
-        queued_model_switch: nil,
-        pending_usage_request: nil
-    }
+  defp close_session(state) do
+    state = close_active_session(state)
+    %{state | op_queue: Enum.filter(state.op_queue, &(&1.type == :setup))}
   end
-
-  defp mark_stale(nil), do: nil
-  defp mark_stale(request), do: Map.put(request, :stale?, true)
 
   defp close_active_session(%{port: nil} = state) do
     demonitor_port(state)
@@ -632,14 +608,7 @@ defmodule Arbor.ACP.Adapters.Pi do
         edit_snapshots: %{},
         pending_extension_ui: %{},
         last_usage: %{},
-        pending_usage_request: nil,
-        pending_model_switch: nil,
-        pending_model_refresh: nil,
-        queued_model_switch: nil,
-        pending_session_changes: MapSet.new(),
-        orphaned_session_changes: %{},
-        restoring_session_changes: %{},
-        retired_rpc_ids: MapSet.new()
+        op_in_flight: nil
     }
   end
 
@@ -770,8 +739,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     messages = pending_exit_messages(state, reason)
     state = close_active_session(state)
 
-    {:messages, messages,
-     %{state | subprocess_error: {:error, reason}, queued_session_setups: []}}
+    {:messages, messages, %{state | subprocess_error: {:error, reason}, op_queue: []}}
   end
 
   defp inbound_messages([], state), do: {:skip, state}
@@ -812,10 +780,8 @@ defmodule Arbor.ACP.Adapters.Pi do
       |> Enum.map(&Envelope.response(&1.acp_id, %{"stopReason" => "cancelled"}))
 
     setup_messages =
-      Enum.map(
-        state.queued_session_setups,
-        &Envelope.error(elem(&1, 1), -32_603, "Pi process exited: #{inspect(reason)}")
-      )
+      for %{type: :setup, plan: plan} <- state.op_queue,
+          do: Envelope.error(elem(plan, 1), -32_603, "Pi process exited: #{inspect(reason)}")
 
     prompt_messages ++ control_messages ++ setup_messages ++ queued_messages
   end
@@ -856,66 +822,180 @@ defmodule Arbor.ACP.Adapters.Pi do
     end
   end
 
-  # One session setup (the change and the queries that follow it) runs at a
-  # time. Pi applies each change to whichever session is active when it
-  # completes, so the queries of one setup could otherwise be answered after
-  # another setup's change took effect, and describe that session.
+  # --- Serialized Pi operations ----------------------------------------------
+  #
+  # Pi dispatches each input line without awaiting the previous one, and its
+  # session changes and set_model finish asynchronously. Two such requests in
+  # flight can therefore complete in either order, and nothing tells which one
+  # Pi applied last. Every Pi request that reads or changes the session runs as
+  # an operation, one at a time:
+  #
+  #   * a session setup: the change (`new_session`/`switch_session`), then its
+  #     queries once Pi has answered the change;
+  #   * a switch back to the previous session after a setup that did not
+  #     complete (unmanaged only; managed, a new process resumes it);
+  #   * a model switch: `set_model`, then its `get_state`/thinking-level refresh;
+  #   * the `get_session_stats` usage request after a prompt.
+  #
+  # The next operation is sent only once the one in flight has its reply or has
+  # failed definitively. A queued model switch or usage request reaches Pi only
+  # while its session is still the adapter's session, so work for a replaced
+  # session is dropped and work for a restored one goes ahead. Prompts, slash
+  # commands and notifications such as `set_thinking_level` are not operations.
+
+  @unanswered_change "Pi has not answered an earlier session change"
+
   defp begin_session_setup(plan, state) do
-    if setup_in_progress?(state) do
-      deliver_queued(%{state | queued_session_setups: state.queued_session_setups ++ [plan]})
-    else
-      run_session_setup(plan, state)
+    cond do
+      cancelled_change_unanswered?(state) ->
+        {:error, @unanswered_change, state}
+
+      state.op_in_flight != nil or state.op_queue != [] ->
+        deliver_queued(enqueue_op(state, %{type: :setup, plan: plan}))
+
+      true ->
+        run_session_setup(plan, state)
     end
   end
 
-  # A cancelled setup's change, or a switch back to the previous session, can
-  # still be pending without a group; a new setup waits for it too.
-  defp setup_in_progress?(state) do
-    session_change_pending?(state) or
-      Enum.any?(Map.values(state.control_groups), &(&1.type in [:session_new, :session_load]))
+  # The client cancelled a setup whose change Pi has not answered (a
+  # `session_before_switch` extension may never resolve). Pi will run nothing
+  # else that touches the session before it answers, so a new setup fails at
+  # once instead of waiting for the client's request timeout.
+  defp cancelled_change_unanswered?(state),
+    do: match?(%{type: :setup, cancelled?: true}, state.op_in_flight)
+
+  defp reject_waiting_setups(state) do
+    {setups, others} = Enum.split_with(state.op_queue, &(&1.type == :setup))
+
+    errors =
+      for %{plan: plan} <- setups, do: Envelope.error(elem(plan, 1), -32_603, @unanswered_change)
+
+    {errors, %{state | op_queue: others}}
   end
+
+  defp queued_setup?(%{type: :setup, plan: plan}, acp_id), do: elem(plan, 1) == acp_id
+  defp queued_setup?(_op, _acp_id), do: false
+
+  defp running_setup?(%{type: :setup, acp_id: acp_id} = op, acp_id),
+    do: not Map.get(op, :cancelled?, false)
+
+  defp running_setup?(_op, _acp_id), do: false
+
+  defp running_setup_group(%{op_in_flight: %{type: :setup, change_id: change_id}} = state),
+    do: Enum.find(Map.values(state.control_groups), &(&1[:change_id] == change_id))
+
+  defp running_setup_group(_state), do: nil
 
   defp deliver_queued(%{managed?: false} = state), do: {:ok, :skip, state}
   defp deliver_queued(state), do: {:ok, :pending, state}
 
-  # Starts the next waiting setup once none is in progress, and adds what
-  # it writes or answers to the result that ended the previous one.
-  defp start_queued_setup_after(result) do
-    last = tuple_size(result) - 1
-    state = elem(result, last)
+  # A model switch replaces a waiting switch for the same session in place, so
+  # only the latest one is sent, still ahead of anything requested after it.
+  defp enqueue_op(state, %{type: :model_switch, session_id: session_id} = op) do
+    index =
+      Enum.find_index(
+        state.op_queue,
+        &match?(%{type: :model_switch, session_id: ^session_id}, &1)
+      )
 
-    case state.queued_session_setups do
-      [plan | rest] ->
-        if setup_in_progress?(state) do
-          result
-        else
-          state = %{state | queued_session_setups: rest}
+    queue =
+      if index, do: List.replace_at(state.op_queue, index, op), else: state.op_queue ++ [op]
 
-          case run_session_setup(plan, state) do
-            {:ok, :pending, state} ->
-              put_elem(result, last, state)
+    %{state | op_queue: queue}
+  end
 
-            {:ok, data, state} ->
-              result |> put_elem(last, state) |> add_write(data)
+  # Only the latest usage request for a session matters, too.
+  defp enqueue_op(state, %{type: :usage, session_id: session_id} = op) do
+    queue = Enum.reject(state.op_queue, &match?(%{type: :usage, session_id: ^session_id}, &1))
+    %{state | op_queue: queue ++ [op]}
+  end
 
-            {:error, reason, state} ->
-              result
-              |> put_elem(last, state)
-              |> add_message(Envelope.error(elem(plan, 1), -32_603, to_string(reason)))
-              |> start_queued_setup_after()
-          end
-        end
+  defp enqueue_op(state, op), do: %{state | op_queue: state.op_queue ++ [op]}
 
-      [] ->
-        result
+  # Starts queued operations until one is in flight. Returns what to write (a
+  # managed adapter writes to its process directly, so nothing) and the ACP
+  # errors of setups that could not start.
+  defp advance_ops(state, data \\ [], messages \\ [])
+
+  defp advance_ops(%{op_in_flight: nil, op_queue: [op | rest]} = state, data, messages) do
+    case start_op(op, %{state | op_queue: rest}) do
+      {:ok, written, state} -> advance_ops(state, [data, written], messages)
+      {:messages, new, state} -> advance_ops(state, data, messages ++ new)
+      {:error, _reason, state} -> advance_ops(state, data, messages)
     end
   end
 
-  # Closing or deleting the active session drops a setup in progress with
-  # it; the next waiting setup starts at once rather than behind a setup that
-  # may never come.
-  defp start_queued_setup_after_reply({:reply, result, state}) do
-    case start_queued_setup_after({:skip, state}) do
+  defp advance_ops(state, data, messages) do
+    case IO.iodata_to_binary(data) do
+      "" -> {nil, messages, state}
+      data -> {data, messages, state}
+    end
+  end
+
+  defp start_op(%{type: :setup, plan: plan}, state) do
+    case run_session_setup(plan, state) do
+      {:ok, :pending, state} ->
+        {:ok, "", state}
+
+      {:ok, data, state} ->
+        {:ok, data, state}
+
+      {:error, reason, state} ->
+        {:messages, [Envelope.error(elem(plan, 1), -32_603, to_string(reason))], state}
+    end
+  end
+
+  # Work for a session the adapter no longer serves, or while Pi is on another
+  # session than the one the adapter serves, is dropped.
+  defp start_op(%{session_id: session_id}, %{session_id: current} = state)
+       when session_id != current,
+       do: {:messages, [], state}
+
+  defp start_op(_op, %{desynced: %{}} = state), do: {:messages, [], state}
+
+  defp start_op(%{type: :model_switch, fields: fields, session_id: session_id}, state) do
+    {id, request, state} = rpc(state, RPC.method(:set_model), fields)
+    op = %{type: :model_switch, phase: :set_model, rpc_id: id, session_id: session_id}
+    send_op(RPC.line(request), %{state | op_in_flight: op})
+  end
+
+  defp start_op(%{type: :usage, session_id: session_id}, state) do
+    {id, request, state} = rpc(state, RPC.method(:get_session_stats))
+    op = %{type: :usage, rpc_id: id, session_id: session_id}
+    send_op(RPC.line(request), %{state | op_in_flight: op})
+  end
+
+  defp send_op(data, %{managed?: false} = state), do: {:ok, data, state}
+
+  defp send_op(data, state) do
+    case write_managed(data, state) do
+      :ok ->
+        {:ok, "", state}
+
+      {:error, reason} ->
+        Logger.warning("[Pi Adapter] Could not send a Pi request: #{inspect(reason)}")
+        {:error, reason, %{state | op_in_flight: nil}}
+    end
+  end
+
+  defp op_result({:ok, "", state}), do: {:skip, state}
+  defp op_result({:ok, data, state}), do: {:skip_and_write, data, state}
+  defp op_result({:error, _reason, state}), do: {:skip, state}
+
+  # Adds what advancing the operation queue sends or answers to a result.
+  defp advance_after(result) do
+    last = tuple_size(result) - 1
+    {data, messages, state} = advance_ops(elem(result, last))
+
+    result
+    |> put_elem(last, state)
+    |> then(&Enum.reduce(messages, &1, fn message, acc -> add_message(acc, message) end))
+    |> add_write(data)
+  end
+
+  defp advance_after_reply({:reply, result, state}) do
+    case advance_after({:skip, state}) do
       {:skip, state} ->
         {:reply, result, state}
 
@@ -930,7 +1010,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     end
   end
 
-  defp start_queued_setup_after_reply(result), do: result
+  defp advance_after_reply(result), do: result
 
   defp add_message({:skip, state}, message), do: {:messages, [message], state}
 
@@ -942,6 +1022,144 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp add_message({:messages_and_write, messages, data, state}, message),
     do: {:messages_and_write, messages ++ [message], data, state}
+
+  defp add_write(result, nil), do: result
+  defp add_write({:skip, state}, data), do: {:skip_and_write, data, state}
+
+  defp add_write({:messages, messages, state}, data),
+    do: {:messages_and_write, messages, data, state}
+
+  defp add_write({:skip_and_write, written, state}, data),
+    do: {:skip_and_write, IO.iodata_to_binary([written, data]), state}
+
+  defp add_write({:messages_and_write, messages, written, state}, data),
+    do: {:messages_and_write, messages, IO.iodata_to_binary([written, data]), state}
+
+  defp op_reply?(%{type: :model_switch, phase: :set_model, rpc_id: id}, id), do: true
+
+  defp op_reply?(%{type: :model_switch, phase: :refresh} = op, id),
+    do: id in [op.state_id, op.levels_id]
+
+  defp op_reply?(%{type: :usage, rpc_id: id}, id), do: true
+  defp op_reply?(%{type: :switch_back, rpc_id: id}, id), do: true
+  defp op_reply?(%{type: :setup, cancelled?: true, change_id: id}, id), do: true
+  defp op_reply?(_op, _id), do: false
+
+  # A rejected switch leaves Pi on its previous model, so the refresh runs
+  # either way: it also corrects the optimistically reported model. A newer
+  # switch for the same session, waiting behind this one, makes it moot.
+  defp handle_op_reply(
+         event,
+         %{op_in_flight: %{type: :model_switch, phase: :set_model} = op} = state
+       ) do
+    if event["success"] == false do
+      Logger.warning("[Pi Adapter] set_model failed: #{inspect(event["error"])}")
+    end
+
+    if newer_switch_waiting?(state, op.session_id) or not is_binary(op.session_id) do
+      {:skip, %{state | op_in_flight: nil}}
+    else
+      {state_id, get_state, state} = rpc(state, RPC.method(:get_state))
+      {levels_id, get_levels, state} = rpc(state, RPC.method(:get_available_thinking_levels))
+
+      op =
+        Map.merge(op, %{
+          phase: :refresh,
+          state_id: state_id,
+          levels_id: levels_id,
+          state_data: nil,
+          levels_data: nil,
+          level_overridden?: false
+        })
+
+      op_result(send_op(RPC.encode_many([get_state, get_levels]), %{state | op_in_flight: op}))
+    end
+  end
+
+  defp handle_op_reply(
+         event,
+         %{op_in_flight: %{type: :model_switch, phase: :refresh} = op} = state
+       ) do
+    # A failed member reports no data. Pi 0.80.x has no
+    # get_available_thinking_levels, which leaves the static levels.
+    data =
+      case event do
+        %{"success" => false} -> %{}
+        %{"data" => data} when is_map(data) -> data
+        _ -> %{}
+      end
+
+    op =
+      if event["id"] == op.state_id,
+        do: %{op | state_data: data},
+        else: %{op | levels_data: data}
+
+    cond do
+      not (is_map(op.state_data) and is_map(op.levels_data)) ->
+        {:skip, %{state | op_in_flight: op}}
+
+      newer_switch_waiting?(state, op.session_id) or op.session_id != state.session_id ->
+        {:skip, %{state | op_in_flight: nil}}
+
+      true ->
+        finish_model_refresh(op, %{state | op_in_flight: nil})
+    end
+  end
+
+  defp handle_op_reply(event, %{op_in_flight: %{type: :usage} = op} = state) do
+    state = %{state | op_in_flight: nil}
+    data = if event["success"] == false, do: nil, else: event["data"]
+
+    case op.session_id == state.session_id and context_usage_update(data, op.session_id) do
+      %{} = update -> {:messages, [update], state}
+      _ -> {:skip, state}
+    end
+  end
+
+  defp handle_op_reply(event, %{op_in_flight: %{type: :switch_back} = op} = state) do
+    state = %{state | op_in_flight: nil}
+
+    if session_change_took_effect?(event) do
+      {:skip, state}
+    else
+      {:skip, desync(state, op.previous.session_id, event["error"] || event["data"])}
+    end
+  end
+
+  # The client cancelled this setup before Pi answered its change. A success
+  # means Pi switched after all, so it is sent back to the previous session.
+  defp handle_op_reply(event, %{op_in_flight: %{type: :setup, cancelled?: true} = op} = state) do
+    if session_change_took_effect?(event),
+      do: start_switch_back(op.previous, state) |> write_or_skip(),
+      else: {:skip, %{state | op_in_flight: nil}}
+  end
+
+  defp newer_switch_waiting?(state, session_id),
+    do: Enum.any?(state.op_queue, &match?(%{type: :model_switch, session_id: ^session_id}, &1))
+
+  defp write_or_skip({nil, state}), do: {:skip, state}
+  defp write_or_skip({data, state}), do: {:skip_and_write, data, state}
+
+  # Pi could not return to the session the adapter serves, so the adapter
+  # must not claim that session: its prompts and settings fail until a new
+  # setup succeeds, and queued work for it is dropped.
+  defp desync(state, session_id, reason) do
+    Logger.warning("[Pi Adapter] Pi did not return to session #{session_id}: #{inspect(reason)}")
+
+    %{
+      state
+      | desynced: %{session_id: session_id},
+        op_queue: Enum.filter(state.op_queue, &(&1.type == :setup))
+    }
+  end
+
+  defp check_synced(%{desynced: %{session_id: session_id}}) do
+    {:error,
+     "Pi is not on session #{session_id}: it could not switch back after a session change " <>
+       "that did not complete. Load or create a session to continue."}
+  end
+
+  defp check_synced(_state), do: :ok
 
   defp run_session_setup({:new, acp_id, cwd}, state) do
     previous = previous_session(state)
@@ -967,7 +1185,8 @@ defmodule Arbor.ACP.Adapters.Pi do
   @restored_session_fields [:cwd, :workspace_root, :settings, :last_session_cwd, :startup_sent?]
 
   # What a failed setup restores: a setup prepares its session before Pi
-  # answers, and a managed one also replaces the Pi process.
+  # answers, and a managed one also replaces the Pi process. Model work for
+  # the previous session waits in the operation queue behind the setup.
   defp previous_session(state) do
     %{
       session_id: state.session_id,
@@ -977,30 +1196,32 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   # The ACP request of a failed or cancelled setup fails, so the client keeps
-  # using its previous session, and the adapter has to keep serving it.
-  # Unmanaged, Pi stays on that session; only the adapter's workspace and
-  # settings, which the setup already pointed at the requested cwd, go back.
-  # A managed setup already replaced the Pi process (a load started it with
-  # `--session <requested file>`), so a new process resumes the previous
-  # session's file, and a model switch requested meanwhile is sent to it. With
-  # no previous session the replacement process is closed.
+  # using its previous session, and the adapter keeps serving it:
+  #   * Unmanaged, Pi stays on that session unless the change had already
+  #     succeeded; then Pi is switched back to the previous session's file.
+  #     The adapter's workspace and settings, which the setup pointed at the
+  #     requested cwd, go back either way.
+  #   * Managed, the setup already replaced the Pi process (a load starts it
+  #     with `--session <requested file>`), so a new process resumes the
+  #     previous session's file. With no previous session the replacement
+  #     process is closed.
+  # Either way the setup operation ends (or becomes the switch back), and the
+  # previous session's queued model work goes ahead.
   defp restore_previous_session(%{previous: previous} = group, %{managed?: false} = state) do
     state = Map.merge(state, previous.fields)
-    state = %{state | queued_model_switch: held_switch(group, state)}
 
     if session_change_succeeded?(group),
-      do: begin_session_restore(previous, state),
-      else: {nil, state}
+      do: start_switch_back(previous, state),
+      else: {nil, %{state | op_in_flight: nil}}
   end
 
-  defp restore_previous_session(%{previous: %{session_file: file} = previous} = group, state)
+  defp restore_previous_session(%{previous: %{session_file: file} = previous}, state)
        when is_binary(file) do
-    switch = held_switch(group, state)
     cwd = previous.fields.workspace_root || previous.fields.cwd
 
     case prepare_session_process(cwd, file, state) do
       {:ok, state} ->
-        {nil, state |> Map.merge(previous.fields) |> resend_model_switch(switch)}
+        {nil, Map.merge(state, previous.fields)}
 
       {:error, reason, state} ->
         Logger.warning("[Pi Adapter] Could not restore the previous session: #{reason}")
@@ -1016,79 +1237,54 @@ defmodule Arbor.ACP.Adapters.Pi do
   defp session_change_succeeded?(group),
     do: Map.has_key?(group.responses, :new_session) or Map.has_key?(group.responses, :switch)
 
-  # Unmanaged, Pi itself has to switch back: the adapter sends switch_session
-  # for the previous session's file. Model work stays held until Pi answers.
-  defp begin_session_restore(%{session_file: file} = previous, state) when is_binary(file) do
+  # Unmanaged, Pi itself has to switch back: the switch back is the operation
+  # in flight until Pi answers it.
+  defp start_switch_back(%{session_file: file} = previous, state) when is_binary(file) do
     {id, request, state} = rpc(state, RPC.method(:switch_session), %{"sessionPath" => file})
-
-    state =
-      %{state | restoring_session_changes: Map.put(state.restoring_session_changes, id, previous)}
-      |> track_session_change(id)
-
-    {RPC.line(request), state}
+    op = %{type: :switch_back, rpc_id: id, previous: previous}
+    {RPC.line(request), %{state | op_in_flight: op}}
   end
 
-  defp begin_session_restore(previous, state) do
-    if previous.session_id do
-      Logger.warning(
-        "[Pi Adapter] Pi left session #{previous.session_id}, which has no session file to return to"
-      )
-    end
+  defp start_switch_back(previous, state) do
+    state = %{state | op_in_flight: nil}
 
-    {nil, abandon_session_requests(state)}
+    if previous.session_id,
+      do: {nil, desync(state, previous.session_id, :no_session_file)},
+      else: {nil, state}
   end
 
-  # The client cancelled this setup before Pi answered its change. A
-  # success means Pi switched after all, so it is sent back to the previous
-  # session; otherwise Pi stayed, and the held model work goes ahead.
-  defp finish_orphaned_change(event, id, state) do
-    {previous, orphaned} = Map.pop(state.orphaned_session_changes, id)
+  # The ACP request of the running setup ended: the client timed it out,
+  # cancelled it, or went away (the ACP client sends `$/cancel_request` in
+  # each case). The request fails at once and the client keeps its previous
+  # session, but no outcome is assumed that Pi has not reported:
+  #   * Unmanaged, with the change unanswered, the setup stays in flight as a
+  #     cancelled change until Pi answers it (see handle_op_reply/2); setups
+  #     that arrive meanwhile fail at once.
+  #   * Managed, replacing the Pi process ends the change; the previous
+  #     session's process is restored.
+  #   * Once the change succeeded, Pi is returned to the previous session; the
+  #     setup's queries are untracked and their replies are ignored.
+  defp cancel_session_setup(op, state) do
+    error = Envelope.error(op.acp_id, -32_800, "Request cancelled")
+    group = running_setup_group(state)
+    change_pending? = Map.has_key?(state.pending_controls, op.change_id)
+    state = if group, do: delete_group(state, group), else: state
 
-    state = %{
-      state
-      | orphaned_session_changes: orphaned,
-        pending_session_changes: MapSet.delete(state.pending_session_changes, id)
-    }
+    {data, messages, state} =
+      if change_pending? and not state.managed? do
+        state =
+          Map.merge(%{state | op_in_flight: Map.put(op, :cancelled?, true)}, op.previous.fields)
 
-    if session_change_took_effect?(event),
-      do: write_or_skip(begin_session_restore(previous, state)),
-      else: {:skip, state}
-  end
+        {errors, state} = reject_waiting_setups(state)
+        {nil, errors, state}
+      else
+        {data, state} =
+          restore_previous_session(group || %{previous: op.previous, responses: %{}}, state)
 
-  defp finish_session_restore(event, id, state) do
-    {previous, restoring} = Map.pop(state.restoring_session_changes, id)
+        {data, [], state}
+      end
 
-    state = %{
-      state
-      | restoring_session_changes: restoring,
-        pending_session_changes: MapSet.delete(state.pending_session_changes, id)
-    }
-
-    if session_change_took_effect?(event) do
-      {:skip, Map.merge(state, previous.fields)}
-    else
-      Logger.warning(
-        "[Pi Adapter] Pi did not return to session #{previous.session_id}: " <>
-          inspect(event["error"] || event["data"])
-      )
-
-      {:skip, abandon_session_requests(state)}
-    end
-  end
-
-  defp resend_model_switch(state, nil), do: state
-
-  defp resend_model_switch(state, %{fields: fields}) do
-    {data, state} = request_model_switch(fields, state)
-
-    case write_managed(data, state) do
-      :ok ->
-        state
-
-      {:error, reason} ->
-        Logger.warning("[Pi Adapter] Could not resend set_model: #{inspect(reason)}")
-        %{state | pending_model_switch: nil}
-    end
+    advance_after(add_write({:messages, [error | messages], state}, data))
   end
 
   defp start_session_switch(acp_id, session_id, cwd, session_file, replay?, previous, state) do
@@ -1166,11 +1362,13 @@ defmodule Arbor.ACP.Adapters.Pi do
         followups: followups
       })
 
+    op = %{type: :setup, acp_id: group.acp_id, change_id: change_id, previous: group.previous}
+
     state =
       state
       |> put_group(group)
       |> put_control(change_id, kind, group)
-      |> track_session_change(change_id)
+      |> Map.put(:op_in_flight, op)
 
     deliver_pending(RPC.line(change), state)
   end
@@ -1478,194 +1676,37 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   # Pi dispatches each input line without awaiting the previous one, and its
-  # set_model assigns the model only after an asynchronous auth check. A
-  # get_state written alongside set_model therefore describes the previous
-  # model, so the refresh is sent only once Pi has answered the set_model
-  # request. For the same reason two set_model requests in flight can finish
-  # in either order, and nothing tells which model Pi ended on. Switches are
-  # therefore serialized: a switch requested while another one or its refresh
-  # is in flight waits, and only the latest waiting switch is sent.
+  # set_model assigns the model only after an asynchronous auth check, so a
+  # model switch is a serialized operation: set_model, then the refresh, sent
+  # only once Pi has answered set_model. The ACP request is answered at once
+  # with the optimistic configuration.
   defp translate_set_model(model_id, session_id_override, state) do
-    case Config.set_model_plan(model_id, session_id_override, state) do
-      {:ok, messages, fields, state} ->
-        {data, state} = request_model_switch(fields, state)
-        deliver_messages_and_config_result(messages, data, state)
+    with :ok <- check_synced(state),
+         {:ok, messages, fields, state} <-
+           Config.set_model_plan(model_id, session_id_override, state) do
+      op = %{type: :model_switch, fields: fields, session_id: state.session_id}
 
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-
-  defp request_model_switch(fields, state) do
-    switch = %{fields: fields, session_id: state.session_id}
-
-    if model_switch_in_flight?(state) or setup_in_progress?(state) do
-      {"", %{state | queued_model_switch: switch}}
-    else
-      send_model_switch(switch, state)
-    end
-  end
-
-  defp model_switch_in_flight?(state),
-    do: state.pending_model_switch != nil or state.pending_model_refresh != nil
-
-  defp refresh_will_publish?(state) do
-    state.queued_model_switch != nil or live_request?(state.pending_model_switch) or
-      live_request?(state.pending_model_refresh)
-  end
-
-  defp live_request?(nil), do: false
-  defp live_request?(request), do: not Map.get(request, :stale?, false)
-
-  defp send_model_switch(%{fields: fields, session_id: session_id}, state) do
-    {id, request, state} = rpc(state, RPC.method(:set_model), fields)
-
-    pending =
-      if is_binary(session_id) and session_id != "",
-        do: %{rpc_id: id, session_id: session_id}
-
-    {RPC.line(request),
-     %{
-       state
-       | pending_model_switch: pending,
-         pending_model_refresh: nil,
-         queued_model_switch: nil
-     }}
-  end
-
-  # A rejected switch leaves Pi on its previous model, so the refresh runs
-  # either way: it also corrects the optimistically reported model.
-  defp handle_model_switch_reply(event, %{pending_model_switch: switch} = state) do
-    if event["success"] == false do
-      Logger.warning("[Pi Adapter] set_model failed: #{inspect(event["error"])}")
-    end
-
-    state
-    |> Map.put(:pending_model_switch, Map.put(switch, :replied?, true))
-    |> continue_model_work()
-    |> write_or_skip()
-  end
-
-  # Sends the next step of the model work once nothing blocks it: the waiting
-  # switch, which goes first, or else the refresh after the switch Pi answered.
-  # Nothing is sent while a session change is pending; a switch Pi answered
-  # meanwhile keeps `replied?` until the change resolves.
-  defp continue_model_work(state) do
-    switch = state.pending_model_switch
-
-    cond do
-      # Until a setup completes, Pi may be on the session it is moving to while
-      # the adapter still serves the previous one.
-      setup_in_progress?(state) ->
-        {nil, state}
-
-      match?(%{replied?: true}, switch) ->
-        state = %{state | pending_model_switch: nil}
-
-        cond do
-          state.queued_model_switch != nil -> send_model_switch(state.queued_model_switch, state)
-          Map.get(switch, :stale?, false) -> {nil, state}
-          true -> send_model_refresh(switch.session_id, state)
+      if state.op_in_flight == nil and state.op_queue == [] do
+        case start_op(op, state) do
+          {:ok, data, state} -> deliver_messages_and_config_result(messages, data, state)
+          {:messages, _dropped, state} -> deliver_messages_and_config_result(messages, "", state)
+          {:error, reason, state} -> {:error, inspect(reason), state}
         end
-
-      model_switch_in_flight?(state) ->
-        {nil, state}
-
-      state.queued_model_switch != nil ->
-        send_model_switch(state.queued_model_switch, state)
-
-      true ->
-        {nil, state}
+      else
+        deliver_messages_and_config_result(messages, "", enqueue_op(state, op))
+      end
+    else
+      {:error, reason} -> {:error, reason, state}
     end
   end
 
-  defp write_or_skip({nil, state}), do: {:skip, state}
-  defp write_or_skip({data, state}), do: {:skip_and_write, data, state}
+  # A model switch for the current session, in flight or waiting, ends with a
+  # refresh that publishes the level against the new model's levels.
+  defp refresh_will_publish?(state) do
+    session_id = state.session_id
 
-  defp track_session_change(state, rpc_id),
-    do: %{state | pending_session_changes: MapSet.put(state.pending_session_changes, rpc_id)}
-
-  defp session_change_pending?(state), do: MapSet.size(state.pending_session_changes) > 0
-
-  # Requests made for the current session are abandoned only once Pi has
-  # actually replaced it. When Pi rejects the change, or an extension cancels
-  # it (a success reply with `cancelled: true`), the session stays active and
-  # its held model work goes ahead; a managed setup first restores the
-  # previous session's process (see restore_previous_session/2).
-  defp resolve_session_change(id, event, state) do
-    state = %{state | pending_session_changes: MapSet.delete(state.pending_session_changes, id)}
-
-    if session_change_took_effect?(event),
-      do: state |> stash_held_switch(id) |> abandon_session_requests(),
-      else: state
-  end
-
-  # The setup keeps the previous session's waiting switch: if the setup fails
-  # or is cancelled after its change took effect, the restored session gets it.
-  defp stash_held_switch(%{queued_model_switch: nil} = state, _change_id), do: state
-
-  defp stash_held_switch(state, change_id) do
-    case Enum.find(Map.values(state.control_groups), &(&1[:change_id] == change_id)) do
-      nil ->
-        state
-
-      group ->
-        group = Map.put(group, :held_switch, state.queued_model_switch)
-        %{state | control_groups: Map.put(state.control_groups, group.group_id, group)}
-    end
-  end
-
-  # The switch the restored session should still get: one requested while
-  # the setup ran wins over the one held from before its change.
-  defp held_switch(group, state), do: state.queued_model_switch || group[:held_switch]
-
-  defp setup_group(acp_id, state) do
-    Enum.find(Map.values(state.control_groups), fn group ->
-      group.acp_id == acp_id and group.type in [:session_new, :session_load]
-    end)
-  end
-
-  # The ACP request of a running setup ended: the client timed it out,
-  # cancelled it, or went away (the ACP client sends `$/cancel_request` in
-  # each case). The request fails at once, and the client keeps its previous
-  # session, but no outcome is assumed that Pi has not reported:
-  #   * Unmanaged, with the change still unanswered (a `session_before_switch`
-  #     extension may never resolve), the change stays tracked and model work
-  #     stays held. Pi's answer decides: see finish_orphaned_change/3.
-  #   * Managed, with the change unanswered, replacing the Pi process ends the
-  #     change; the previous session's process is restored.
-  #   * Once the change succeeded, the setup's queries are retired and Pi is
-  #     returned to the previous session.
-  defp cancel_session_setup(group, state) do
-    error = Envelope.error(group.acp_id, -32_800, "Request cancelled")
-    change_pending? = MapSet.member?(state.pending_session_changes, group.change_id)
-    state = delete_group(state, group)
-
-    {data, state} =
-      cond do
-        change_pending? and not state.managed? ->
-          orphaned = Map.put(state.orphaned_session_changes, group.change_id, group.previous)
-
-          state =
-            Map.merge(%{state | orphaned_session_changes: orphaned}, group.previous.fields)
-
-          {nil, state}
-
-        change_pending? ->
-          pending = MapSet.delete(state.pending_session_changes, group.change_id)
-          restore_previous_session(group, %{state | pending_session_changes: pending})
-
-        true ->
-          restore_previous_session(group, state)
-      end
-
-    result =
-      case data do
-        nil -> {:messages, [error], state}
-        data -> deliver_messages_and_write([error], data, state)
-      end
-
-    result |> continue_model_work_after() |> start_queued_setup_after()
+    match?(%{type: :model_switch, session_id: ^session_id}, state.op_in_flight) or
+      newer_switch_waiting?(state, session_id)
   end
 
   defp session_change_took_effect?(%{"success" => false}), do: false
@@ -1673,77 +1714,6 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp cancelled_session_change?(%{"data" => %{"cancelled" => true}}), do: true
   defp cancelled_session_change?(_event), do: false
-
-  # Appends the model work a resolved session change released to the result
-  # of the reply that resolved it.
-  defp continue_model_work_after(result) do
-    last = tuple_size(result) - 1
-
-    case continue_model_work(elem(result, last)) do
-      {nil, state} -> put_elem(result, last, state)
-      {data, state} -> result |> put_elem(last, state) |> add_write(data)
-    end
-  end
-
-  defp add_write({:skip, state}, data), do: {:skip_and_write, data, state}
-
-  defp add_write({:messages, messages, state}, data),
-    do: {:messages_and_write, messages, data, state}
-
-  defp add_write({:skip_and_write, written, state}, data),
-    do: {:skip_and_write, IO.iodata_to_binary([written, data]), state}
-
-  defp add_write({:messages_and_write, messages, written, state}, data),
-    do: {:messages_and_write, messages, IO.iodata_to_binary([written, data]), state}
-
-  defp send_model_refresh(session_id, state) do
-    {state_id, get_state, state} = rpc(state, RPC.method(:get_state))
-    {levels_id, get_levels, state} = rpc(state, RPC.method(:get_available_thinking_levels))
-
-    refresh = %{
-      state_id: state_id,
-      levels_id: levels_id,
-      session_id: session_id,
-      state_data: nil,
-      levels_data: nil,
-      level_overridden?: false
-    }
-
-    {RPC.encode_many([get_state, get_levels]), %{state | pending_model_refresh: refresh}}
-  end
-
-  defp handle_model_refresh(event, %{pending_model_refresh: refresh} = state) do
-    # A failed member reports no data. Pi 0.80.x has no
-    # get_available_thinking_levels, which leaves the static levels.
-    data =
-      case event do
-        %{"success" => false} -> %{}
-        %{"data" => data} when is_map(data) -> data
-        _ -> %{}
-      end
-
-    refresh =
-      if event["id"] == refresh.state_id,
-        do: %{refresh | state_data: data},
-        else: %{refresh | levels_data: data}
-
-    cond do
-      not (is_map(refresh.state_data) and is_map(refresh.levels_data)) ->
-        {:skip, %{state | pending_model_refresh: refresh}}
-
-      # A switch requested during the refresh makes it stale: send the switch,
-      # and the refresh after it publishes the result.
-      state.queued_model_switch != nil ->
-        %{state | pending_model_refresh: nil} |> continue_model_work() |> write_or_skip()
-
-      # The refresh was for a session that has since been replaced or closed.
-      Map.get(refresh, :stale?, false) ->
-        {:skip, %{state | pending_model_refresh: nil}}
-
-      true ->
-        finish_model_refresh(refresh, %{state | pending_model_refresh: nil})
-    end
-  end
 
   defp finish_model_refresh(refresh, state) do
     levels = Config.available_levels(refresh.levels_data["levels"])
@@ -1775,31 +1745,15 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp reported_model_id(_state_data), do: nil
 
-  defp override_refresh_level(%{pending_model_refresh: %{} = refresh} = state),
-    do: %{state | pending_model_refresh: %{refresh | level_overridden?: true}}
+  defp override_refresh_level(
+         %{op_in_flight: %{type: :model_switch, phase: :refresh} = op} = state
+       ),
+       do: %{state | op_in_flight: %{op | level_overridden?: true}}
 
   defp override_refresh_level(state), do: state
 
   defp process_response(event, id, state) do
     cond do
-      match?(%{rpc_id: ^id}, state.pending_model_switch) ->
-        handle_model_switch_reply(event, state)
-
-      is_map(state.pending_model_refresh) and
-          id in [state.pending_model_refresh.state_id, state.pending_model_refresh.levels_id] ->
-        handle_model_refresh(event, state)
-
-      match?({^id, _}, state.pending_usage_request) ->
-        {^id, session_id} = state.pending_usage_request
-        state = %{state | pending_usage_request: nil}
-
-        data = if event["success"] == false, do: nil, else: event["data"]
-
-        case context_usage_update(data, session_id) do
-          nil -> {:skip, state}
-          update -> {:messages, [update], state}
-        end
-
       PromptFlow.response_error?(id, event, state) ->
         finish_prompt_error(event, state)
 
@@ -1817,28 +1771,11 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
     result =
-      cond do
-        Map.has_key?(state.orphaned_session_changes, id) ->
-          event |> finish_orphaned_change(id, state) |> continue_model_work_after()
+      if op_reply?(state.op_in_flight, id),
+        do: handle_op_reply(event, state),
+        else: process_response(event, id, state)
 
-        Map.has_key?(state.restoring_session_changes, id) ->
-          event |> finish_session_restore(id, state) |> continue_model_work_after()
-
-        MapSet.member?(state.pending_session_changes, id) ->
-          state = resolve_session_change(id, event, state)
-          event |> process_response(id, state) |> continue_model_work_after()
-
-        # A reply for a group that already ended, for example a setup query
-        # that arrives after its setup failed or was cancelled. Applying it
-        # could repoint a newer session.
-        MapSet.member?(state.retired_rpc_ids, id) ->
-          {:skip, %{state | retired_rpc_ids: MapSet.delete(state.retired_rpc_ids, id)}}
-
-        true ->
-          process_response(event, id, state)
-      end
-
-    start_queued_setup_after(result)
+    advance_after(result)
   end
 
   defp process_event(
@@ -1936,9 +1873,8 @@ defmodule Arbor.ACP.Adapters.Pi do
     state = %{state | last_usage: Events.usage_from_agent_end(event)}
 
     if state.pending_prompt do
-      {id, request, state} = rpc(state, RPC.method(:get_session_stats))
-      state = %{state | pending_usage_request: {id, state.session_id}}
-      {:skip_and_write, RPC.line(request), state}
+      state = enqueue_op(state, %{type: :usage, session_id: state.session_id})
+      advance_after({:skip, state})
     else
       {:skip, state}
     end
@@ -1963,6 +1899,15 @@ defmodule Arbor.ACP.Adapters.Pi do
   # Pi reports every effective thinking-level change, including the level a
   # model switch selects and the clamp it applies to an unsupported
   # set_thinking_level.
+  # While a setup or a switch back runs, Pi may be on either session; the
+  # setup's own get_state reports the level.
+  defp process_event(
+         %{"type" => "thinking_level_changed"},
+         %{op_in_flight: %{type: type}} = state
+       )
+       when type in [:setup, :switch_back],
+       do: {:skip, state}
+
   defp process_event(%{"type" => "thinking_level_changed", "level" => level}, state)
        when is_binary(level) and level != "" do
     previous = state.thinking_level
@@ -2320,9 +2265,9 @@ defmodule Arbor.ACP.Adapters.Pi do
   # session/new and a settled session switch produce the same state transition
   # and the same response; only the session id and the optional replay differ.
   defp finish_established_session(group, state, state_data, models_data, session_id) do
-    # A model switch requested while the setup ran was for the session it
-    # replaces.
-    state = abandon_session_requests(state)
+    # The setup operation is done. A model switch queued behind it for the
+    # session it replaced is dropped when it reaches the head of the queue.
+    state = %{state | op_in_flight: nil, desynced: nil}
     cwd = state_data["cwd"] || group.cwd
     session_file = state_data["sessionFile"] || group[:session_file]
     models = Config.model_state(models_data, state_data)
@@ -2750,14 +2695,10 @@ defmodule Arbor.ACP.Adapters.Pi do
         Map.delete(pending, rpc_id)
       end)
 
-    # A pending session change is resolved through pending_session_changes.
-    retired = MapSet.difference(refs, state.pending_session_changes)
-
     %{
       state
       | pending_controls: pending_controls,
-        control_groups: Map.delete(state.control_groups, group.group_id),
-        retired_rpc_ids: MapSet.union(state.retired_rpc_ids, retired)
+        control_groups: Map.delete(state.control_groups, group.group_id)
     }
   end
 

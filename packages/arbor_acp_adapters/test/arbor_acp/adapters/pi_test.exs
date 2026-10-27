@@ -856,8 +856,8 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert state.available_thinking_levels == ["off", "minimal", "low"]
       assert state.thinking_level == "low"
       assert state.current_model_id == "openai/gpt-5.1"
-      assert state.pending_model_switch == nil
-      assert state.pending_model_refresh == nil
+      assert state.op_in_flight == nil
+      assert state.op_queue == []
 
       # set_model goes alone, as a request whose reply starts the refresh.
       assert [%{"type" => "set_model", "id" => "pi-" <> _}] = decode_many(data)
@@ -991,9 +991,9 @@ defmodule Arbor.ACP.Adapters.PiTest do
         # The latest request is the one that sticks.
         assert pi.applied == ["openai/gpt-5.1", "anthropic/claude-opus-4"]
         assert state.current_model_id == "anthropic/claude-opus-4"
-        assert state.pending_model_switch == nil
-        assert state.pending_model_refresh == nil
-        assert state.queued_model_switch == nil
+        assert state.op_in_flight == nil
+        assert state.op_queue == []
+        assert state.desynced == nil
 
         assert [mode_update, config_update] = messages
         assert mode_update["params"]["update"]["currentModeId"] == "xhigh"
@@ -1068,9 +1068,11 @@ defmodule Arbor.ACP.Adapters.PiTest do
       # and nothing reaches Pi while the first switch is outstanding.
       assert after_many == after_two
       assert Enum.uniq(writes) == [""]
-      assert after_many.pending_model_switch.rpc_id == first_id
+      assert after_many.op_in_flight.rpc_id == first_id
 
-      assert after_many.queued_model_switch.fields == %{
+      assert [%{fields: queued_fields}] = after_many.op_queue
+
+      assert queued_fields == %{
                "provider" => "anthropic",
                "modelId" => "claude-opus-4"
              }
@@ -1079,228 +1081,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
       {state, pi, _messages} = settle_fake_pi(after_many, pi, :oldest_first)
       assert pi.applied == ["openai/gpt-5.1", "anthropic/claude-opus-4"]
       assert state.current_model_id == "anthropic/claude-opus-4"
-      assert state.queued_model_switch == nil
-    end
-
-    test "a model switch waiting when the session changes never reaches the next session",
-         ctx do
-      for method <- ["session/load", "session/resume", "session/new"] do
-        state = switch_ready_state(ctx.state)
-        {refresh, state, pi} = refresh_with_waiting_switch(state)
-
-        assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
-
-        # Pi answers the refresh it read before the session change. While the
-        # change is pending nothing is sent and nothing is published.
-        state = feed_without_effect(refresh, state, pi, method)
-        assert state.pending_model_refresh == nil
-
-        # Pi confirms the change: s1's waiting switch is dropped, not sent.
-        {state, messages} = finish_session_setup(setup, state, ctx)
-        assert state.queued_model_switch == nil, "#{method} kept s1's waiting switch"
-        assert state.pending_model_switch == nil
-        assert state.session_id == "s2"
-        assert state.current_model_id == "anthropic/claude-sonnet-4"
-        assert state.available_thinking_levels == ["off", "high"]
-        refute Enum.any?(messages, &(&1["params"]["sessionId"] == "s1"))
-      end
-    end
-
-    # Pi rejects the change, or an extension cancels it (`cancelled: true`).
-    for method <- ["session/load", "session/resume", "session/new"],
-        outcome <- [:rejected, :cancelled] do
-      @rejected_method method
-      @change_outcome outcome
-      test "a #{outcome} #{method} still sends s1's waiting switch", ctx do
-        method = @rejected_method
-        outcome = @change_outcome
-        state = switch_ready_state(ctx.state)
-        {refresh, state, pi} = refresh_with_waiting_switch(state)
-
-        assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
-        state = feed_without_effect(refresh, state, pi, method)
-
-        assert {:messages_and_write, [error], next, state} =
-                 reject_session_setup(setup, state, ctx, outcome)
-
-        # The ACP request fails; it never reports s2 as the active session.
-        assert error["id"] == 70
-        refute Map.has_key?(error, "result")
-        assert error["error"]["message"] == change_failure_message(outcome)
-
-        assert [%{"type" => "set_model", "modelId" => "claude-opus-4"}] = decode_many(next),
-               "#{method}: s1's waiting switch was not sent after the rejected change"
-
-        {state, pi, messages} = drive_fake_pi(next, state, pi)
-        assert pi.applied == ["openai/gpt-5.1", "anthropic/claude-opus-4"]
-        assert state.session_id == "s1"
-        assert state.current_model_id == "anthropic/claude-opus-4"
-        assert state.available_thinking_levels == ~w(off low medium high xhigh)
-        assert [mode_update, config_update] = messages
-        assert mode_update["params"]["sessionId"] == "s1"
-        assert config_update["params"]["sessionId"] == "s1"
-      end
-    end
-
-    # Pi may answer the switch before or after it rejects the session change.
-    for method <- ["session/load", "session/resume", "session/new"],
-        order <- [:switch_reply_first, :rejection_first],
-        outcome <- [:rejected, :cancelled] do
-      @rejected_method method
-      @switch_order order
-      @change_outcome outcome
-      test "a #{outcome} #{method} lets s1's outstanding switch refresh (#{order})", ctx do
-        method = @rejected_method
-        order = @switch_order
-        outcome = @change_outcome
-        state = switch_ready_state(ctx.state)
-        pi = %{fake_pi() | hold_switches?: true}
-
-        assert {:messages_and_write, _, first, state} =
-                 Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
-
-        {state, pi, []} = drive_fake_pi(first, state, pi)
-        assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
-
-        {state, pi, messages} =
-          reject_with_switch_outstanding(order, setup, state, pi, ctx, outcome)
-
-        assert state.session_id == "s1"
-        assert state.current_model_id == "openai/gpt-5.1"
-        assert state.available_thinking_levels == ["off", "minimal", "low"]
-
-        assert [mode_update, config_update] = messages,
-               "#{method}/#{order}: s1's switch was not refreshed"
-
-        assert mode_update["params"]["sessionId"] == "s1"
-        assert config_update["params"]["sessionId"] == "s1"
-        assert pi.applied == ["openai/gpt-5.1"]
-      end
-    end
-
-    # The ACP client sends $/cancel_request when the request times out, when
-    # its caller cancels it, and when the caller goes away. The request fails
-    # at once, but Pi's answer to the change, whenever it comes, decides what
-    # happens to the held model work. A session_before_switch extension that
-    # never resolves means that answer never comes.
-    for method <- ["session/load", "session/resume", "session/new"],
-        late <- [:rejected, :cancelled, :succeeded] do
-      @cancelled_method method
-      @late_outcome late
-      test "a #{method} cancelled before Pi answers waits for Pi (late #{late})", ctx do
-        method = @cancelled_method
-        late = @late_outcome
-        state = with_session_file(switch_ready_state(ctx.state), ctx)
-        {refresh, state, pi} = refresh_with_waiting_switch(state)
-
-        assert {:ok, setup, state} = Pi.translate_outbound(session_change(method, ctx), state)
-        state = feed_without_effect(refresh, state, pi, method)
-        [change] = decode_many(setup)
-
-        assert {:messages, [error], state} = Pi.translate_outbound(cancel_request(70), state),
-               "#{method}: the cancel released or sent something before Pi answered"
-
-        assert error["id"] == 70
-        assert error["error"]["code"] == -32_800
-        assert MapSet.member?(state.pending_session_changes, change["id"])
-        assert state.control_groups == %{}
-
-        next = answer_cancelled_change(late, change, state)
-        assert [%{"type" => "set_model", "modelId" => "claude-opus-4"}] = decode_many(next)
-      end
-    end
-
-    # The change succeeded, so the setup's queries were already sent when the
-    # client cancelled it. Pi is returned to s1; the queries may be answered
-    # before or after Pi answers that switch.
-    for order <- [:queries_first, :restore_first] do
-      @reply_order order
-      test "a setup cancelled after its change succeeded returns Pi to s1 (#{order})", ctx do
-        state = with_session_file(switch_ready_state(ctx.state), ctx)
-        before = Map.take(state, [:session_id, :session_file, :cwd, :workspace_root])
-
-        assert {:ok, setup, state} =
-                 Pi.translate_outbound(session_change("session/load", ctx), state)
-
-        {[_change | queries], state} = confirm_session_change(setup, state)
-
-        assert {:messages_and_write, [error], back, state} =
-                 Pi.translate_outbound(cancel_request(70), state)
-
-        assert error["error"]["code"] == -32_800
-        assert [%{"type" => "switch_session"} = restore] = decode_many(back)
-        assert restore["sessionPath"] == before.session_file
-
-        answer_queries = fn state ->
-          {state, []} =
-            Enum.reduce(queries, {state, []}, fn query, {state, []} ->
-              data = %{
-                "sessionId" => "s2",
-                "thinkingLevel" => "low",
-                "models" => [],
-                "levels" => []
-              }
-
-              assert {:skip, state} =
-                       Pi.translate_inbound(
-                         response_line(query["id"], query["type"], data),
-                         state
-                       )
-
-              {state, []}
-            end)
-
-          state
-        end
-
-        answer_restore = fn state ->
-          assert {:skip, state} =
-                   Pi.translate_inbound(
-                     response_line(restore["id"], "switch_session", %{}),
-                     state
-                   )
-
-          state
-        end
-
-        steps = %{queries: answer_queries, restore: answer_restore}
-        state = Enum.reduce(reply_steps(@reply_order), state, &Map.fetch!(steps, &1).(&2))
-
-        assert Map.take(state, [:session_id, :session_file, :cwd, :workspace_root]) == before
-        assert state.pending_session_changes == MapSet.new()
-        assert state.retired_rpc_ids == MapSet.new()
-      end
-    end
-
-    test "a cancelled setup's outstanding switch refreshes once Pi answers the change", ctx do
-      state = switch_ready_state(ctx.state)
-      pi = %{fake_pi() | hold_switches?: true}
-
-      assert {:messages_and_write, _, first, state} =
-               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
-
-      {state, pi, []} = drive_fake_pi(first, state, pi)
-
-      assert {:ok, setup, state} =
-               Pi.translate_outbound(session_change("session/load", ctx), state)
-
-      [change] = decode_many(setup)
-
-      assert {:messages, [%{"id" => 70, "error" => %{"code" => -32_800}}], state} =
-               Pi.translate_outbound(cancel_request(70), state)
-
-      # The switch's answer comes while the change is still unanswered: held.
-      {[_level_event, switch_reply], pi} = fake_pi_reply(hd(pi.held), %{pi | held: []})
-      assert {:skip, state} = Pi.translate_inbound(Jason.encode!(switch_reply), state)
-
-      assert {:skip_and_write, refresh, state} =
-               Pi.translate_inbound(Jason.encode!(change_failure(change, :rejected)), state)
-
-      {state, _pi, messages} = drive_fake_pi(refresh, state, %{pi | hold_switches?: false})
-      assert state.current_model_id == "openai/gpt-5.1"
-      assert [mode_update, config_update] = messages
-      assert mode_update["params"]["sessionId"] == "s1"
-      assert config_update["params"]["sessionId"] == "s1"
+      assert state.op_queue == []
     end
 
     test "a switch requested during a load's queries waits and reaches s1 if the load fails",
@@ -1334,148 +1115,6 @@ defmodule Arbor.ACP.Adapters.PiTest do
                Pi.translate_inbound(response_line(restore["id"], "switch_session", %{}), state)
 
       assert [%{"type" => "set_model", "modelId" => "claude-opus-4"}] = decode_many(next)
-    end
-
-    test "a setup arriving while a cancelled change is unanswered waits for Pi", ctx do
-      state = switch_ready_state(ctx.state)
-
-      assert {:ok, setup, state} =
-               Pi.translate_outbound(session_change("session/load", ctx), state)
-
-      [change] = decode_many(setup)
-      assert {:messages, [_error], state} = Pi.translate_outbound(cancel_request(70), state)
-
-      assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
-
-      assert {:skip_and_write, next, _state} =
-               Pi.translate_inbound(Jason.encode!(change_failure(change, :rejected)), state)
-
-      assert [%{"type" => "new_session"}] = decode_many(next)
-    end
-
-    test "cancelling another request leaves a pending setup alone", ctx do
-      state = switch_ready_state(ctx.state)
-
-      assert {:ok, _setup, state} =
-               Pi.translate_outbound(session_change("session/load", ctx), state)
-
-      assert {:ok, :skip, ^state} = Pi.translate_outbound(cancel_request(71), state)
-      assert MapSet.size(state.pending_session_changes) == 1
-    end
-
-    test "Pi exiting during a session change releases nothing and holds nothing", ctx do
-      state = switch_ready_state(ctx.state)
-      {_refresh, state, _pi} = refresh_with_waiting_switch(state)
-
-      assert {:ok, _setup, state} =
-               Pi.translate_outbound(session_change("session/load", ctx), state)
-
-      assert {:messages, [%{"id" => 70, "error" => _}], state} =
-               Pi.handle_adapter_message({nil, {:exit_status, 1}}, state)
-
-      assert state.pending_session_changes == MapSet.new()
-      assert state.queued_model_switch == nil
-      assert state.pending_model_refresh == nil
-
-      assert {:messages_and_write, _, data, _state} =
-               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
-
-      assert [%{"type" => "set_model"}] = decode_many(data)
-    end
-
-    test "a model switch outstanding when the session changes is consumed without effect", ctx do
-      for method <- ["session/load", "session/new", "session/close"] do
-        state = switch_ready_state(ctx.state)
-        pi = %{fake_pi() | hold_switches?: true}
-
-        assert {:messages_and_write, _, first, state} =
-                 Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
-
-        {state, pi, []} = drive_fake_pi(first, state, pi)
-
-        state =
-          case Pi.translate_outbound(session_change(method, ctx), state) do
-            {:ok, setup, state} -> setup |> finish_session_setup(state, ctx) |> elem(0)
-            {:reply, %{}, state} -> state
-          end
-
-        # Pi's reply to the old switch arrives after the session changed. Pi
-        # rebinds its event stream on a switch, so only the response arrives.
-        {[_level_event, switch_reply], _pi} = fake_pi_reply(hd(pi.held), pi)
-
-        assert {:skip, state} = Pi.translate_inbound(Jason.encode!(switch_reply), state),
-               "#{method}: the old switch's reply started a refresh"
-
-        assert state.pending_model_switch == nil
-        assert state.pending_model_refresh == nil
-
-        if method != "session/close" do
-          assert state.current_model_id == "anthropic/claude-sonnet-4"
-        end
-      end
-    end
-
-    test "a switch for the next session waits for the old outstanding switch", ctx do
-      state = switch_ready_state(ctx.state)
-      pi = %{fake_pi() | hold_switches?: true}
-
-      assert {:messages_and_write, _, first, state} =
-               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
-
-      {state, pi, []} = drive_fake_pi(first, state, pi)
-
-      assert {:ok, setup, state} =
-               Pi.translate_outbound(session_change("session/load", ctx), state)
-
-      {state, _messages} = finish_session_setup(setup, state, ctx)
-
-      # Model switches stay serialized across the session change.
-      assert {:messages_and_write, _, "", state} =
-               Pi.translate_outbound(
-                 %{
-                   "method" => "session/set_model",
-                   "params" => %{"sessionId" => "s2", "modelId" => "anthropic/claude-opus-4"}
-                 },
-                 state
-               )
-
-      {[_level_event, old_reply], pi} = fake_pi_reply(hd(pi.held), %{pi | held: []})
-
-      assert {:skip_and_write, next, state} =
-               Pi.translate_inbound(Jason.encode!(old_reply), state)
-
-      assert [%{"type" => "set_model", "modelId" => "claude-opus-4"}] = decode_many(next)
-
-      {state, _pi, messages} = drive_fake_pi(next, state, %{pi | hold_switches?: false})
-      assert state.current_model_id == "anthropic/claude-opus-4"
-      assert [mode_update, config_update] = messages
-      assert mode_update["params"]["sessionId"] == "s2"
-      assert config_update["params"]["sessionId"] == "s2"
-    end
-
-    test "a usage request is published unless the session change took effect", ctx do
-      stats = fn state ->
-        Pi.translate_inbound(
-          response_line("pi-90", "get_session_stats", %{
-            "contextUsage" => %{"tokens" => 120, "contextWindow" => 200_000}
-          }),
-          state
-        )
-      end
-
-      state = %{switch_ready_state(ctx.state) | pending_usage_request: {"pi-90", "s1"}}
-
-      assert {:ok, setup, state} =
-               Pi.translate_outbound(session_change("session/load", ctx), state)
-
-      {confirmed, _messages} = finish_session_setup(setup, state, ctx)
-      assert {:skip, confirmed} = stats.(confirmed)
-      assert confirmed.pending_usage_request == nil
-
-      assert {:messages, [_error], rejected} = reject_session_setup(setup, state, ctx)
-      assert {:messages, [usage], _rejected} = stats.(rejected)
-      assert usage["params"]["sessionId"] == "s1"
-      assert usage["params"]["update"]["sessionUpdate"] == "usage_update"
     end
 
     for method <- ["session/load", "session/resume", "session/new"] do
@@ -1556,25 +1195,6 @@ defmodule Arbor.ACP.Adapters.PiTest do
       end
     end
 
-    test "a waiting setup the client cancels never starts", ctx do
-      state = switch_ready_state(ctx.state)
-
-      assert {:ok, setup, state} =
-               Pi.translate_outbound(session_change("session/load", ctx), state)
-
-      assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
-
-      assert {:messages, [%{"id" => 71, "error" => %{"code" => -32_800}}], state} =
-               Pi.translate_outbound(cancel_request(71), state)
-
-      assert state.queued_session_setups == []
-
-      # The first setup completes and nothing else is written.
-      {state, messages} = finish_session_setup(setup, state, ctx)
-      assert Enum.any?(messages, &(&1["id"] == 70))
-      assert state.session_id == "s2"
-    end
-
     test "a failed session change keeps the previous session's workspace", ctx do
       other = Path.join(ctx.tmp_dir, "other")
       File.mkdir_p!(other)
@@ -1597,83 +1217,365 @@ defmodule Arbor.ACP.Adapters.PiTest do
       end
     end
 
-    for closer <- ["session/close", "session/delete"],
-        {running, queued} <- [{"session/load", "session/new"}, {"session/new", "session/load"}] do
-      @closer closer
-      @running_setup running
-      @queued_setup queued
-      test "a #{queued} waiting behind a #{running} that #{closer} drops starts at once", ctx do
-        state = switch_ready_state(ctx.state)
-        running = session_setup_request(@running_setup, 70, ctx)
-        queued = session_setup_request(@queued_setup, 71, ctx)
+    # Every Pi request that reads or changes the session is a serialized
+    # operation: a setup, a switch back, a model switch, or a usage request
+    # waits for the one in flight. The ordered fake Pi records the order in
+    # which it applied the asynchronous ones.
+    for method <- ["session/load", "session/resume", "session/new"] do
+      @op_method method
+      test "a #{method} waits for a model switch in flight to finish first", ctx do
+        {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+        {state, pi, _} = outbound(state, pi, set_model_request("openai/gpt-5.1"))
+        {state, pi, _} = outbound(state, pi, session_change(@op_method, ctx))
+        assert [%{"type" => "set_model"}] = pi.held, "the setup did not wait for set_model"
 
-        assert {:ok, _running_setup, state} = Pi.translate_outbound(running, state)
-        assert {:ok, :skip, state} = Pi.translate_outbound(queued, state)
+        {state, pi, messages} = ordered_drive(state, pi)
+        target = if @op_method == "session/new", do: "fresh", else: "s2"
+        assert pi.applied == [{:model, "s1", "openai/gpt-5.1"}, {:session, target}]
+        assert state.session_id == target
+        assert %{"result" => _} = Enum.find(messages, &(&1["id"] == 70))
+      end
+    end
+
+    for outcome <- [:rejected, :cancelled] do
+      @change_outcome outcome
+      test "a switch for s1 queued behind a #{outcome} setup is applied before the next setup",
+           ctx do
+        {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+        {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+        {state, pi, _} = outbound(state, pi, set_model_request("openai/gpt-5.1"))
+        {state, pi, _} = outbound(state, pi, session_change_new(71, ctx))
+        assert [%{"type" => "switch_session"}] = pi.held
+
+        pi = refuse_next(pi, "switch_session", @change_outcome)
+        {state, pi, messages} = ordered_drive(state, pi)
+
+        assert pi.applied == [{:model, "s1", "openai/gpt-5.1"}, {:session, "fresh"}],
+               "#{@change_outcome}: s1's switch was not applied to s1 before the next setup"
+
+        assert %{"error" => _} = Enum.find(messages, &(&1["id"] == 70))
+        assert %{"result" => %{"sessionId" => "fresh"}} = Enum.find(messages, &(&1["id"] == 71))
+        assert state.session_id == "fresh"
+      end
+    end
+
+    test "a switch for s1 queued behind a setup that establishes s2 is dropped", ctx do
+      {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+      {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+      {state, pi, _} = outbound(state, pi, set_model_request("anthropic/claude-opus-4"))
+      {state, pi, _messages} = ordered_drive(state, pi)
+
+      assert pi.applied == [{:session, "s2"}]
+      assert state.session_id == "s2"
+      assert state.current_model_id == "openai/gpt-5.1"
+      assert state.op_queue == []
+    end
+
+    for late <- [:rejected, :cancelled, :succeeded] do
+      @late_outcome late
+      test "a load cancelled before Pi answers lets Pi's late answer decide (#{late})", ctx do
+        {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+        {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+        {state, pi, _} = outbound(state, pi, set_model_request("openai/gpt-5.1"))
+
+        assert {:messages, [error], state} = Pi.translate_outbound(cancel_request(70), state)
+        assert error["error"]["code"] == -32_800
+        assert [%{"type" => "switch_session"}] = pi.held
+
+        pi =
+          if @late_outcome == :succeeded,
+            do: pi,
+            else: refuse_next(pi, "switch_session", @late_outcome)
+
+        {state, pi, _messages} = ordered_drive(state, pi)
+
+        expected =
+          if @late_outcome == :succeeded,
+            do: [{:session, "s2"}, {:session, "s1"}, {:model, "s1", "openai/gpt-5.1"}],
+            else: [{:model, "s1", "openai/gpt-5.1"}]
+
+        assert pi.applied == expected
+        assert state.session_id == "s1"
+        assert pi.active == "s1"
+        assert state.op_in_flight == nil
+      end
+    end
+
+    for order <- [:queries_first, :switch_back_first] do
+      @reply_order order
+      test "a load cancelled after its change succeeded returns Pi to s1 (#{order})", ctx do
+        {state, pi} = {ordered_state(ctx), %{ordered_pi(ctx) | hold_queries?: true}}
+        before = Map.take(state, [:session_id, :session_file, :cwd, :workspace_root])
+        {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+        {state, pi, []} = finish_held(state, pi)
+        assert length(pi.held_queries) == 5
+
+        {state, pi, [error]} = outbound(state, pi, cancel_request(70))
+        assert error["error"]["code"] == -32_800
+        assert [%{"type" => "switch_session"}] = pi.held
+
+        {state, pi, messages} =
+          case_order(@reply_order, state, pi, &answer_held_queries/2, &finish_held/2)
+
+        assert messages == []
+        assert pi.applied == [{:session, "s2"}, {:session, "s1"}]
+        assert Map.take(state, [:session_id, :session_file, :cwd, :workspace_root]) == before
+        assert state.op_in_flight == nil
+      end
+    end
+
+    test "session/close during a switch back keeps the next setup waiting for it", ctx do
+      {state, pi} = {ordered_state(ctx), %{ordered_pi(ctx) | hold_queries?: true}}
+      {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+      {state, pi, []} = finish_held(state, pi)
+      {state, pi, [_error]} = outbound(state, pi, cancel_request(70))
+      assert [%{"type" => "switch_session"}] = pi.held
+
+      {state, pi, _} = outbound(state, pi, session_change_new(71, ctx))
+      close = %{"method" => "session/close", "id" => 72, "params" => %{"sessionId" => "s1"}}
+      assert {:reply, %{}, state} = Pi.translate_outbound(close, state)
+      assert [%{"type" => "switch_session"}] = pi.held, "the next setup did not wait"
+
+      {state, pi, messages} = ordered_drive(state, pi)
+      assert pi.applied == [{:session, "s2"}, {:session, "s1"}, {:session, "fresh"}]
+      assert %{"result" => %{"sessionId" => "fresh"}} = Enum.find(messages, &(&1["id"] == 71))
+      assert state.session_id == pi.active
+    end
+
+    test "a refused switch back stops the adapter claiming the session Pi left", ctx do
+      {state, pi} = {ordered_state(ctx), %{ordered_pi(ctx) | hold_queries?: true}}
+      {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+      {state, pi, []} = finish_held(state, pi)
+      {state, pi, [_error]} = outbound(state, pi, cancel_request(70))
+      pi = refuse_next(pi, "switch_session", :rejected)
+      {state, pi, _messages} = ordered_drive(state, pi)
+      assert pi.active == "s2"
+
+      prompt = %{
+        "method" => "session/prompt",
+        "id" => 80,
+        "params" => %{"sessionId" => "s1", "prompt" => [%{"type" => "text", "text" => "hi"}]}
+      }
+
+      for request <- [
+            prompt,
+            set_model_request("openai/gpt-5.1"),
+            %{
+              "method" => "session/set_mode",
+              "params" => %{"sessionId" => "s1", "modeId" => "low"}
+            },
+            %{
+              "method" => "session/set_config_option",
+              "params" => %{"sessionId" => "s1", "configId" => "auto_retry", "value" => false}
+            }
+          ] do
+        assert {:error, reason, _state} = Pi.translate_outbound(request, state),
+               "the adapter still accepted #{request["method"]} for the session Pi left"
+
+        assert reason =~ "Pi is not on session s1"
+      end
+
+      assert state.desynced == %{session_id: "s1"}
+
+      # A new session resynchronises the adapter.
+      {state, pi, _} = outbound(state, pi, session_change_new(81, ctx))
+      {state, _pi, _messages} = ordered_drive(state, pi)
+      assert state.desynced == nil
+      assert state.session_id == "fresh"
+
+      assert {:ok, data, _state} =
+               Pi.translate_outbound(put_in(prompt, ["params", "sessionId"], "fresh"), state)
+
+      assert [%{"type" => "prompt"}] = decode_many(data)
+    end
+
+    test "setups fail at once while a cancelled change is unanswered", ctx do
+      {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+      {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+      assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
+
+      assert {:messages, messages, state} = Pi.translate_outbound(cancel_request(70), state)
+
+      assert [
+               %{"id" => 70, "error" => %{"code" => -32_800}},
+               %{
+                 "id" => 71,
+                 "error" => %{"message" => "Pi has not answered an earlier session change"}
+               }
+             ] = messages
+
+      assert {:error, "Pi has not answered an earlier session change", state} =
+               Pi.translate_outbound(session_change_new(72, ctx), state)
+
+      # Once Pi answers, setups run again.
+      pi = refuse_next(pi, "switch_session", :rejected)
+      {state, pi, _} = ordered_drive(state, pi)
+      {state, pi, _} = outbound(state, pi, session_change_new(73, ctx))
+      assert [%{"type" => "new_session"}] = pi.held
+      {state, _pi, messages} = ordered_drive(state, pi)
+      assert %{"result" => %{"sessionId" => "fresh"}} = Enum.find(messages, &(&1["id"] == 73))
+      assert state.session_id == "fresh"
+    end
+
+    test "failed setups leave no bookkeeping behind", ctx do
+      fail_setups = fn count ->
+        Enum.reduce(1..count, {ordered_state(ctx), ordered_pi(ctx)}, fn n, {state, pi} ->
+          request = %{session_change("session/load", ctx) | "id" => 100 + n}
+          {state, pi, _} = outbound(state, pi, request)
+
+          # Alternately the change is refused, or it succeeds and a query fails.
+          pi =
+            if rem(n, 2) == 0,
+              do: refuse_next(pi, "switch_session", :rejected),
+              else: refuse_next(pi, "get_available_models", :rejected)
+
+          {state, pi, _messages} = ordered_drive(state, pi)
+          {state, pi}
+        end)
+      end
+
+      {after_two, pi_two} = fail_setups.(2)
+      {after_many, pi_many} = fail_setups.(20)
+
+      assert Map.drop(after_many, [:rpc_counter]) == Map.drop(after_two, [:rpc_counter])
+      assert after_many.pending_controls == %{}
+      assert after_many.control_groups == %{}
+      assert {after_many.op_in_flight, after_many.op_queue} == {nil, []}
+      assert pi_two.active == "s1" and pi_many.active == "s1"
+    end
+
+    test "a usage request waits for a setup and is dropped once the setup replaces the session",
+         ctx do
+      {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+      state = %{state | pending_prompt: %{acp_id: 9, msg_id: "msg-9", cancel_requested: false}}
+      {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+
+      assert {:skip, state} =
+               Pi.translate_inbound(
+                 Jason.encode!(%{"type" => "agent_end", "messages" => []}),
+                 state
+               )
+
+      assert [%{type: :usage, session_id: "s1"}] = state.op_queue
+      {state, pi, messages} = ordered_drive(state, pi)
+
+      refute Enum.any?(
+               messages,
+               &match?(%{"params" => %{"update" => %{"sessionUpdate" => "usage_update"}}}, &1)
+             )
+
+      refute Enum.any?(pi.requests, &(&1 == "get_session_stats"))
+      assert state.session_id == "s2"
+    end
+
+    test "a usage request in flight is answered before a setup starts", ctx do
+      {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+      state = %{state | pending_prompt: %{acp_id: 9, msg_id: "msg-9", cancel_requested: false}}
+
+      assert {:skip_and_write, stats, state} =
+               Pi.translate_inbound(
+                 Jason.encode!(%{"type" => "agent_end", "messages" => []}),
+                 state
+               )
+
+      assert {:ok, :skip, state} =
+               Pi.translate_outbound(session_change("session/load", ctx), state)
+
+      [%{"id" => stats_id}] = decode_many(stats)
+
+      usage =
+        response_line(stats_id, "get_session_stats", %{
+          "contextUsage" => %{"tokens" => 120, "contextWindow" => 200_000}
+        })
+
+      assert {:messages_and_write, [update], setup, _state} = Pi.translate_inbound(usage, state)
+      assert update["params"]["sessionId"] == "s1"
+      assert update["params"]["update"]["sessionUpdate"] == "usage_update"
+      assert [%{"type" => "switch_session"}] = decode_many(setup)
+      _ = pi
+    end
+
+    test "Pi exiting during a setup fails waiting setups and holds nothing", ctx do
+      {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+      {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+      {state, _pi, _} = outbound(state, pi, set_model_request("openai/gpt-5.1"))
+      assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
+
+      assert {:messages, messages, state} =
+               Pi.handle_adapter_message({nil, {:exit_status, 1}}, state)
+
+      assert Enum.map(messages, & &1["id"]) == [70, 71]
+      assert {state.op_in_flight, state.op_queue} == {nil, []}
+
+      assert {:messages_and_write, _, data, _state} =
+               Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
+
+      assert [%{"type" => "set_model"}] = decode_many(data)
+    end
+
+    test "cancelling another request leaves a running setup alone", ctx do
+      {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+      {state, _pi, _} = outbound(state, pi, session_change("session/load", ctx))
+      assert {:ok, :skip, ^state} = Pi.translate_outbound(cancel_request(71), state)
+      assert %{type: :setup, acp_id: 70} = state.op_in_flight
+    end
+
+    test "a waiting setup the client cancels never starts", ctx do
+      {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+      {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+      assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
+
+      assert {:messages, [%{"id" => 71, "error" => %{"code" => -32_800}}], state} =
+               Pi.translate_outbound(cancel_request(71), state)
+
+      {state, pi, messages} = ordered_drive(state, pi)
+      assert pi.applied == [{:session, "s2"}]
+      refute Enum.any?(messages, &(&1["id"] == 71))
+      assert state.session_id == "s2"
+    end
+
+    for closer <- ["session/close", "session/delete"] do
+      @closer closer
+      test "a setup waiting behind a running one starts when it ends, across #{closer}", ctx do
+        {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+        {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+        assert {:ok, :skip, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
 
         close = %{"method" => @closer, "id" => 72, "params" => %{"sessionId" => "s1"}}
+        assert {:reply, %{}, state} = Pi.translate_outbound(close, state)
 
-        assert {:reply_and_write, %{}, setup, state} = Pi.translate_outbound(close, state),
-               "#{@closer} left the #{@queued_setup} waiting"
-
-        assert [%{"type" => change}] = decode_many(setup)
-        assert change in ["new_session", "switch_session"]
-        assert state.queued_session_setups == []
-
-        {state, messages} = finish_session_setup(setup, state, ctx)
-        assert %{"result" => %{"sessionId" => "s2"}} = Enum.find(messages, &(&1["id"] == 71))
-        assert state.session_id == "s2"
+        {state, pi, messages} = ordered_drive(state, pi)
+        assert pi.applied == [{:session, "s2"}, {:session, "fresh"}]
+        assert %{"result" => %{"sessionId" => "s2"}} = Enum.find(messages, &(&1["id"] == 70))
+        assert %{"result" => %{"sessionId" => "fresh"}} = Enum.find(messages, &(&1["id"] == 71))
+        assert state.session_id == "fresh"
       end
     end
 
     # A setup query can still be answered after its setup ended: here the
     # catalog query fails first and get_state is answered later.
-    for order <- [:late_reply_first, :next_session_first] do
-      @late_order order
-      test "a late setup query reply after the setup failed changes nothing (#{order})", ctx do
-        state = switch_ready_state(ctx.state)
+    test "a late setup query reply after the setup failed changes nothing", ctx do
+      {state, pi} = {ordered_state(ctx), %{ordered_pi(ctx) | hold_queries?: true}}
+      {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+      {state, pi, []} = finish_held(state, pi)
+      {get_state, others} = Enum.split_with(pi.held_queries, &(&1["type"] == "get_state"))
+      pi = %{pi | held_queries: others} |> refuse_next("get_available_models", :rejected)
 
-        assert {:ok, setup, state} =
-                 Pi.translate_outbound(session_change("session/load", ctx), state)
+      {state, pi, messages} = answer_held_queries(state, pi)
+      assert %{"error" => _} = Enum.find(messages, &(&1["id"] == 70))
+      {state, pi, _} = ordered_drive(state, pi)
+      assert pi.active == "s1"
+      before = Map.take(state, [:session_id, :session_file, :thinking_level])
 
-        {[_change | followups], state} = confirm_session_change(setup, state)
-        by_type = Map.new(followups, &{&1["type"], &1["id"]})
+      late =
+        response_line(hd(get_state)["id"], "get_state", %{
+          "sessionId" => "stale",
+          "sessionFile" => Path.join(ctx.session_dir, "stale.jsonl"),
+          "thinkingLevel" => "xhigh"
+        })
 
-        failure =
-          Jason.encode!(%{
-            "type" => "response",
-            "id" => by_type["get_available_models"],
-            "command" => "get_available_models",
-            "success" => false,
-            "error" => "catalog unavailable"
-          })
-
-        {state, [error]} = result_state_and_messages(Pi.translate_inbound(failure, state))
-        assert error["id"] == 70
-
-        state =
-          if @late_order == :next_session_first do
-            state = settle_session_change_restore(state)
-            assert {:ok, next, state} = Pi.translate_outbound(session_change_new(71, ctx), state)
-            {state, _messages} = finish_session_setup(next, state, ctx)
-            state
-          else
-            state
-          end
-
-        before = Map.take(state, [:session_id, :session_file, :thinking_level])
-
-        late =
-          response_line(by_type["get_state"], "get_state", %{
-            "sessionId" => "stale",
-            "sessionFile" => Path.join(ctx.session_dir, "stale.jsonl"),
-            "thinkingLevel" => "xhigh"
-          })
-
-        assert {:skip, state} = Pi.translate_inbound(late, state)
-
-        assert Map.take(state, [:session_id, :session_file, :thinking_level]) == before,
-               "#{@late_order}: a late get_state reply repointed the session"
-      end
+      assert {:skip, state} = Pi.translate_inbound(late, state)
+      assert Map.take(state, [:session_id, :session_file, :thinking_level]) == before
     end
 
     test "thinking_level_changed events publish the level Pi applied", %{state: state} do
@@ -2147,7 +2049,11 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
   describe "translate_inbound/2 — agent settlement" do
     test "unreliable context counts do not become ACP usage updates", %{state: state} do
-      state = %{state | session_id: "s1", pending_usage_request: {"pi-1", "s1"}}
+      state = %{
+        state
+        | session_id: "s1",
+          op_in_flight: %{type: :usage, rpc_id: "pi-1", session_id: "s1"}
+      }
 
       assert {:skip, state} =
                Pi.translate_inbound(
@@ -2157,7 +2063,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
                  state
                )
 
-      assert state.pending_usage_request == nil
+      assert state.op_in_flight == nil
     end
 
     test "agent_end records usage and agent_settled produces the prompt response", %{state: state} do
@@ -2580,57 +2486,9 @@ defmodule Arbor.ACP.Adapters.PiTest do
     %{"method" => method, "id" => 70, "params" => %{"sessionId" => "s2", "cwd" => ctx.tmp_dir}}
   end
 
-  # s1 switches to gpt-5.1; Pi answers, so the adapter writes the refresh,
-  # and s1 asks for claude-opus-4 while that refresh is outstanding.
-  defp refresh_with_waiting_switch(state) do
-    pi = fake_pi()
-
-    assert {:messages_and_write, _, first, state} =
-             Pi.translate_outbound(set_model_request("openai/gpt-5.1"), state)
-
-    {[level_event, switch_reply], pi} = fake_pi_answer(decode_many(first), pi)
-    assert {:skip, state} = Pi.translate_inbound(Jason.encode!(level_event), state)
-
-    assert {:skip_and_write, refresh, state} =
-             Pi.translate_inbound(Jason.encode!(switch_reply), state)
-
-    assert {:messages_and_write, _, "", state} =
-             Pi.translate_outbound(set_model_request("anthropic/claude-opus-4"), state)
-
-    {refresh, state, pi}
-  end
-
-  defp reject_with_switch_outstanding(:switch_reply_first, setup, state, pi, ctx, outcome) do
-    {state, pi, []} = settle_fake_pi(state, pi, :oldest_first)
-
-    assert {:messages_and_write, [_error], refresh, state} =
-             reject_session_setup(setup, state, ctx, outcome)
-
-    drive_fake_pi(refresh, state, pi)
-  end
-
-  defp reject_with_switch_outstanding(:rejection_first, setup, state, pi, ctx, outcome) do
-    assert {:messages, [_error], state} = reject_session_setup(setup, state, ctx, outcome)
-    settle_fake_pi(state, pi, :oldest_first)
-  end
-
-  defp change_failure_message(:rejected), do: "Session file is locked"
-  defp change_failure_message(:cancelled), do: "Pi cancelled the session change"
-
-  defp feed_without_effect(data, state, pi, label) do
-    {replies, _pi} = fake_pi_answer(decode_many(data), pi)
-
-    Enum.reduce(replies, state, fn reply, state ->
-      assert {:skip, state} = Pi.translate_inbound(Jason.encode!(reply), state),
-             "#{label}: a reply acted while the session change was pending"
-
-      state
-    end)
-  end
-
   # Pi rejects the session change, or an extension cancels it; the rest of the
   # setup group is never sent.
-  defp reject_session_setup(setup, state, _ctx, outcome \\ :rejected) do
+  defp reject_session_setup(setup, state, _ctx, outcome) do
     assert [%{"type" => type} = change] = decode_many(setup)
     assert type in ["new_session", "switch_session"]
     Pi.translate_inbound(Jason.encode!(change_failure(change, outcome)), state)
@@ -2655,45 +2513,6 @@ defmodule Arbor.ACP.Adapters.PiTest do
       "success" => true,
       "data" => %{"cancelled" => true}
     }
-  end
-
-  # Pi confirms the session change, then answers the setup group for s2.
-  defp finish_session_setup(setup, state, ctx) do
-    {[_change | followups], state} = confirm_session_change(setup, state)
-    answer_session_setup(followups, state, ctx)
-  end
-
-  defp answer_session_setup(requests, state, ctx) do
-    data = %{
-      "new_session" => %{},
-      "switch_session" => %{},
-      "get_messages" => %{"messages" => []},
-      "get_state" => %{
-        "sessionId" => "s2",
-        "sessionFile" => Path.join(ctx.session_dir, "s2.jsonl"),
-        "cwd" => ctx.tmp_dir,
-        "thinkingLevel" => "off",
-        "model" => %{"provider" => "anthropic", "id" => "claude-sonnet-4"}
-      },
-      "get_available_models" => %{
-        "models" => [
-          %{"provider" => "anthropic", "id" => "claude-sonnet-4"},
-          %{"provider" => "anthropic", "id" => "claude-opus-4"},
-          %{"provider" => "openai", "id" => "gpt-5.1"}
-        ]
-      },
-      "get_available_thinking_levels" => %{"levels" => ["off", "high"]},
-      "get_commands" => %{"commands" => []}
-    }
-
-    Enum.reduce(requests, {state, []}, fn request, {state, messages} ->
-      line = response_line(request["id"], request["type"], Map.fetch!(data, request["type"]))
-
-      case Pi.translate_inbound(line, state) do
-        {:skip, state} -> {state, messages}
-        {:messages, new, state} -> {state, messages ++ new}
-      end
-    end)
   end
 
   defp cancel_request(acp_id),
@@ -2852,54 +2671,6 @@ defmodule Arbor.ACP.Adapters.PiTest do
     end)
   end
 
-  defp session_setup_request("session/new", acp_id, ctx), do: session_change_new(acp_id, ctx)
-
-  defp session_setup_request(method, acp_id, ctx),
-    do: %{session_change(method, ctx) | "id" => acp_id}
-
-  defp result_state_and_messages({:messages, messages, state}), do: {state, messages}
-
-  defp result_state_and_messages({:messages_and_write, messages, _data, state}),
-    do: {state, messages}
-
-  # Answers the switch the adapter sent to return Pi to the previous session.
-  defp settle_session_change_restore(state) do
-    Enum.reduce(Map.keys(state.restoring_session_changes), state, fn id, state ->
-      assert {:skip, state} =
-               Pi.translate_inbound(response_line(id, "switch_session", %{}), state)
-
-      state
-    end)
-  end
-
-  # Pi finally answers a change whose setup the client cancelled; returns what
-  # the adapter sends once the held model work is released.
-  defp answer_cancelled_change(:succeeded, change, state) do
-    # Pi switched after all: the adapter sends it back to s1 first.
-    assert {:skip_and_write, back, state} =
-             Pi.translate_inbound(response_line(change["id"], change["type"], %{}), state)
-
-    assert [%{"type" => "switch_session", "sessionPath" => s1_file} = restore] =
-             decode_many(back)
-
-    assert s1_file == state.session_file
-
-    assert {:skip_and_write, next, _state} =
-             Pi.translate_inbound(response_line(restore["id"], "switch_session", %{}), state)
-
-    next
-  end
-
-  defp answer_cancelled_change(outcome, change, state) do
-    assert {:skip_and_write, next, _state} =
-             Pi.translate_inbound(Jason.encode!(change_failure(change, outcome)), state)
-
-    next
-  end
-
-  defp reply_steps(:queries_first), do: [:queries, :restore]
-  defp reply_steps(:restore_first), do: [:restore, :queries]
-
   defp with_session_file(state, ctx),
     do: %{state | session_file: Path.join(ctx.session_dir, "s1.jsonl")}
 
@@ -3017,6 +2788,198 @@ defmodule Arbor.ACP.Adapters.PiTest do
           drive_session_pi(replies, state, pi, messages ++ new)
       end
     end)
+  end
+
+  defp ordered_state(ctx) do
+    state = with_session_file(switch_ready_state(ctx.state), ctx)
+
+    %{
+      state
+      | available_models: [
+          %{"modelId" => "anthropic/claude-sonnet-4", "name" => "anthropic/Claude Sonnet 4"},
+          %{"modelId" => "anthropic/claude-opus-4", "name" => "anthropic/Claude Opus 4"},
+          %{"modelId" => "openai/gpt-5.1", "name" => "openai/GPT-5.1"}
+        ]
+    }
+  end
+
+  # A fake Pi that holds sessions and records, in order, what it applied.
+  # set_model, new_session and switch_session finish only when the test lets
+  # them, newest first as the worst case; with hold_queries?, reads wait too.
+  # Everything else is answered at once from the session active when Pi reads
+  # it. refuse_next/3 makes the next request of a type fail.
+  defp ordered_pi(ctx) do
+    %{
+      cwd: ctx.tmp_dir,
+      session_dir: ctx.session_dir,
+      active: "s1",
+      models: %{
+        "s1" => "anthropic/claude-sonnet-4",
+        "s2" => "openai/gpt-5.1",
+        "fresh" => "anthropic/claude-opus-4"
+      },
+      held: [],
+      held_queries: [],
+      hold_queries?: false,
+      applied: [],
+      requests: [],
+      refuse: %{}
+    }
+  end
+
+  defp refuse_next(pi, type, outcome), do: %{pi | refuse: Map.put(pi.refuse, type, outcome)}
+
+  defp outbound(state, pi, request) do
+    case Pi.translate_outbound(request, state) do
+      {:ok, :skip, state} -> {state, pi, []}
+      {:ok, data, state} -> ordered_write(data, state, pi, [])
+      {:messages, messages, state} -> {state, pi, messages}
+      {:messages_and_write, messages, data, state} -> ordered_write(data, state, pi, messages)
+      {:reply, _result, state} -> {state, pi, []}
+    end
+  end
+
+  defp ordered_write(data, state, pi, messages) do
+    {replies, pi} = ordered_receive(data, pi)
+    ordered_feed(replies, state, pi, messages)
+  end
+
+  defp ordered_receive(data, pi) do
+    Enum.flat_map_reduce(decode_many(data), pi, fn request, pi ->
+      pi = %{pi | requests: pi.requests ++ [request["type"]]}
+
+      cond do
+        request["type"] in ["set_model", "new_session", "switch_session"] ->
+          {[], %{pi | held: pi.held ++ [request]}}
+
+        pi.hold_queries? ->
+          {[], %{pi | held_queries: pi.held_queries ++ [request]}}
+
+        true ->
+          ordered_reply(request, pi)
+      end
+    end)
+  end
+
+  defp ordered_reply(%{"type" => type} = request, pi) do
+    case Map.pop(pi.refuse, type) do
+      {nil, _refuse} -> ordered_apply(request, pi)
+      {outcome, refuse} -> {[change_failure(request, outcome)], %{pi | refuse: refuse}}
+    end
+  end
+
+  defp ordered_apply(%{"type" => "set_model"} = request, pi) do
+    model = "#{request["provider"]}/#{request["modelId"]}"
+
+    {[fake_pi_response(request, true, %{"data" => %{}})],
+     %{
+       pi
+       | models: Map.put(pi.models, pi.active, model),
+         applied: pi.applied ++ [{:model, pi.active, model}]
+     }}
+  end
+
+  defp ordered_apply(%{"type" => type} = request, pi)
+       when type in ["new_session", "switch_session"] do
+    target =
+      if type == "new_session", do: "fresh", else: Path.basename(request["sessionPath"], ".jsonl")
+
+    {[fake_pi_response(request, true, %{"data" => %{"cancelled" => false}})],
+     %{pi | active: target, applied: pi.applied ++ [{:session, target}]}}
+  end
+
+  defp ordered_apply(%{"type" => type} = request, pi) do
+    [provider, id] = String.split(pi.models[pi.active], "/", parts: 2)
+
+    data =
+      case type do
+        "get_state" ->
+          %{
+            "sessionId" => pi.active,
+            "sessionFile" => Path.join(pi.session_dir, "#{pi.active}.jsonl"),
+            "cwd" => pi.cwd,
+            "thinkingLevel" => "medium",
+            "model" => %{"provider" => provider, "id" => id}
+          }
+
+        "get_available_models" ->
+          %{
+            "models" =>
+              for model <- Map.values(pi.models) |> Enum.uniq() do
+                [provider, id] = String.split(model, "/", parts: 2)
+                %{"provider" => provider, "id" => id}
+              end
+          }
+
+        "get_available_thinking_levels" ->
+          %{"levels" => ~w(off low medium high)}
+
+        "get_messages" ->
+          %{"messages" => []}
+
+        "get_commands" ->
+          %{"commands" => []}
+
+        "get_session_stats" ->
+          %{}
+      end
+
+    {[fake_pi_response(request, true, %{"data" => data})], pi}
+  end
+
+  defp ordered_feed(replies, state, pi, messages) do
+    Enum.reduce(replies, {state, pi, messages}, fn reply, {state, pi, messages} ->
+      case Pi.translate_inbound(Jason.encode!(reply), state) do
+        {:skip, state} -> {state, pi, messages}
+        {:messages, new, state} -> {state, pi, messages ++ new}
+        {:skip_and_write, data, state} -> ordered_write(data, state, pi, messages)
+        {:messages_and_write, new, data, state} -> ordered_write(data, state, pi, messages ++ new)
+      end
+    end)
+  end
+
+  # Pi finishes a held request: newest first, the worst case for overlap.
+  defp finish_held(state, %{held: []} = pi), do: {state, pi, []}
+
+  defp finish_held(state, pi) do
+    request = List.last(pi.held)
+    {replies, pi} = ordered_reply(request, %{pi | held: List.delete(pi.held, request)})
+    ordered_feed(replies, state, pi, [])
+  end
+
+  defp answer_held_queries(state, pi) do
+    {replies, pi} =
+      Enum.flat_map_reduce(pi.held_queries, %{pi | held_queries: []}, &ordered_reply/2)
+
+    ordered_feed(replies, state, pi, [])
+  end
+
+  # Lets Pi finish everything, answering reads before finishing held requests.
+  defp ordered_drive(state, pi, messages \\ []) do
+    cond do
+      pi.held_queries != [] ->
+        {state, pi, new} = answer_held_queries(state, pi)
+        ordered_drive(state, pi, messages ++ new)
+
+      pi.held != [] ->
+        {state, pi, new} = finish_held(state, pi)
+        ordered_drive(state, pi, messages ++ new)
+
+      true ->
+        {state, pi, messages}
+    end
+  end
+
+  defp case_order(:queries_first, state, pi, queries, held) do
+    {state, pi, first} = queries.(state, pi)
+    {state, pi, second} = held.(state, pi)
+    {state, pi, first ++ second}
+  end
+
+  defp case_order(:switch_back_first, state, pi, queries, held) do
+    {state, pi, first} = held.(state, pi)
+    {state, pi, second} = queries.(state, pi)
+    {state, pi, first ++ second}
   end
 
   defp fake_pi_response(request, success, fields) do

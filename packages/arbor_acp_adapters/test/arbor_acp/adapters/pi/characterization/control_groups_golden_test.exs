@@ -559,6 +559,54 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       end
     end
 
+    # Starting a managed load replaces the Pi process, so it waits for a model
+    # switch in flight: otherwise the acknowledged switch would be lost with
+    # the old process, and a failed load would restore the session file
+    # without it.
+    test "managed_load_waits_for_a_model_switch_in_flight" do
+      steps =
+        [{:init, managed: true}] ++
+          Flows.open_session(1) ++
+          [
+            Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+            Flows.set_model(2, "openai/gpt-5.1"),
+            Flows.session_load(3, "mapped"),
+            {:respond, "set_model", %{"provider" => "openai", "id" => "gpt-5.1"}},
+            {:respond, "get_state",
+             Flows.state_data(%{"model" => %{"provider" => "openai", "id" => "gpt-5.1"}})},
+            {:respond, "get_available_thinking_levels", %{"levels" => ~w(off low medium high)}},
+            {:respond_error, "switch_session", "no such session"},
+            {:read_file, "<sandbox>/bin/argv.log"}
+          ]
+
+      transcript =
+        PiGolden.assert_golden(@area, "managed_load_waits_for_a_model_switch_in_flight", steps)
+
+      [set_model, load, switched, _state, refreshed, failed, argv] =
+        transcript |> Enum.take(-7) |> Enum.map(& &1.result)
+
+      assert %{port_writes: [%{"type" => "set_model"}]} = set_model
+      refute Map.has_key?(load, :port), "the load replaced the process before set_model finished"
+      refute Map.has_key?(load, :port_writes)
+
+      assert %{
+               port_writes: [
+                 %{"type" => "get_state"},
+                 %{"type" => "get_available_thinking_levels"}
+               ]
+             } =
+               switched
+
+      assert %{port: :respawned, port_writes: [%{"type" => "switch_session"}]} = refreshed
+      assert %{messages: [%{"id" => 3, "error" => _}], port: :respawned} = failed
+
+      assert [
+               "--mode rpc --no-themes",
+               "--mode rpc --no-themes --session <sandbox>/sessions/mapped.jsonl",
+               "--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl"
+             ] = String.split(argv.content, "\n", trim: true)
+    end
+
     test "managed_failed_new_session_restores_the_previous_session" do
       steps =
         [{:init, managed: true}] ++

@@ -305,6 +305,19 @@
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "get_session_stats",
+        "data" => %{},
+        "id" => "pi-<6>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :inbound, message: %{"type" => "agent_settled"}},
     result: %{
       messages: [
@@ -357,6 +370,19 @@
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "get_session_stats",
+        "data" => %{},
+        "id" => "pi-<7>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :inbound, message: %{"type" => "agent_settled"}},
     result: %{
       messages: [
@@ -399,6 +425,19 @@
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "get_session_stats",
+        "data" => %{},
+        "id" => "pi-<8>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :inbound, message: %{"type" => "agent_settled"}},
     result: %{
       messages: [
@@ -439,6 +478,19 @@
       tag: :skip_and_write,
       writes: [%{"id" => "pi-<9>", "type" => "get_session_stats"}]
     }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "get_session_stats",
+        "data" => %{},
+        "id" => "pi-<9>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :inbound, message: %{"type" => "agent_settled"}},

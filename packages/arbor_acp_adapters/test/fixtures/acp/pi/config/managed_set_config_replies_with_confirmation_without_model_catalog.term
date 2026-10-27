@@ -479,12 +479,12 @@
       }
     },
     result: %{
-      skipped: true,
-      tag: :skip_and_write,
-      writes: [
+      port_writes: [
         %{"id" => "pi-<7>", "type" => "get_state"},
         %{"id" => "pi-<8>", "type" => "get_available_thinking_levels"}
-      ]
+      ],
+      skipped: true,
+      tag: :skip
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
