@@ -44,6 +44,9 @@ defmodule Arbor.ACP.Adapters.ZCode do
     pending_client_requests: %{},
     sessions: %{},
     prompt_queue: PromptQueue.new(),
+    # The first native id the latest outbound translation used; see
+    # outbound_write_failed/3.
+    last_write_first_id: 1,
     opts: []
   ]
 
@@ -147,11 +150,24 @@ defmodule Arbor.ACP.Adapters.ZCode do
   # -------------------------------------------------------------------------
 
   @impl true
-  def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+  def translate_outbound(msg, state) do
+    msg |> route_outbound(state) |> remember_write(state.next_id)
+  end
 
-  def translate_outbound(%{"method" => "authenticate"}, state), do: {:reply, %{}, state}
+  defp remember_write(result, first_id) do
+    last = tuple_size(result) - 1
 
-  def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
+    case elem(result, last) do
+      %__MODULE__{} = state -> put_elem(result, last, %{state | last_write_first_id: first_id})
+      _reason -> result
+    end
+  end
+
+  defp route_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+
+  defp route_outbound(%{"method" => "authenticate"}, state), do: {:reply, %{}, state}
+
+  defp route_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
     cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd)
 
     with :ok <- authorize_workspace(cwd, :session_new, state),
@@ -176,7 +192,7 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(%{"method" => "session/load", "id" => acp_id, "params" => params}, state) do
+  defp route_outbound(%{"method" => "session/load", "id" => acp_id, "params" => params}, state) do
     case Sessions.fetch_id(params) do
       {:ok, session_id} ->
         cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd)
@@ -191,10 +207,10 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(
-        %{"method" => "session/resume", "id" => acp_id, "params" => params},
-        state
-      ) do
+  defp route_outbound(
+         %{"method" => "session/resume", "id" => acp_id, "params" => params},
+         state
+       ) do
     case Sessions.fetch_id(params) do
       {:ok, session_id} ->
         cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd)
@@ -209,10 +225,10 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(
-        %{"method" => "session/prompt", "id" => acp_id, "params" => params},
-        state
-      ) do
+  defp route_outbound(
+         %{"method" => "session/prompt", "id" => acp_id, "params" => params},
+         state
+       ) do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id),
          {:ok, content} <- Protocol.prompt_content(params["prompt"]),
@@ -227,7 +243,7 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(%{"method" => "session/cancel", "params" => params}, state) do
+  defp route_outbound(%{"method" => "session/cancel", "params" => params}, state) do
     session_id = params["sessionId"] || Sessions.current_id(state)
 
     {cancelled_messages, state} = cancel_queued_prompts(state, session_id)
@@ -243,7 +259,7 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(%{"method" => "session/list", "id" => acp_id, "params" => params}, state) do
+  defp route_outbound(%{"method" => "session/list", "id" => acp_id, "params" => params}, state) do
     cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd)
 
     case authorize_optional_workspace(cwd, :session_list, state) do
@@ -264,7 +280,7 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(%{"method" => "session/close", "params" => params}, state) do
+  defp route_outbound(%{"method" => "session/close", "params" => params}, state) do
     case Sessions.fetch_id(params) do
       {:ok, session_id} ->
         {id, state} = next_request_id(state)
@@ -278,7 +294,7 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(%{"method" => "session/fork", "id" => acp_id, "params" => params}, state) do
+  defp route_outbound(%{"method" => "session/fork", "id" => acp_id, "params" => params}, state) do
     with :ok <- reject_additional_directories(params),
          {:ok, session_id} <- Sessions.fetch_id(params) do
       wire_params =
@@ -294,21 +310,21 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(%{"method" => "session/set_mode", "params" => params} = msg, state),
+  defp route_outbound(%{"method" => "session/set_mode", "params" => params} = msg, state),
     do: set_mode(params, msg["id"], :empty, state)
 
-  def translate_outbound(%{"method" => "session/set_model", "params" => params} = msg, state),
+  defp route_outbound(%{"method" => "session/set_model", "params" => params} = msg, state),
     do: set_model(params, msg["id"], :empty, state)
 
-  def translate_outbound(
-        %{"method" => "session/set_config_option", "params" => params} = msg,
-        state
-      ) do
+  defp route_outbound(
+         %{"method" => "session/set_config_option", "params" => params} = msg,
+         state
+       ) do
     translate_config_option(params, msg["id"], state)
   end
 
   # Client response to a permission request we forwarded
-  def translate_outbound(%{"id" => acp_id, "result" => result}, state) do
+  defp route_outbound(%{"id" => acp_id, "result" => result}, state) do
     case Map.pop(state.pending_client_requests, acp_id) do
       {nil, _pending} ->
         {:ok, :skip, state}
@@ -322,7 +338,7 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(%{"id" => acp_id, "error" => _error}, state) do
+  defp route_outbound(%{"id" => acp_id, "error" => _error}, state) do
     case Map.pop(state.pending_client_requests, acp_id) do
       {nil, _pending} ->
         {:ok, :skip, state}
@@ -335,17 +351,38 @@ defmodule Arbor.ACP.Adapters.ZCode do
     end
   end
 
-  def translate_outbound(
-        %{"method" => "$/cancel_request", "params" => %{"requestId" => id}},
-        state
-      ),
-      do: {:ok, :skip, retire_setting_request(state, id)}
+  defp route_outbound(
+         %{"method" => "$/cancel_request", "params" => %{"requestId" => id}},
+         state
+       ),
+       do: {:ok, :skip, retire_setting_request(state, id)}
 
-  def translate_outbound(_msg, state), do: {:ok, :skip, state}
+  defp route_outbound(_msg, state), do: {:ok, :skip, state}
 
+  # The bridge writes what translate_outbound/2 returns. When it cannot, it
+  # answers the request with the error and calls this, so nothing the write
+  # was to start is tracked any more: ZCode never received it, a late reply
+  # for one of its ids would answer the request a second time, and a prompt
+  # left active would queue the next one forever. Native ids only grow, so
+  # the write's requests are those from its first id on.
   @impl true
-  def outbound_write_failed(message, _reason, state),
-    do: retire_setting_request(state, message["id"])
+  def outbound_write_failed(message, _reason, state) do
+    first = state.last_write_first_id
+    written = first..(state.next_id - 1)//1
+    pending = Map.reject(state.pending_requests, fn {id, _entry} -> id in written end)
+    retire_unsent_prompt(message, %{state | pending_requests: pending})
+  end
+
+  defp retire_unsent_prompt(%{"id" => acp_id, "method" => "session/prompt"} = message, state) do
+    with {:ok, session_id} <- Sessions.fetch_id(message["params"] || %{}),
+         %{active_prompt_acp_id: ^acp_id} <- Map.get(state.sessions, session_id) do
+      Sessions.update(state, session_id, &Map.put(&1, :active_prompt_acp_id, nil))
+    else
+      _other -> state
+    end
+  end
+
+  defp retire_unsent_prompt(_message, state), do: state
 
   defp retire_setting_request(state, acp_id) do
     pending =

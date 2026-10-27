@@ -11,7 +11,9 @@ request pending, including `session/set_model`, `session/set_mode` and
 error from its inbound callback and ignore duplicate native replies. Write
 admission errors are returned immediately; client timeout and transport closure
 still settle the caller. This explicit shape does not alter the response behavior
-of existing `:ok`, `:pending`, or immediate-reply return shapes.
+of existing `:ok` or immediate-reply return shapes. `{:ok, :pending, state}`
+leaves the response to the adapter on every route, setters and
+`session/set_config_option` included.
 
 Adapters retaining native correlations for this form must implement
 `outbound_write_failed(acp_message, reason, state) :: state`. It is called for

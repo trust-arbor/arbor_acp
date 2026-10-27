@@ -26,7 +26,12 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
     def capabilities do
       %{
         "loadSession" => true,
-        "sessionCapabilities" => %{"resume" => %{}, "close" => %{}, "delete" => %{}}
+        "sessionCapabilities" => %{
+          "list" => %{},
+          "resume" => %{},
+          "close" => %{},
+          "delete" => %{}
+        }
       }
     end
 
@@ -67,9 +72,9 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
              messages_and_reply_and_write)
   @with_messages ~w(messages messages_and_reply messages_and_write messages_and_reply_and_write)
 
-  @requests ~w(session/new session/load session/resume session/prompt session/close
-               session/delete session/set_mode session/set_model session/set_config_option
-               authenticate)
+  @requests ~w(session/new session/load session/resume session/list session/prompt
+               session/close session/delete session/set_mode session/set_model
+               session/set_config_option authenticate)
 
   @doc false
   def outbound(shape, %{} = message, state) do
@@ -245,6 +250,10 @@ defmodule Arbor.ACP.AdapterBridgeContractTest do
 
       shape == "one_shot" ->
         assert [%{"result" => %{"oneShot" => true}}] = answers
+
+      # An adapter that already wrote answers the request itself.
+      shape == "ok_pending" ->
+        assert answers == []
 
       true ->
         :ok

@@ -74,15 +74,17 @@ defmodule Arbor.ACP.Adapter do
   its correlated ACP response later from `translate_inbound/2`. This explicit
   form suppresses the bridge's automatic setter/config success response; the
   adapter must settle the request once, including native errors, or leave it
-  for the client's timeout/transport-close handling. Existing return forms
-  retain their automatic-response behavior. Adapters retaining a pending native
+  for the client's timeout/transport-close handling. The other return forms
+  keep their automatic-response behavior, except `{:ok, :pending, state}`
+  below. Adapters retaining a pending native
   correlation for this form must implement `outbound_write_failed/3`. Return
   `{:error, reason, new_state}` when the request can't be honored (e.g., a
   config value outside the adapter's enum). The bridge translates
   `{:error, _, _}` into a JSON-RPC error response back to the ACP client.
   Adapter-managed implementations may return `{:ok, :pending, state}` after
   writing to one of their own subprocesses when the ACP response will be
-  emitted later from `handle_adapter_message/2`.
+  emitted later from `handle_adapter_message/2`; the bridge never answers such
+  a request itself, on any route.
 
   For `session/new`, `session/load` and `session/resume`, a form without a
   result (`{:ok, :pending, _}`, a write, `:messages`, `:messages_and_write`,

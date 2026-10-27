@@ -58,6 +58,9 @@ defmodule Arbor.ACP.Adapters.Codex do
     pending_auth: nil,
     sessions: %{},
     gateway_config: nil,
+    # The first native id the latest outbound translation used; see
+    # outbound_write_failed/3.
+    last_write_first_id: 1,
     opts: []
   ]
 
@@ -226,15 +229,49 @@ defmodule Arbor.ACP.Adapters.Codex do
   def translate_outbound(msg, state) do
     with :ok <- NativeProtocol.validate_outbound(msg, state),
          :ok <- NativeProtocol.validate_overrides(msg, msg["method"]) do
-      do_translate_outbound(msg, state)
+      msg |> do_translate_outbound(state) |> remember_write(state.next_id)
     else
       {:error, reason} -> {:error, reason, state}
     end
   end
 
+  # The bridge writes what translate_outbound/2 returns. When it cannot, it
+  # answers the request with the error and calls this, so nothing the write
+  # was to start is tracked any more: Codex never received it, and a late
+  # reply for one of its ids would answer the request a second time. Native
+  # ids only grow, so the write's requests are the ids it took.
   @impl true
-  def outbound_write_failed(%{"id" => id}, _reason, state), do: NativeProtocol.cancel(id, state)
-  def outbound_write_failed(_msg, _reason, state), do: state
+  def outbound_write_failed(message, _reason, state) do
+    first = state.last_write_first_id
+
+    written = first..(state.next_id - 1)//1
+    pending = Map.reject(state.pending_requests, fn {id, _entry} -> id in written end)
+
+    retire_unsent_prompt(message, %{state | pending_requests: pending})
+  end
+
+  defp retire_unsent_prompt(
+         %{"id" => acp_id, "method" => "session/prompt", "params" => params},
+         state
+       ) do
+    with {:ok, session_id} <- Sessions.fetch_id(params),
+         %{active_prompt_acp_id: ^acp_id} <- Map.get(state.sessions, session_id) do
+      Sessions.update(state, session_id, &Map.put(&1, :active_prompt_acp_id, nil))
+    else
+      _other -> state
+    end
+  end
+
+  defp retire_unsent_prompt(_message, state), do: state
+
+  defp remember_write(result, first_id) do
+    last = tuple_size(result) - 1
+
+    case elem(result, last) do
+      %__MODULE__{} = state -> put_elem(result, last, %{state | last_write_first_id: first_id})
+      _reason -> result
+    end
+  end
 
   defp do_translate_outbound(%{"method" => "_arbor/codex/" <> _} = msg, state),
     do: NativeProtocol.outbound(msg, state)
