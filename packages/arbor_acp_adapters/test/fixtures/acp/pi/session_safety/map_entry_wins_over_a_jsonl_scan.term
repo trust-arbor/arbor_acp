@@ -67,11 +67,30 @@
           "id" => "pi-<1>",
           "sessionPath" => "<sandbox>/sessions/mapped.jsonl",
           "type" => "switch_session"
-        },
-        %{"id" => "pi-<2>", "type" => "get_state"},
-        %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_commands"}
+        }
       ]
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "switch_session",
+        "error" => "not needed for this scenario",
+        "id" => "pi-<1>",
+        "success" => false,
+        "type" => "response"
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "error" => %{"code" => -32603, "message" => "not needed for this scenario"},
+          "id" => 1,
+          "jsonrpc" => "2.0"
+        }
+      ],
+      tag: :messages
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
@@ -98,14 +117,33 @@
       tag: :ok,
       writes: [
         %{
-          "id" => "pi-<5>",
+          "id" => "pi-<2>",
           "sessionPath" => "<sandbox>/sessions/scanned.jsonl",
           "type" => "switch_session"
-        },
-        %{"id" => "pi-<6>", "type" => "get_state"},
-        %{"id" => "pi-<7>", "type" => "get_available_models"},
-        %{"id" => "pi-<8>", "type" => "get_commands"}
+        }
       ]
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "switch_session",
+        "error" => "not needed for this scenario",
+        "id" => "pi-<2>",
+        "success" => false,
+        "type" => "response"
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "error" => %{"code" => -32603, "message" => "not needed for this scenario"},
+          "id" => 2,
+          "jsonrpc" => "2.0"
+        }
+      ],
+      tag: :messages
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
@@ -129,13 +167,10 @@
       tag: :ok,
       writes: [
         %{
-          "id" => "pi-<9>",
+          "id" => "pi-<3>",
           "sessionPath" => "<sandbox>/sessions/scanned.jsonl",
           "type" => "switch_session"
-        },
-        %{"id" => "pi-<10>", "type" => "get_state"},
-        %{"id" => "pi-<11>", "type" => "get_available_models"},
-        %{"id" => "pi-<12>", "type" => "get_commands"}
+        }
       ]
     }
   }

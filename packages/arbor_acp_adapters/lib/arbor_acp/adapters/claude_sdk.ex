@@ -106,7 +106,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     tool_calls: %{},
     message_ids: %{},
     background_subagents: MapSet.new(),
-    deferred_result: nil
+    deferred_result: nil,
+    # What the latest outbound translation started or answered before its
+    # write (the prompt, control request ids, the Auto fallback notice it
+    # consumed, and the Claude request a client response answered), so a write
+    # the bridge could not make can be retired; see outbound_write_failed/3.
+    last_write: %{prompt: nil, controls: [], notice: nil, answered: nil}
   ]
 
   @impl true
@@ -249,16 +254,112 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   end
 
   @impl true
-  def translate_outbound(%{"id" => _id, "method" => method} = msg, state)
-      when is_binary(method) do
+  def translate_outbound(msg, state), do: msg |> route_outbound(state) |> remember_write(state)
+
+  # The bridge writes what translate_outbound/2 returns. When it cannot, it
+  # answers the request with the error and calls this, so nothing the write
+  # was to start is tracked any more: Claude never received it.
+  #
+  # Only what that translation recorded is retired. Matching the failed
+  # message's id instead would confuse directions: the client's response to a
+  # request Claude made can carry the same id as a prompt already running.
+  @impl true
+  def outbound_write_failed(_message, reason, state) do
+    %{prompt: prompt, controls: controls, notice: notice, answered: answered} = state.last_write
+
+    state = %{
+      state
+      | pending_controls: Map.drop(state.pending_controls, controls),
+        last_write: %{prompt: nil, controls: [], notice: nil, answered: nil}
+    }
+
+    # The notice went out with the write's notifications, which were dropped.
+    state = if notice, do: Map.merge(state, notice), else: state
+    state = retire_unsent_prompt(prompt, state)
+
+    # Claude is still waiting on the request the client answered; a small
+    # error takes the place of the answer that could not be written.
+    case answered do
+      %{request_id: request_id} ->
+        error = "The ACP client's response could not be forwarded: #{inspect(reason)}"
+
+        {:write, request_id |> ClaudeProtocol.control_error(error) |> ClaudeProtocol.line(),
+         state}
+
+      nil ->
+        state
+    end
+  end
+
+  defp retire_unsent_prompt(id, %{pending_prompt_id: id} = state) when id != nil do
+    %{
+      state
+      | pending_prompt_id: nil,
+        active_prompt_session_id: nil,
+        text_acc: [],
+        thinking_acc: [],
+        thinking_blocks: [],
+        current_block_type: nil,
+        current_assistant_text_streamed?: false,
+        stream_message_id: nil,
+        tool_calls: %{},
+        background_subagents: MapSet.new(),
+        deferred_result: nil
+    }
+  end
+
+  defp retire_unsent_prompt(_prompt, state), do: state
+
+  # Only a translation that writes can fail to; the others leave the record
+  # of the last write alone.
+  defp writes?({:ok, data, _state}), do: data not in [:skip, :pending]
+  defp writes?({:pending_and_write, _data, _state}), do: true
+  defp writes?({:reply_and_write, _result, _data, _state}), do: true
+  defp writes?({:messages_and_write, _messages, _data, _state}), do: true
+  defp writes?({:messages_and_reply_and_write, _messages, _result, _data, _state}), do: true
+  defp writes?(_result), do: false
+
+  defp remember_write(result, before) do
+    last = tuple_size(result) - 1
+
+    case {writes?(result), elem(result, last)} do
+      {true, %__MODULE__{} = state} ->
+        controls =
+          state.pending_controls
+          |> Map.keys()
+          |> Enum.reject(&Map.has_key?(before.pending_controls, &1))
+
+        notice =
+          if before.auto_fallback_pending? and not state.auto_fallback_pending?,
+            do: Map.take(before, [:auto_fallback_pending?, :auto_fallback_warned?])
+
+        prompt =
+          if state.pending_prompt_id != before.pending_prompt_id, do: state.pending_prompt_id
+
+        answered =
+          before.pending_client_requests
+          |> Enum.find_value(fn {acp_id, entry} ->
+            if not Map.has_key?(state.pending_client_requests, acp_id), do: entry
+          end)
+
+        last_write = %{prompt: prompt, controls: controls, notice: notice, answered: answered}
+        put_elem(result, last, %{state | last_write: last_write})
+
+      _other ->
+        result
+    end
+  end
+
+  defp route_outbound(%{"id" => _id, "method" => method} = msg, state)
+       when is_binary(method) do
     handle_request(method, msg, state)
   end
 
-  def translate_outbound(%{"method" => method} = msg, state) when is_binary(method) do
+  defp route_outbound(%{"method" => method} = msg, state) when is_binary(method) do
     handle_notification(method, msg, state)
   end
 
-  def translate_outbound(%{"id" => _id} = msg, state) do
+  defp route_outbound(%{"id" => _id} = msg, state) do
     case Mapper.client_response(msg, state) do
       {:ok, data, state} -> {:ok, data, state}
       {:ok, messages, data, state} -> {:messages_and_write, messages, data, state}
@@ -266,7 +367,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     end
   end
 
-  def translate_outbound(_msg, state), do: {:ok, :skip, state}
+  defp route_outbound(_msg, state), do: {:ok, :skip, state}
 
   defp handle_request("session/new", %{"id" => _id, "params" => params}, state) do
     warn_unattached_mcp_servers("session/new", params, state)

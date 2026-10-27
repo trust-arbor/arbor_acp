@@ -1114,8 +1114,8 @@ defmodule Arbor.ACP.Client do
   def handle_info(_msg, state), do: {:noreply, state}
 
   defp handle_parsed_message({:notification, "session/update", params}, state, message) do
-    case RequestValidation.validate_session_update(params) do
-      :ok ->
+    case RequestValidation.normalize_session_update(params) do
+      {:ok, params} ->
         cond do
           not authorized_session_id?(params["sessionId"], state) ->
             Logger.warning("ACP client ignored an update for an unknown session")

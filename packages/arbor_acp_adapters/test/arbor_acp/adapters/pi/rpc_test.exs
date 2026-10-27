@@ -36,39 +36,34 @@ defmodule Arbor.ACP.Adapters.Pi.RPCTest do
     } do
       msg = %{"method" => "session/new", "id" => "acp-new", "params" => %{"cwd" => tmp_dir}}
 
-      assert {:ok, data, new_state} = Pi.translate_outbound(msg, state)
-      {binary, envelopes} = decode_envelopes(data)
-
+      # new_session goes alone; the rest of the group follows Pi's reply.
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      {binary, [change]} = decode_envelopes(data)
       assert String.ends_with?(binary, "\n")
-      assert length(envelopes) == 4
+      assert change["type"] == "new_session"
+      assert pending_kinds(state) == [:new_session]
+
+      {binary, envelopes, new_state} = confirm_change(change, state)
+      assert String.ends_with?(binary, "\n")
 
       assert Enum.map(envelopes, & &1["type"]) == [
-               "new_session",
                "get_state",
                "get_available_models",
+               "get_available_thinking_levels",
                "get_commands"
              ]
 
-      ids = Enum.map(envelopes, & &1["id"])
+      ids = Enum.map([change | envelopes], & &1["id"])
       assert Enum.all?(ids, &match?("pi-" <> _, &1))
       assert Enum.uniq(ids) == ids
 
-      for envelope <- envelopes do
+      for envelope <- [change | envelopes] do
         refute Map.has_key?(envelope, "jsonrpc")
         assert map_size(envelope) == 2
       end
 
-      assert map_size(new_state.pending_controls) == 4
-      assert MapSet.new(Map.keys(new_state.pending_controls)) == MapSet.new(ids)
-
-      kinds =
-        new_state.pending_controls
-        |> Map.values()
-        |> Enum.map(& &1.kind)
-        |> Enum.sort()
-
-      assert kinds == [:commands, :models, :new_session, :state]
-      assert Enum.all?(Map.values(new_state.pending_controls), &(&1.rpc_id in ids))
+      assert MapSet.new(Map.keys(new_state.pending_controls)) == MapSet.new(tl(ids))
+      assert pending_kinds(new_state) == [:commands, :models, :state, :thinking_levels]
     end
 
     test "session/load emits switch_session plus replay and catalog envelopes", %{
@@ -84,29 +79,26 @@ defmodule Arbor.ACP.Adapters.Pi.RPCTest do
         "params" => %{"sessionId" => "mapped-session", "cwd" => tmp_dir}
       }
 
-      assert {:ok, data, new_state} = Pi.translate_outbound(msg, state)
-      {_binary, envelopes} = decode_envelopes(data)
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      {_binary, [change]} = decode_envelopes(data)
+      assert change["type"] == "switch_session"
+      assert change["sessionPath"] == session_file
+      assert pending_kinds(state) == [:switch]
+
+      {_binary, envelopes, new_state} = confirm_change(change, state)
 
       assert Enum.map(envelopes, & &1["type"]) == [
-               "switch_session",
                "get_messages",
                "get_state",
                "get_available_models",
+               "get_available_thinking_levels",
                "get_commands"
              ]
 
-      assert hd(envelopes)["sessionPath"] == session_file
-      assert Enum.all?(envelopes, &match?("pi-" <> _, &1["id"]))
-      assert Enum.uniq(Enum.map(envelopes, & &1["id"])) == Enum.map(envelopes, & &1["id"])
-      assert map_size(new_state.pending_controls) == 5
-
-      kinds =
-        new_state.pending_controls
-        |> Map.values()
-        |> Enum.map(& &1.kind)
-        |> Enum.sort()
-
-      assert kinds == [:commands, :messages, :models, :state, :switch]
+      ids = Enum.map([change | envelopes], & &1["id"])
+      assert Enum.all?(ids, &match?("pi-" <> _, &1))
+      assert Enum.uniq(ids) == ids
+      assert pending_kinds(new_state) == [:commands, :messages, :models, :state, :thinking_levels]
     end
 
     test "session/resume emits switch_session without get_messages", %{
@@ -122,27 +114,22 @@ defmodule Arbor.ACP.Adapters.Pi.RPCTest do
         "params" => %{"sessionId" => "mapped-session", "cwd" => tmp_dir}
       }
 
-      assert {:ok, data, new_state} = Pi.translate_outbound(msg, state)
-      {_binary, envelopes} = decode_envelopes(data)
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      {_binary, [change]} = decode_envelopes(data)
+      assert change["type"] == "switch_session"
+      assert change["sessionPath"] == session_file
+
+      {_binary, envelopes, new_state} = confirm_change(change, state)
 
       assert Enum.map(envelopes, & &1["type"]) == [
-               "switch_session",
                "get_state",
                "get_available_models",
+               "get_available_thinking_levels",
                "get_commands"
              ]
 
       refute Enum.any?(envelopes, &(&1["type"] == "get_messages"))
-      assert hd(envelopes)["sessionPath"] == session_file
-      assert map_size(new_state.pending_controls) == 4
-
-      kinds =
-        new_state.pending_controls
-        |> Map.values()
-        |> Enum.map(& &1.kind)
-        |> Enum.sort()
-
-      assert kinds == [:commands, :models, :state, :switch]
+      assert pending_kinds(new_state) == [:commands, :models, :state, :thinking_levels]
     end
 
     test "session/fork is not a Pi RPC command and is skipped", %{state: state} do
@@ -307,22 +294,12 @@ defmodule Arbor.ACP.Adapters.Pi.RPCTest do
     } do
       msg = %{"method" => "session/new", "id" => "acp-new", "params" => %{"cwd" => tmp_dir}}
       assert {:ok, data, state} = Pi.translate_outbound(msg, state)
-      ids_by_type = data |> decode_envelopes() |> elem(1) |> Map.new(&{&1["type"], &1["id"]})
-
-      assert {:skip, state} =
-               Pi.translate_inbound(
-                 Jason.encode!(%{
-                   "type" => "response",
-                   "id" => ids_by_type["new_session"],
-                   "command" => "new_session",
-                   "success" => true,
-                   "data" => %{}
-                 }),
-                 state
-               )
+      {_binary, [change]} = decode_envelopes(data)
+      {_binary, envelopes, state} = confirm_change(change, state)
+      ids_by_type = Map.new([change | envelopes], &{&1["type"], &1["id"]})
 
       refute Map.has_key?(state.pending_controls, ids_by_type["new_session"])
-      assert map_size(state.pending_controls) == 3
+      assert map_size(state.pending_controls) == 4
 
       assert {:messages, [error], new_state} =
                Pi.translate_inbound(
@@ -491,6 +468,29 @@ defmodule Arbor.ACP.Adapters.Pi.RPCTest do
     )
 
     session_file
+  end
+
+  defp pending_kinds(state) do
+    state.pending_controls |> Map.values() |> Enum.map(& &1.kind) |> Enum.sort()
+  end
+
+  # Pi answers the session change; the adapter then writes the rest of the
+  # setup group.
+  defp confirm_change(change, state) do
+    assert {:skip_and_write, data, state} =
+             Pi.translate_inbound(
+               Jason.encode!(%{
+                 "type" => "response",
+                 "id" => change["id"],
+                 "command" => change["type"],
+                 "success" => true,
+                 "data" => %{}
+               }),
+               state
+             )
+
+    {binary, envelopes} = decode_envelopes(data)
+    {binary, envelopes, state}
   end
 
   defp decode_envelopes(data) do

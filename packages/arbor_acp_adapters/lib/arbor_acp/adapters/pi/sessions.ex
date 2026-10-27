@@ -56,6 +56,7 @@ defmodule Arbor.ACP.Adapters.Pi.Sessions do
         session_file: fields.session_file,
         cwd: fields.cwd,
         thinking_level: fields.modes["currentModeId"],
+        available_thinking_levels: Enum.map(fields.modes["availableModes"], & &1["id"]),
         current_model_id: get_in(fields.models, ["currentModelId"]),
         available_models: Map.get(fields.models || %{}, "availableModels", []),
         file_commands: fields.file_commands,
@@ -77,18 +78,6 @@ defmodule Arbor.ACP.Adapters.Pi.Sessions do
       "configOptions" => Config.session_config_options(models, modes),
       "_meta" => %{"ex_mcp" => %{"pi" => RPC.compact(%{"sessionFile" => session_file})}}
     })
-  end
-
-  @doc """
-  Folds an untracked `get_state` payload into the adapter state, leaving
-  fields Pi did not report alone.
-  """
-  @spec update_session_state_from_pi(map(), state()) :: state()
-  def update_session_state_from_pi(data, state) do
-    state
-    |> maybe_set(:session_id, data["sessionId"])
-    |> maybe_set(:session_file, data["sessionFile"])
-    |> maybe_set(:thinking_level, data["thinkingLevel"])
   end
 
   @doc """
@@ -139,7 +128,4 @@ defmodule Arbor.ACP.Adapters.Pi.Sessions do
   end
 
   defp parse_cursor(_cursor), do: 0
-
-  defp maybe_set(state, _key, nil), do: state
-  defp maybe_set(state, key, value), do: Map.put(state, key, value)
 end

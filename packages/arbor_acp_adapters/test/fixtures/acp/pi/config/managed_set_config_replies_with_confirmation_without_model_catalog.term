@@ -26,12 +26,7 @@
     result: %{
       pending: true,
       port: :spawned,
-      port_writes: [
-        %{"id" => "pi-<1>", "type" => "new_session"},
-        %{"id" => "pi-<2>", "type" => "get_state"},
-        %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_commands"}
-      ],
+      port_writes: [%{"id" => "pi-<1>", "type" => "new_session"}],
       tag: :ok
     }
   },
@@ -46,7 +41,16 @@
         "type" => "response"
       }
     },
-    result: %{skipped: true, tag: :skip}
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{"id" => "pi-<2>", "type" => "get_state"},
+        %{"id" => "pi-<3>", "type" => "get_available_models"},
+        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<5>", "type" => "get_commands"}
+      ]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -89,9 +93,22 @@
     step: %{
       kind: :inbound,
       message: %{
+        "command" => "get_available_thinking_levels",
+        "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
+        "id" => "pi-<4>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<4>",
+        "id" => "pi-<5>",
         "success" => true,
         "type" => "response"
       }
@@ -368,7 +385,9 @@
           }
         }
       ],
-      port_writes: [%{"modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"}],
+      port_writes: [
+        %{"id" => "pi-<6>", "modelId" => "gpt-5.1", "provider" => "openai", "type" => "set_model"}
+      ],
       reply: %{
         "configOptions" => [
           %{
@@ -446,6 +465,166 @@
         ]
       },
       tag: :messages_and_reply
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "set_model",
+        "data" => %{"id" => "gpt-5.1", "provider" => "openai"},
+        "id" => "pi-<6>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{
+      port_writes: [
+        %{"id" => "pi-<7>", "type" => "get_state"},
+        %{"id" => "pi-<8>", "type" => "get_available_thinking_levels"}
+      ],
+      skipped: true,
+      tag: :skip
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "get_state",
+        "data" => %{
+          "cwd" => "<sandbox>/project",
+          "model" => %{"id" => "gpt-5.1", "provider" => "openai"},
+          "sessionFile" => "<sandbox>/sessions/pi-session.jsonl",
+          "sessionId" => "pi-session",
+          "thinkingLevel" => "medium"
+        },
+        "id" => "pi-<7>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "get_available_thinking_levels",
+        "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
+        "id" => "pi-<8>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "pi-session",
+            "update" => %{"currentModeId" => "medium", "sessionUpdate" => "current_mode_update"}
+          }
+        },
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "pi-session",
+            "update" => %{
+              "configOptions" => [
+                %{
+                  "category" => "model",
+                  "currentValue" => "openai/gpt-5.1",
+                  "description" => "Select the model for this session",
+                  "id" => "model",
+                  "name" => "Model",
+                  "options" => [
+                    %{
+                      "description" => nil,
+                      "name" => "anthropic/Claude Sonnet 4",
+                      "value" => "anthropic/claude-sonnet-4"
+                    },
+                    %{
+                      "description" => nil,
+                      "name" => "openai/GPT-5.1",
+                      "value" => "openai/gpt-5.1"
+                    }
+                  ],
+                  "type" => "select"
+                },
+                %{
+                  "category" => "thought_level",
+                  "currentValue" => "medium",
+                  "description" => "Set the reasoning effort for this session",
+                  "id" => "thought_level",
+                  "name" => "Thinking",
+                  "options" => [
+                    %{"description" => nil, "name" => "Thinking: off", "value" => "off"},
+                    %{"description" => nil, "name" => "Thinking: minimal", "value" => "minimal"},
+                    %{"description" => nil, "name" => "Thinking: low", "value" => "low"},
+                    %{"description" => nil, "name" => "Thinking: medium", "value" => "medium"},
+                    %{"description" => nil, "name" => "Thinking: high", "value" => "high"},
+                    %{"description" => nil, "name" => "Thinking: xhigh", "value" => "xhigh"}
+                  ],
+                  "type" => "select"
+                },
+                %{
+                  "category" => "other",
+                  "currentValue" => "true",
+                  "description" => "Automatically compact context when nearly full",
+                  "id" => "auto_compaction",
+                  "name" => "Auto Compaction",
+                  "options" => [
+                    %{"name" => "On", "value" => "true"},
+                    %{"name" => "Off", "value" => "false"}
+                  ],
+                  "type" => "select"
+                },
+                %{
+                  "category" => "other",
+                  "currentValue" => "true",
+                  "description" => "Automatically retry on transient errors",
+                  "id" => "auto_retry",
+                  "name" => "Auto Retry",
+                  "options" => [
+                    %{"name" => "On", "value" => "true"},
+                    %{"name" => "Off", "value" => "false"}
+                  ],
+                  "type" => "select"
+                },
+                %{
+                  "category" => "other",
+                  "currentValue" => "all",
+                  "description" => "How steering messages are delivered",
+                  "id" => "steering_mode",
+                  "name" => "Steering Mode",
+                  "options" => [
+                    %{"name" => "All", "value" => "all"},
+                    %{"name" => "One at a time", "value" => "one-at-a-time"}
+                  ],
+                  "type" => "select"
+                },
+                %{
+                  "category" => "other",
+                  "currentValue" => "all",
+                  "description" => "How follow-up messages are delivered",
+                  "id" => "follow_up_mode",
+                  "name" => "Follow-up Mode",
+                  "options" => [
+                    %{"name" => "All", "value" => "all"},
+                    %{"name" => "One at a time", "value" => "one-at-a-time"}
+                  ],
+                  "type" => "select"
+                }
+              ],
+              "sessionUpdate" => "config_option_update"
+            }
+          }
+        }
+      ],
+      tag: :messages
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
@@ -897,7 +1076,12 @@
         }
       ],
       port_writes: [
-        %{"modelId" => "claude-sonnet-4", "provider" => "anthropic", "type" => "set_model"}
+        %{
+          "id" => "pi-<9>",
+          "modelId" => "claude-sonnet-4",
+          "provider" => "anthropic",
+          "type" => "set_model"
+        }
       ],
       reply: %{
         "configOptions" => [

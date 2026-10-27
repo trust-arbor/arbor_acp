@@ -73,6 +73,8 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
        )},
       {:respond, "get_available_models",
        %{"models" => Keyword.get(opts, :models, Flows.models())}},
+      {:respond, "get_available_thinking_levels",
+       %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
       {:respond, "get_commands", %{"commands" => []}}
     ]
   end
@@ -103,6 +105,8 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
             {:respond, "get_state",
              Flows.state_data(%{"sessionId" => "third", "sessionFile" => nil})},
             {:respond, "get_available_models", %{"models" => Flows.models()}},
+            {:respond, "get_available_thinking_levels",
+             %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
             {:respond, "get_commands", %{"commands" => []}},
             {:read_file, @map}
           ]
@@ -135,12 +139,14 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
           Flows.session_jsonl("shared", path: "<sandbox>/sessions/scanned.jsonl"),
           Flows.session_map([{"shared", "<sandbox>/project", "<sandbox>/sessions/mapped.jsonl"}]),
           Flows.session_resume(1, "shared"),
+          {:respond_error, "switch_session", "not needed for this scenario"},
           {:write_file, @map,
            %{
              "version" => 1,
              "sessions" => %{"shared" => %{"sessionId" => "shared", "sessionFile" => 7}}
            }},
           Flows.session_resume(2, "shared"),
+          {:respond_error, "switch_session", "not needed for this scenario"},
           {:write_file, @map, %{"version" => 1, "sessions" => %{}}},
           Flows.session_resume(3, "shared")
         ]
@@ -341,7 +347,7 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
             delete(3, nil),
             {:read_file, Flows.session_file("pi-session")},
             {:read_file, @map},
-            {:note, "The dropped prompt is never answered"},
+            {:note, "Delete answered the prompt as cancelled; its late settlement is skipped"},
             Flows.agent_settled()
           ]
 
@@ -380,8 +386,11 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
           steps
         )
 
-      assert [%{"id" => 1}, %{"id" => 2, "result" => %{"stopReason" => "end_turn"}}] =
-               transcript |> PiGolden.messages() |> Enum.filter(&Map.has_key?(&1, "id"))
+      assert [
+               %{"id" => 1},
+               %{"id" => 2, "result" => %{"stopReason" => "end_turn"}},
+               %{"id" => 4, "result" => %{"stopReason" => "cancelled"}}
+             ] = transcript |> PiGolden.messages() |> Enum.filter(&Map.has_key?(&1, "id"))
 
       assert [{_, %{content: %{"sessions" => %{}}}}] = file_results(transcript)
     end
@@ -403,6 +412,8 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
             {:respond, "get_state",
              Flows.state_data(%{"sessionFile" => "<sandbox>/project/outside.jsonl"})},
             {:respond, "get_available_models", %{"models" => []}},
+            {:respond, "get_available_thinking_levels",
+             %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
             {:respond, "get_commands", %{"commands" => []}},
             {:read_file, "<sandbox>/project/outside.jsonl"},
             {:init, delete_session_files: false},
@@ -441,6 +452,8 @@ defmodule Arbor.ACP.Adapters.Pi.SessionSafetyGoldenTest do
            "sessionFile" => "<sandbox>/agent/alt-sessions/alt.jsonl"
          })},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         delete(2, "alt"),
         {:read_file, "<sandbox>/agent/alt-sessions/alt.jsonl"},

@@ -11,14 +11,30 @@ request pending, including `session/set_model`, `session/set_mode` and
 error from its inbound callback and ignore duplicate native replies. Write
 admission errors are returned immediately; client timeout and transport closure
 still settle the caller. This explicit shape does not alter the response behavior
-of existing `:ok`, `:pending`, or immediate-reply return shapes.
+of existing `:ok` or immediate-reply return shapes. `{:ok, :pending, state}`
+leaves the response to the adapter on every route, setters and
+`session/set_config_option` included.
 
 Adapters retaining native correlations for this form must implement
-`outbound_write_failed(acp_message, reason, state) :: state`. It is called only
-for a failed `:pending_and_write` write, before the bridge emits its ACP error.
-Retire the pending correlation so late native replies are ignored, but preserve
-the native ID sequence. A reported write failure can have an uncertain outcome;
-the callback does not undo native side effects or emit another response.
+`outbound_write_failed(acp_message, reason, state) :: state`. It is called for
+any failed outbound write, in this or any other form that writes, before the
+bridge emits its ACP error. Retire whatever the write was to start (a pending
+correlation, a request answered later) so late native replies are ignored, but
+preserve the native ID sequence. A reported write failure can have an uncertain
+outcome; the callback does not undo native side effects or emit another
+response. Responses the translation emitted for other requests are still
+delivered when its write fails; its notifications are not.
+
+When the failed write was a client's response to an agent request, the agent
+is still waiting for it. The callback may return `{:write, data, state}`, and
+the bridge writes that small replacement, such as an error answer on the same
+native id, in its place. If the replacement cannot be written either, the
+native connection is broken and the bridge closes it.
+
+For `session/new`, `session/load` and `session/resume`, a translation without a
+result (`{:ok, :pending, _}`, a write, `:messages`, `:messages_and_write`,
+`:pending_and_write` or `:one_shot`) leaves the response to the adapter;
+`{:ok, :skip, _}` is answered with the bridge's synthesized session.
 
 ## Owned child support
 

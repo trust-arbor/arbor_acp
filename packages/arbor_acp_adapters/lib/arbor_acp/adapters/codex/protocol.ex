@@ -33,6 +33,7 @@ defmodule Arbor.ACP.Adapters.Codex.Protocol do
     account_login_cancel: "account/login/cancel",
     thread_start: "thread/start",
     thread_resume: "thread/resume",
+    thread_read: "thread/read",
     thread_turns_list: "thread/turns/list",
     thread_list: "thread/list",
     thread_unsubscribe: "thread/unsubscribe",

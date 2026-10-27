@@ -80,11 +80,12 @@ defmodule Arbor.ACP.Test.PiGolden.Flows do
   end
 
   @doc """
-  Steps that open a session through `session/new` and answer all four
+  Steps that open a session through `session/new` and answer all five
   control requests, leaving the adapter with an established session.
 
   Options: `:state` (get_state overrides), `:models` (catalog list),
-  `:commands` (Pi command list), `:params` (session/new params).
+  `:thinking_levels` (the selected model's levels), `:commands` (Pi command
+  list), `:params` (session/new params).
   """
   @spec open_session(term(), keyword()) :: [Arbor.ACP.Test.PiGolden.step()]
   def open_session(acp_id \\ 1, opts \\ []) do
@@ -94,6 +95,8 @@ defmodule Arbor.ACP.Test.PiGolden.Flows do
       {:respond, "get_state", state_data(Keyword.get(opts, :state, %{}))},
       {:respond, "get_available_models",
        %{"models" => Keyword.get(opts, :models, @default_models)}},
+      {:respond, "get_available_thinking_levels",
+       %{"levels" => Keyword.get(opts, :thinking_levels, ~w(off minimal low medium high xhigh))}},
       {:respond, "get_commands", %{"commands" => Keyword.get(opts, :commands, [])}}
     ]
   end
@@ -202,6 +205,32 @@ defmodule Arbor.ACP.Test.PiGolden.Flows do
        "id" => acp_id,
        "params" => Map.merge(%{"sessionId" => @default_session_id, "modelId" => model_id}, params)
      }}
+  end
+
+  @doc """
+  Steps that answer the outstanding `set_model` request and then the
+  `get_state` / `get_available_thinking_levels` refresh the adapter sends after
+  it, the way Pi does once the switch has finished. The adapter serializes
+  model switches, so a scenario finishes one before the next one is written.
+
+  Options: `:thinking_level` (the level `get_state` reports) and `:levels`
+  (the new model's levels).
+  """
+  @spec finish_model_switch(String.t(), String.t(), keyword()) ::
+          [Arbor.ACP.Test.PiGolden.step()]
+  def finish_model_switch(provider, model_id, opts \\ []) do
+    model = %{"provider" => provider, "id" => model_id}
+
+    [
+      {:respond, "set_model", model},
+      {:respond, "get_state",
+       state_data(%{
+         "model" => model,
+         "thinkingLevel" => Keyword.get(opts, :thinking_level, "medium")
+       })},
+      {:respond, "get_available_thinking_levels",
+       %{"levels" => Keyword.get(opts, :levels, ~w(off minimal low medium high xhigh))}}
+    ]
   end
 
   @doc "A Pi `message_update` stream event wrapping an assistant message event."

@@ -21,6 +21,7 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
           required(:available_models) => list(),
           required(:current_model_id) => String.t() | nil,
           required(:thinking_level) => String.t() | nil,
+          optional(:available_thinking_levels) => [String.t()],
           required(:session_id) => String.t() | nil,
           optional(any()) => any()
         }
@@ -38,8 +39,11 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
   def thought_level_config_id, do: @thought_level_config_id
 
   @spec modes() :: [map()]
-  def modes do
-    Enum.map(@thinking_levels, fn level ->
+  def modes, do: modes(@thinking_levels)
+
+  @spec modes([String.t()]) :: [map()]
+  def modes(levels) do
+    Enum.map(levels, fn level ->
       %{"id" => level, "name" => "Thinking: #{level}", "description" => nil}
     end)
   end
@@ -140,15 +144,33 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
 
   def catalog_models(_data), do: []
 
-  @spec thinking_state(map()) :: map()
-  def thinking_state(state_data) do
-    current = normalize_thinking_level(state_data["thinkingLevel"])
-    %{"availableModes" => modes(), "currentModeId" => current}
+  @spec thinking_state(map(), map()) :: map()
+  def thinking_state(state_data, levels_data \\ %{}) do
+    levels = available_levels(levels_data["levels"])
+    current = normalize_thinking_level(state_data["thinkingLevel"], levels)
+    %{"availableModes" => modes(levels), "currentModeId" => current}
   end
 
   @spec normalize_thinking_level(term()) :: String.t()
-  def normalize_thinking_level(level) when level in @thinking_levels, do: level
-  def normalize_thinking_level(_level), do: @default_thinking_level
+  def normalize_thinking_level(level), do: normalize_thinking_level(level, @thinking_levels)
+
+  @spec normalize_thinking_level(term(), [String.t()]) :: String.t()
+  def normalize_thinking_level(level, levels) do
+    cond do
+      level in levels -> level
+      @default_thinking_level in levels -> @default_thinking_level
+      true -> hd(levels)
+    end
+  end
+
+  @spec available_levels(term()) :: [String.t()]
+  def available_levels(levels) when is_list(levels) do
+    if levels != [] and Enum.all?(levels, &(is_binary(&1) and &1 != "")),
+      do: Enum.uniq(levels),
+      else: @thinking_levels
+  end
+
+  def available_levels(_), do: @thinking_levels
 
   @spec session_config_options(map() | nil, map()) :: [map()]
   def session_config_options(models, modes) do
@@ -178,8 +200,8 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
       end
 
     modes = %{
-      "availableModes" => modes(),
-      "currentModeId" => normalize_thinking_level(state.thinking_level)
+      "availableModes" => modes(state_levels(state)),
+      "currentModeId" => normalize_thinking_level(state.thinking_level, state_levels(state))
     }
 
     session_config_options(models, modes)
@@ -239,7 +261,7 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
       "category" => "thought_level",
       "description" => "Set the reasoning effort for this session",
       "type" => "select",
-      "currentValue" => normalize_thinking_level(modes["currentModeId"]),
+      "currentValue" => modes["currentModeId"],
       "options" =>
         Enum.map(available, fn mode ->
           %{
@@ -292,26 +314,20 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
   def find_available_model(_model_id, _available_models), do: :error
 
   @doc """
-  Plans a model switch: the ACP notifications to emit, the native RPC payload
-  to write, and the updated state. Delivery is the caller's decision.
+  Plans a model switch: the ACP notifications to emit, the fields of the
+  native `set_model` request, and the updated state. The caller mints the
+  request id, sends the request and tracks its reply.
   """
   @spec set_model_plan(term(), String.t() | nil, state()) ::
-          {:ok, [map()], String.t(), state()} | {:error, String.t()}
+          {:ok, [map()], map(), state()} | {:error, String.t()}
   def set_model_plan(model_id, session_id_override, state) do
     case resolve_model(model_id, state.available_models) do
       {:ok, provider, resolved_id, current_model_id} ->
-        data =
-          RPC.line(
-            RPC.notification(RPC.method(:set_model), %{
-              "provider" => provider,
-              "modelId" => resolved_id
-            })
-          )
-
+        fields = %{"provider" => provider, "modelId" => resolved_id}
         state = %{state | current_model_id: current_model_id}
         session_id = session_id_override || state.session_id
 
-        {:ok, [config_options_update(session_id, state)], data, state}
+        {:ok, [config_options_update(session_id, state)], fields, state}
 
       {:error, reason} ->
         {:error, reason}
@@ -324,28 +340,31 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
   """
   @spec set_thinking_plan(term(), String.t() | nil, state()) ::
           {:ok, [map()], String.t(), state()} | :error
-  def set_thinking_plan(level, session_id_override, state) when level in @thinking_levels do
-    state = %{state | thinking_level: level}
-    session_id = session_id_override || state.session_id
+  def set_thinking_plan(level, session_id_override, state) do
+    if level in state_levels(state) do
+      state = %{state | thinking_level: level}
+      session_id = session_id_override || state.session_id
 
-    messages = [
-      AdapterEvents.current_mode_update(session_id, level),
-      config_options_update(session_id, state)
-    ]
+      messages = [
+        AdapterEvents.current_mode_update(session_id, level),
+        config_options_update(session_id, state)
+      ]
 
-    data = RPC.encode_notification(RPC.method(:set_thinking_level), %{"level" => level})
+      data = RPC.encode_notification(RPC.method(:set_thinking_level), %{"level" => level})
 
-    {:ok, messages, data, state}
+      {:ok, messages, data, state}
+    else
+      :error
+    end
   end
-
-  def set_thinking_plan(_level, _session_id_override, _state), do: :error
 
   @doc """
   Translates a `session/set_config_option` request into a delivery plan.
 
   `{:ack, data}` writes `data` and replies `%{}`; `{:ok, messages, data, state}`
   writes `data`, emits `messages`, and replies with the confirmation config
-  options.
+  options. The `model` option is a correlated request and goes through
+  `set_model_plan/3` instead.
   """
   @spec update_plan(term(), term(), state()) ::
           {:ack, String.t()} | {:ok, [map()], String.t(), state()} | {:error, String.t()}
@@ -362,8 +381,6 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
 
   def update_plan("auto_retry", value, state) when value in ["true", "false"],
     do: update_plan("auto_retry", value == "true", state)
-
-  def update_plan(@model_config_id, value, state), do: set_model_plan(value, nil, state)
 
   def update_plan(@thought_level_config_id, value, state) do
     case set_thinking_plan(value, nil, state) do
@@ -395,6 +412,8 @@ defmodule Arbor.ACP.Adapters.Pi.Config do
       %{"value" => "one-at-a-time", "name" => "One at a time"}
     ]
   end
+
+  defp state_levels(state), do: available_levels(Map.get(state, :available_thinking_levels))
 
   defp to_string_or_nil(nil), do: nil
   defp to_string_or_nil(""), do: nil

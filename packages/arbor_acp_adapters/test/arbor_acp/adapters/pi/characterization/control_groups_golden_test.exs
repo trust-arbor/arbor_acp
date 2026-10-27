@@ -8,23 +8,26 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
   compares the recorded transcript against a committed fixture under
   `test/fixtures/acp/pi/control_groups/`. The fixtures pin:
 
-    * a `session/new` group completing only once all four correlated
-      responses arrived, in whatever order Pi answers, and the emitted
-      order `response`, `available_commands_update`;
+    * a `session/new` group writing `new_session` alone and its four
+      correlated requests only after Pi answered it (Pi replaces the session
+      asynchronously and does not await one input line before the next),
+      completing only once all four responses arrived, in whatever order Pi
+      answers, and the emitted order `response`, `available_commands_update`;
     * the first failed member answering the ACP request at once with
       `-32603 <error>` (or the `-32000` auth-required error when the text
       looks like an authentication failure, or when the model list is
       empty) and every later response for that group being dropped as
-      untracked;
+      untracked; a failed or cancelled session change writing nothing more;
     * the fallbacks applied to a sparse `get_state` (minted `pi-<n>` session
       id, first catalog entry as current model, default thinking level,
       no session-map entry without a session file), a current model that
       is not in the catalog, catalog entries without provider or id, a
       catalog payload without a `models` list, and thinking-level
       normalization;
-    * two overlapping `session/new` groups completing independently, a
-      duplicate response after completion being skipped, and non-string
-      error payloads;
+    * two overlapping `session/new` requests running one setup at a time
+      (the second written only once the first completed), a duplicate
+      response after completion being skipped, and non-string error
+      payloads;
     * the same rules for `session/load` groups (including the requested
       session id winning over the one reported by `get_state`) and for
       single-request slash-command groups, including the two-phase
@@ -55,15 +58,6 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
 
   @area "control_groups"
 
-  defp late_responses do
-    [
-      {:note, "Responses for the failed group are untracked and skipped"},
-      {:respond, "get_state", Flows.state_data()},
-      {:respond, "get_available_models", %{"models" => Flows.models()}},
-      {:respond, "get_commands", %{"commands" => []}}
-    ]
-  end
-
   defp only_error_result(transcript) do
     transcript
     |> Enum.map(& &1.result)
@@ -74,10 +68,12 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
     test "session_new_completes_after_all_responses_in_any_order" do
       steps = [
         Flows.session_new(1),
+        {:respond, "new_session", %{}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
-        {:respond, "get_state", Flows.state_data()},
-        {:respond, "new_session", %{}}
+        {:respond, "get_state", Flows.state_data()}
       ]
 
       transcript =
@@ -87,24 +83,58 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
           steps
         )
 
-      assert [%{tag: :skip}, %{tag: :skip}, %{tag: :skip}, %{tag: :messages, messages: [_, _]}] =
-               Enum.map(Enum.drop(transcript, 2), & &1.result)
+      assert [
+               %{tag: :ok, writes: [%{"type" => "new_session"}]},
+               %{
+                 tag: :skip_and_write,
+                 writes: [
+                   %{"type" => "get_state"},
+                   %{"type" => "get_available_models"},
+                   %{"type" => "get_available_thinking_levels"},
+                   %{"type" => "get_commands"}
+                 ]
+               },
+               %{tag: :skip},
+               %{tag: :skip},
+               %{tag: :skip},
+               %{tag: :messages, messages: [_, _]}
+             ] =
+               Enum.map(Enum.drop(transcript, 1), & &1.result)
     end
 
-    test "failed_new_session_errors_at_once_and_drops_later_responses" do
-      steps = [Flows.session_new(1), {:respond_error, "new_session", "boom"}] ++ late_responses()
+    test "failed_or_cancelled_new_session_errors_and_writes_nothing_more" do
+      steps = [
+        Flows.session_new(1),
+        {:respond_error, "new_session", "boom"},
+        {:note, "An extension cancelling the switch leaves Pi on its session"},
+        Flows.session_new(2),
+        {:respond, "new_session", %{"cancelled" => true}}
+      ]
 
       transcript =
         PiGolden.assert_golden(
           @area,
-          "failed_new_session_errors_at_once_and_drops_later_responses",
+          "failed_or_cancelled_new_session_errors_and_writes_nothing_more",
           steps
         )
 
-      assert [%{messages: [%{"error" => %{"code" => -32_603, "message" => "boom"}, "id" => 1}]}] =
-               only_error_result(transcript)
+      assert [
+               %{messages: [%{"error" => %{"code" => -32_603, "message" => "boom"}, "id" => 1}]},
+               %{
+                 messages: [
+                   %{
+                     "error" => %{
+                       "code" => -32_603,
+                       "message" => "Pi cancelled the session change"
+                     },
+                     "id" => 2
+                   }
+                 ]
+               }
+             ] = only_error_result(transcript)
 
-      assert Enum.all?(Enum.take(transcript, -3), &match?(%{tag: :skip}, &1.result))
+      assert ["new_session", "new_session"] =
+               transcript |> PiGolden.writes() |> Enum.map(& &1["type"])
     end
 
     test "failed_get_state_after_partial_success_errors" do
@@ -113,6 +143,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "new_session", %{}},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
         {:respond_error, "get_state", "state unavailable"},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}}
       ]
 
@@ -151,7 +183,11 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
 
       steps =
         Enum.flat_map(Enum.with_index(texts, 1), fn {text, acp_id} ->
-          [Flows.session_new(acp_id), {:respond_error, "get_available_models", text}]
+          [
+            Flows.session_new(acp_id),
+            {:respond, "new_session", %{}},
+            {:respond_error, "get_available_models", text}
+          ]
         end)
 
       transcript =
@@ -180,6 +216,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         Flows.session_new(1),
         {:respond, "new_session", %{}},
         {:respond, "get_state", Flows.state_data()},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:respond, "get_available_models", %{"models" => []}},
         {:note, "The failed session left no map entry"},
@@ -205,6 +243,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "new_session", %{}},
         {:respond, "get_state", %{}},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:read_file, "<sandbox>/session-map.json"},
         Flows.prompt(2, "hi", %{"sessionId" => nil}),
@@ -216,14 +256,14 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       assert %{
                "id" => 1,
                "result" => %{
-                 "sessionId" => "pi-<5>",
+                 "sessionId" => "pi-<6>",
                  "models" => %{"currentModelId" => "anthropic/claude-sonnet-4"},
                  "modes" => %{"currentModeId" => "medium"},
                  "_meta" => %{"ex_mcp" => %{"pi" => %{}}}
                }
              } = transcript |> PiGolden.messages() |> Enum.find(&(&1["id"] == 1))
 
-      assert %{exists: false} = Enum.at(transcript, 6).result
+      assert %{exists: false} = Enum.at(transcript, 7).result
     end
 
     test "current_model_outside_catalog_and_malformed_catalog_entries" do
@@ -243,6 +283,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
            "thinkingLevel" => "ultra"
          })},
         {:respond, "get_available_models", %{"models" => models}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}}
       ]
 
@@ -276,11 +318,15 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "new_session", %{}},
         {:respond, "get_state", Flows.state_data(%{"model" => nil})},
         {:respond, "get_available_models", %{}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         Flows.session_new(2),
         {:respond, "new_session", %{}},
         {:respond, "get_state", Flows.state_data(%{"model" => nil, "thinkingLevel" => "xhigh"})},
         {:respond, "get_available_models", %{"other" => 1}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}}
       ]
 
@@ -304,21 +350,24 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
              ] = responses
     end
 
-    test "overlapping_session_new_groups_complete_independently" do
+    test "overlapping_session_new_groups_run_one_at_a_time" do
       steps = [
         Flows.session_new(1),
+        {:note, "A second setup waits until the first completes: nothing is written"},
         Flows.session_new(2, %{"cwd" => "<sandbox>/project"}),
-        {:note, "Answer the second group first"},
+        {:respond, "new_session", %{}},
+        {:respond, "get_state", Flows.state_data(%{"sessionId" => "first"})},
+        {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
+        {:note, "The first setup completes, and the second one's new_session goes out"},
+        {:respond, "get_commands", %{"commands" => []}},
         {:respond, "new_session", %{}},
         {:respond, "get_state", Flows.state_data(%{"sessionId" => "second"})},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ~w(off minimal low medium high xhigh)}},
         {:respond, "get_commands", %{"commands" => []}},
-        {:inbound, fn t -> success(t, "new_session", 0, %{}) end},
-        {:inbound,
-         fn t -> success(t, "get_state", 0, Flows.state_data(%{"sessionId" => "first"})) end},
-        {:inbound,
-         fn t -> success(t, "get_available_models", 0, %{"models" => Flows.models()}) end},
-        {:inbound, fn t -> success(t, "get_commands", 0, %{"commands" => []}) end},
         {:note, "A duplicate response after completion is untracked"},
         {:inbound, fn t -> success(t, "get_commands", 0, %{"commands" => []}) end}
       ]
@@ -326,13 +375,19 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       transcript =
         PiGolden.assert_golden(
           @area,
-          "overlapping_session_new_groups_complete_independently",
+          "overlapping_session_new_groups_run_one_at_a_time",
           steps
         )
 
+      assert %{tag: :ok} = Enum.at(transcript, 3).result
+      refute Map.has_key?(Enum.at(transcript, 3).result, :writes)
+
+      assert %{tag: :messages_and_write, writes: [%{"type" => "new_session"}]} =
+               Enum.at(transcript, 9).result
+
       assert [
-               %{"id" => 2, "result" => %{"sessionId" => "second"}},
-               %{"id" => 1, "result" => %{"sessionId" => "first"}}
+               %{"id" => 1, "result" => %{"sessionId" => "first"}},
+               %{"id" => 2, "result" => %{"sessionId" => "second"}}
              ] = transcript |> PiGolden.messages() |> Enum.filter(&Map.has_key?(&1, "id"))
 
       assert %{tag: :skip} = PiGolden.last_result(transcript)
@@ -345,6 +400,7 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         Flows.session_new(2),
         {:respond_error, "new_session", nil},
         Flows.session_new(3),
+        {:respond, "new_session", %{}},
         {:inbound,
          fn t ->
            %{
@@ -367,24 +423,257 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
   end
 
   describe "session/load groups" do
-    test "failed_switch_session_errors_and_drops_later_responses" do
-      steps =
-        [
-          Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
-          Flows.session_load(1, "mapped"),
-          {:respond_error, "switch_session", "no such session"},
-          {:respond, "get_messages", %{"messages" => []}}
-        ] ++ late_responses()
+    test "failed_or_cancelled_switch_session_errors_and_writes_nothing_more" do
+      steps = [
+        Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+        Flows.session_load(1, "mapped"),
+        {:respond_error, "switch_session", "no such session"},
+        Flows.session_resume(2, "mapped"),
+        {:respond, "switch_session", %{"cancelled" => true}}
+      ]
 
       transcript =
         PiGolden.assert_golden(
           @area,
-          "failed_switch_session_errors_and_drops_later_responses",
+          "failed_or_cancelled_switch_session_errors_and_writes_nothing_more",
           steps
         )
 
-      assert [%{messages: [%{"error" => %{"message" => "no such session"}, "id" => 1}]}] =
-               only_error_result(transcript)
+      assert [
+               %{messages: [%{"error" => %{"message" => "no such session"}, "id" => 1}]},
+               %{
+                 messages: [
+                   %{"error" => %{"message" => "Pi cancelled the session change"}, "id" => 2}
+                 ]
+               }
+             ] = only_error_result(transcript)
+
+      assert ["switch_session", "switch_session"] =
+               transcript |> PiGolden.writes() |> Enum.map(& &1["type"])
+    end
+
+    # A managed setup replaces the Pi process before Pi answers the change
+    # (a load starts it with `--session <requested file>`). When the change
+    # fails or is cancelled, the ACP request fails and the client keeps its
+    # previous session, so a new process resumes that session's file.
+    for {name, failure} <- [
+          {"rejected", {:respond_error, "switch_session", "no such session"}},
+          {"cancelled", {:respond, "switch_session", %{"cancelled" => true}}}
+        ] do
+      @failure failure
+      test "managed_#{name}_load_restores_the_previous_session" do
+        steps =
+          [{:init, managed: true}] ++
+            Flows.open_session(1) ++
+            [
+              Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+              Flows.session_load(2, "mapped"),
+              Flows.set_model(3, "openai/gpt-5.1"),
+              @failure,
+              {:read_file, "<sandbox>/bin/argv.log"},
+              Flows.prompt(4, "still on the first session")
+            ]
+
+        transcript =
+          PiGolden.assert_golden(
+            @area,
+            "managed_#{unquote(name)}_load_restores_the_previous_session",
+            steps
+          )
+
+        [set_model, failed, argv, prompt] =
+          transcript |> Enum.take(-4) |> Enum.map(& &1.result)
+
+        # The switch waits for the pending load, then goes to the restored process.
+        assert %{tag: :messages_and_reply} = set_model
+        refute Map.has_key?(set_model, :port_writes)
+
+        assert %{
+                 messages: [%{"id" => 2, "error" => _}],
+                 port: :respawned,
+                 port_writes: [%{"type" => "set_model", "modelId" => "gpt-5.1"}]
+               } = failed
+
+        assert %{content: content} = argv
+
+        assert [
+                 "--mode rpc --no-themes",
+                 "--mode rpc --no-themes --session <sandbox>/sessions/mapped.jsonl",
+                 "--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl"
+               ] = String.split(content, "\n", trim: true)
+
+        assert %{port_writes: [%{"type" => "prompt"}]} = prompt
+      end
+    end
+
+    # The model switch the client was told succeeded must reach the restored
+    # process however the managed load ends: its change fails, the change
+    # succeeds and a query fails, or the client cancels the request.
+    for {name, middle, ending} <- [
+          {"held_before_the_change_and_a_query_fails",
+           [Flows.set_model(3, "openai/gpt-5.1"), {:respond, "switch_session", %{}}],
+           {:respond_error, "get_state", "state unavailable"}},
+          {"requested_during_the_queries_and_a_query_fails",
+           [{:respond, "switch_session", %{}}, Flows.set_model(3, "openai/gpt-5.1")],
+           {:respond_error, "get_available_models", "catalog unavailable"}},
+          {"held_and_the_client_cancels_the_load", [Flows.set_model(3, "openai/gpt-5.1")],
+           {:outbound, %{"method" => "$/cancel_request", "params" => %{"requestId" => 2}}}}
+        ] do
+      @middle middle
+      @ending ending
+      test "managed_load_switch_#{name}_reaches_the_restored_process" do
+        steps =
+          [{:init, managed: true}] ++
+            Flows.open_session(1) ++
+            [
+              Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+              Flows.session_load(2, "mapped")
+            ] ++ @middle ++ [@ending, {:read_file, "<sandbox>/bin/argv.log"}]
+
+        transcript =
+          PiGolden.assert_golden(
+            @area,
+            "managed_load_switch_#{unquote(name)}_reaches_the_restored_process",
+            steps
+          )
+
+        set_model_step =
+          Enum.find(
+            transcript,
+            &match?(%{step: %{message: %{"method" => "session/set_model"}}}, &1)
+          )
+
+        refute Map.has_key?(set_model_step.result, :port_writes),
+               "the switch reached the replacement process"
+
+        [ended, argv] = transcript |> Enum.take(-2) |> Enum.map(& &1.result)
+
+        assert %{
+                 messages: [%{"id" => 2, "error" => _}],
+                 port: :respawned,
+                 port_writes: [%{"type" => "set_model", "modelId" => "gpt-5.1"}]
+               } = ended
+
+        assert "--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl" =
+                 argv.content |> String.split("\n", trim: true) |> List.last()
+      end
+    end
+
+    # Starting a managed load replaces the Pi process, so it waits for a model
+    # switch in flight: otherwise the acknowledged switch would be lost with
+    # the old process, and a failed load would restore the session file
+    # without it.
+    test "managed_load_waits_for_a_model_switch_in_flight" do
+      steps =
+        [{:init, managed: true}] ++
+          Flows.open_session(1) ++
+          [
+            Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+            Flows.set_model(2, "openai/gpt-5.1"),
+            Flows.session_load(3, "mapped"),
+            {:respond, "set_model", %{"provider" => "openai", "id" => "gpt-5.1"}},
+            {:respond, "get_state",
+             Flows.state_data(%{"model" => %{"provider" => "openai", "id" => "gpt-5.1"}})},
+            {:respond, "get_available_thinking_levels", %{"levels" => ~w(off low medium high)}},
+            {:respond_error, "switch_session", "no such session"},
+            {:read_file, "<sandbox>/bin/argv.log"}
+          ]
+
+      transcript =
+        PiGolden.assert_golden(@area, "managed_load_waits_for_a_model_switch_in_flight", steps)
+
+      [set_model, load, switched, _state, refreshed, failed, argv] =
+        transcript |> Enum.take(-7) |> Enum.map(& &1.result)
+
+      assert %{port_writes: [%{"type" => "set_model"}]} = set_model
+      refute Map.has_key?(load, :port), "the load replaced the process before set_model finished"
+      refute Map.has_key?(load, :port_writes)
+
+      assert %{
+               port_writes: [
+                 %{"type" => "get_state"},
+                 %{"type" => "get_available_thinking_levels"}
+               ]
+             } =
+               switched
+
+      assert %{port: :respawned, port_writes: [%{"type" => "switch_session"}]} = refreshed
+      assert %{messages: [%{"id" => 3, "error" => _}], port: :respawned} = failed
+
+      assert [
+               "--mode rpc --no-themes",
+               "--mode rpc --no-themes --session <sandbox>/sessions/mapped.jsonl",
+               "--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl"
+             ] = String.split(argv.content, "\n", trim: true)
+    end
+
+    # A managed close ends the Pi process, and the running setup with it; its
+    # ACP request is answered, and a setup waiting behind it starts.
+    for method <- ["session/close", "session/delete"] do
+      @close_method method
+      test "managed_#{String.replace(method, "/", "_")}_answers_the_running_setup" do
+        steps =
+          [{:init, managed: true}] ++
+            Flows.open_session(1) ++
+            [
+              Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+              Flows.session_load(2, "mapped"),
+              Flows.session_new(3),
+              {:outbound,
+               %{"method" => @close_method, "id" => 4, "params" => %{"sessionId" => "pi-session"}}}
+            ]
+
+        transcript =
+          PiGolden.assert_golden(
+            @area,
+            "managed_#{String.replace(unquote(method), "/", "_")}_answers_the_running_setup",
+            steps
+          )
+
+        assert %{
+                 messages: [
+                   %{
+                     "id" => 2,
+                     "error" => %{
+                       "message" => "The session was closed before this session setup completed"
+                     }
+                   }
+                 ],
+                 reply: %{},
+                 port: :respawned,
+                 port_writes: [%{"type" => "new_session"}]
+               } = PiGolden.last_result(transcript)
+      end
+    end
+
+    test "managed_failed_new_session_restores_the_previous_session" do
+      steps =
+        [{:init, managed: true}] ++
+          Flows.open_session(1) ++
+          [
+            Flows.session_new(2),
+            {:respond_error, "new_session", "boom"},
+            {:read_file, "<sandbox>/bin/argv.log"}
+          ]
+
+      transcript =
+        PiGolden.assert_golden(
+          @area,
+          "managed_failed_new_session_restores_the_previous_session",
+          steps
+        )
+
+      [failed, argv] = transcript |> Enum.take(-2) |> Enum.map(& &1.result)
+
+      assert %{messages: [%{"id" => 2, "error" => %{"message" => "boom"}}], port: :respawned} =
+               failed
+
+      assert [
+               _first,
+               _second,
+               "--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl"
+             ] =
+               String.split(argv.content, "\n", trim: true)
     end
 
     test "load_with_empty_models_is_auth_required" do
@@ -394,6 +683,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         {:respond, "switch_session", %{}},
         {:respond, "get_messages", %{"messages" => [%{"role" => "user", "content" => "hi"}]}},
         {:respond, "get_state", Flows.state_data(%{"sessionId" => "mapped"})},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:respond, "get_available_models", %{"models" => []}}
       ]
@@ -416,6 +707,8 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
            "cwd" => "<sandbox>/elsewhere"
          })},
         {:respond, "get_available_models", %{"models" => Flows.models()}},
+        {:respond, "get_available_thinking_levels",
+         %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
         {:respond, "get_commands", %{"commands" => []}},
         {:read_file, "<sandbox>/session-map.json"}
       ]
@@ -492,7 +785,7 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
                %{"type" => "get_state"},
                %{"type" => "set_auto_compaction", "enabled" => true},
                %{"type" => "get_state"}
-             ] = transcript |> PiGolden.writes() |> Enum.drop(4)
+             ] = transcript |> PiGolden.writes() |> Enum.drop(5)
 
       assert [
                %{"id" => 2, "result" => %{"stopReason" => "end_turn"}},

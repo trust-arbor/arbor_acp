@@ -26,12 +26,7 @@
     result: %{
       pending: true,
       port: :spawned,
-      port_writes: [
-        %{"id" => "pi-<1>", "type" => "new_session"},
-        %{"id" => "pi-<2>", "type" => "get_state"},
-        %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_commands"}
-      ],
+      port_writes: [%{"id" => "pi-<1>", "type" => "new_session"}],
       tag: :ok
     }
   },
@@ -46,7 +41,16 @@
         "type" => "response"
       }
     },
-    result: %{skipped: true, tag: :skip}
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{"id" => "pi-<2>", "type" => "get_state"},
+        %{"id" => "pi-<3>", "type" => "get_available_models"},
+        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<5>", "type" => "get_commands"}
+      ]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -89,9 +93,22 @@
     step: %{
       kind: :inbound,
       message: %{
+        "command" => "get_available_thinking_levels",
+        "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
+        "id" => "pi-<4>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<4>",
+        "id" => "pi-<5>",
         "success" => true,
         "type" => "response"
       }
@@ -281,15 +298,10 @@
       }
     },
     result: %{
-      pending: true,
+      messages: [%{"id" => 2, "jsonrpc" => "2.0", "result" => %{"stopReason" => "cancelled"}}],
       port: :respawned,
-      port_writes: [
-        %{"id" => "pi-<5>", "type" => "new_session"},
-        %{"id" => "pi-<6>", "type" => "get_state"},
-        %{"id" => "pi-<7>", "type" => "get_available_models"},
-        %{"id" => "pi-<8>", "type" => "get_commands"}
-      ],
-      tag: :ok
+      port_writes: [%{"id" => "pi-<6>", "type" => "new_session"}],
+      tag: :messages
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
@@ -298,12 +310,21 @@
       message: %{
         "command" => "new_session",
         "data" => %{},
-        "id" => "pi-<5>",
+        "id" => "pi-<6>",
         "success" => true,
         "type" => "response"
       }
     },
-    result: %{skipped: true, tag: :skip}
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{"id" => "pi-<7>", "type" => "get_state"},
+        %{"id" => "pi-<8>", "type" => "get_available_models"},
+        %{"id" => "pi-<9>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<10>", "type" => "get_commands"}
+      ]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -317,7 +338,7 @@
           "sessionId" => "pi-session",
           "thinkingLevel" => "medium"
         },
-        "id" => "pi-<6>",
+        "id" => "pi-<7>",
         "success" => true,
         "type" => "response"
       }
@@ -335,7 +356,20 @@
             %{"id" => "gpt-5.1", "name" => "GPT-5.1", "provider" => "openai"}
           ]
         },
-        "id" => "pi-<7>",
+        "id" => "pi-<8>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "get_available_thinking_levels",
+        "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
+        "id" => "pi-<9>",
         "success" => true,
         "type" => "response"
       }
@@ -348,7 +382,7 @@
       message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<8>",
+        "id" => "pi-<10>",
         "success" => true,
         "type" => "response"
       }
@@ -514,7 +548,7 @@
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
-    step: %{kind: :note, text: "The first session's prompt was dropped with the old process"},
+    step: %{kind: :note, text: "The new setup answered the first session's prompt as cancelled"},
     result: %{}
   },
   %Arbor.ACP.Test.PiGolden.Entry{

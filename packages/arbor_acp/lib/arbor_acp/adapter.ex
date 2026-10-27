@@ -74,15 +74,25 @@ defmodule Arbor.ACP.Adapter do
   its correlated ACP response later from `translate_inbound/2`. This explicit
   form suppresses the bridge's automatic setter/config success response; the
   adapter must settle the request once, including native errors, or leave it
-  for the client's timeout/transport-close handling. Existing return forms
-  retain their automatic-response behavior. Adapters retaining a pending native
+  for the client's timeout/transport-close handling. The other return forms
+  keep their automatic-response behavior, except `{:ok, :pending, state}`
+  below. Adapters retaining a pending native
   correlation for this form must implement `outbound_write_failed/3`. Return
   `{:error, reason, new_state}` when the request can't be honored (e.g., a
   config value outside the adapter's enum). The bridge translates
   `{:error, _, _}` into a JSON-RPC error response back to the ACP client.
   Adapter-managed implementations may return `{:ok, :pending, state}` after
   writing to one of their own subprocesses when the ACP response will be
-  emitted later from `handle_adapter_message/2`.
+  emitted later from `handle_adapter_message/2`; the bridge never answers such
+  a request itself, on any route.
+
+  For `session/new`, `session/load` and `session/resume`, a form without a
+  result (`{:ok, :pending, _}`, a write, `:messages`, `:messages_and_write`,
+  `:pending_and_write`, `:one_shot`) leaves the response to the adapter, while
+  `{:ok, :skip, _}` is answered with the bridge's synthesized session. When a
+  write fails, the request is answered with the error and
+  `outbound_write_failed/3` is called; responses among the messages (answers
+  to other requests) are delivered anyway, notifications are not.
   """
   @callback translate_outbound(acp_message :: map(), state()) ::
               {:ok, iodata(), state()}
@@ -117,18 +127,29 @@ defmodule Arbor.ACP.Adapter do
               | {:skip, state()}
 
   @doc """
-  Retire deferred response tracking when a `:pending_and_write` write fails.
+  Retire deferred response tracking when an outbound write fails.
 
-  The bridge calls this optional callback with the original ACP message, the
-  write error, and the state returned by `translate_outbound/2`, before emitting
-  the ACP error itself. Return state that ignores late replies for this request.
-  Do not emit a response or rewind native request IDs: a failed write may have
-  reached the subprocess. This does not undo any native side effects.
+  The bridge calls this optional callback whenever it cannot write what
+  `translate_outbound/2` returned, in any form that writes, with the original
+  ACP message, the write error, and the state returned by
+  `translate_outbound/2`, before emitting the ACP error itself. Return state
+  that no longer tracks the request (it is answered with that error) and
+  ignores late replies for it. Do not emit a response or rewind native request
+  IDs: a failed write may have reached the subprocess. This does not undo any
+  native side effects. Responses the translation emitted for other requests
+  are still delivered; its notifications are not.
 
-  Required when `:pending_and_write` retains a pending correlation; other
-  outbound return forms do not invoke this callback.
+  Required when `:pending_and_write` retains a pending correlation, or when
+  any other form that writes leaves the request to be answered later.
+
+  When the failed write was a client's response to an agent request, the agent
+  is still waiting for it. Return `{:write, iodata, state}` to have the bridge
+  write a small replacement in its place, such as an error answer on the same
+  native id. If that write fails too, the native connection is broken and the
+  bridge closes it. The client's `send_message/2` gets the original error.
   """
-  @callback outbound_write_failed(acp_message :: map(), reason :: term(), state()) :: state()
+  @callback outbound_write_failed(acp_message :: map(), reason :: term(), state()) ::
+              state() | {:write, iodata(), state()}
 
   @doc """
   Handle raw messages for adapter-managed subprocesses.

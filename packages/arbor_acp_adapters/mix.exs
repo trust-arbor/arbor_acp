@@ -45,6 +45,7 @@ defmodule Arbor.ACP.Adapters.MixProject do
       internal_dep(:arbor_rpc),
       external_dep(:jason, "~> 1.4"),
       external_dep(:ex_doc, "~> 0.40", only: :dev, runtime: false),
+      external_dep(:stream_data, "~> 1.1", only: :test),
       external_dep(:telemetry, "~> 1.2")
     ]
   end

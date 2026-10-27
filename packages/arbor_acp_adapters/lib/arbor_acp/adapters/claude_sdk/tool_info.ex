@@ -57,16 +57,20 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.ToolInfo do
     }
   end
 
+  # Claude Code accepts `path` for `file_path`, and `file_text` or
+  # `file_content` for `content` (claude-agent-acp WRITE_CONTENT_KEYS). The
+  # canonical key wins when several spellings are present.
   defp do_from_use("Write", input, _id, cwd) do
     path = input["file_path"] || input["path"]
+    content = input["content"] || input["file_text"] || input["file_content"]
 
     %{
       "title" => "Write #{display_path(path, cwd)}",
       "kind" => "edit",
       "content" =>
-        if(path && input["content"],
+        if(path && is_binary(content),
           do: [
-            %{"type" => "diff", "path" => path, "oldText" => nil, "newText" => input["content"]}
+            %{"type" => "diff", "path" => path, "oldText" => nil, "newText" => content}
           ],
           else: []
         ),

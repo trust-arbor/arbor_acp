@@ -23,15 +23,7 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{"id" => "pi-<1>", "type" => "new_session"},
-        %{"id" => "pi-<2>", "type" => "get_state"},
-        %{"id" => "pi-<3>", "type" => "get_available_models"},
-        %{"id" => "pi-<4>", "type" => "get_commands"}
-      ]
-    }
+    result: %{tag: :ok, writes: [%{"id" => "pi-<1>", "type" => "new_session"}]}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -44,7 +36,16 @@
         "type" => "response"
       }
     },
-    result: %{skipped: true, tag: :skip}
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{"id" => "pi-<2>", "type" => "get_state"},
+        %{"id" => "pi-<3>", "type" => "get_available_models"},
+        %{"id" => "pi-<4>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<5>", "type" => "get_commands"}
+      ]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{
@@ -87,9 +88,22 @@
     step: %{
       kind: :inbound,
       message: %{
+        "command" => "get_available_thinking_levels",
+        "data" => %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]},
+        "id" => "pi-<4>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<4>",
+        "id" => "pi-<5>",
         "success" => true,
         "type" => "response"
       }
@@ -349,13 +363,13 @@
       }
     },
     result: %{
-      tag: :ok,
-      writes: [
-        %{"id" => "pi-<5>", "type" => "new_session"},
-        %{"id" => "pi-<6>", "type" => "get_state"},
-        %{"id" => "pi-<7>", "type" => "get_available_models"},
-        %{"id" => "pi-<8>", "type" => "get_commands"}
-      ]
+      messages: [
+        %{"id" => 2, "jsonrpc" => "2.0", "result" => %{"stopReason" => "cancelled"}},
+        %{"id" => 3, "jsonrpc" => "2.0", "result" => %{"stopReason" => "cancelled"}},
+        %{"id" => 4, "jsonrpc" => "2.0", "result" => %{"stopReason" => "cancelled"}}
+      ],
+      tag: :messages_and_write,
+      writes: [%{"type" => "abort"}, %{"id" => "pi-<6>", "type" => "new_session"}]
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
@@ -367,25 +381,12 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{"id" => "pi-<9>", "type" => "new_session"},
-        %{"id" => "pi-<10>", "type" => "get_state"},
-        %{"id" => "pi-<11>", "type" => "get_available_models"},
-        %{"id" => "pi-<12>", "type" => "get_commands"}
-      ]
-    }
+    result: %{pending: true, tag: :ok}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{code: 137, kind: :port_exit},
     result: %{
       messages: [
-        %{
-          "error" => %{"code" => -32603, "message" => "Pi process exited: 137"},
-          "id" => 2,
-          "jsonrpc" => "2.0"
-        },
         %{
           "error" => %{"code" => -32603, "message" => "Pi process exited: 137"},
           "id" => 5,
@@ -395,9 +396,7 @@
           "error" => %{"code" => -32603, "message" => "Pi process exited: 137"},
           "id" => 6,
           "jsonrpc" => "2.0"
-        },
-        %{"id" => 3, "jsonrpc" => "2.0", "result" => %{"stopReason" => "cancelled"}},
-        %{"id" => 4, "jsonrpc" => "2.0", "result" => %{"stopReason" => "cancelled"}}
+        }
       ],
       tag: :messages
     }
@@ -426,7 +425,7 @@
           "sessionId" => "pi-session",
           "thinkingLevel" => "medium"
         },
-        "id" => "pi-<10>",
+        "id" => "pi-<2>",
         "success" => true,
         "type" => "response"
       }
