@@ -288,7 +288,11 @@
         "params" => %{"cwd" => "<sandbox>/project"}
       }
     },
-    result: %{tag: :ok, writes: [%{"id" => "pi-<6>", "type" => "new_session"}]}
+    result: %{
+      messages: [%{"id" => 2, "jsonrpc" => "2.0", "result" => %{"stopReason" => "cancelled"}}],
+      tag: :messages_and_write,
+      writes: [%{"type" => "abort"}, %{"id" => "pi-<6>", "type" => "new_session"}]
+    }
   },
   %Arbor.ACP.Test.PiGolden.Entry{step: %{kind: :shutdown}, result: %{}},
   %Arbor.ACP.Test.PiGolden.Entry{

@@ -239,7 +239,8 @@ defmodule Arbor.ACP.Adapters.Pi do
         %{"method" => "session/prompt", "id" => acp_id, "params" => params},
         state
       ) do
-    with :ok <- check_synced(state) do
+    with :ok <- check_synced(state),
+         :ok <- check_no_session_change(state) do
       {message, images} = Prompt.to_pi_message(params["prompt"])
       translate_prompt_message(message, images, acp_id, params, state)
     else
@@ -258,24 +259,24 @@ defmodule Arbor.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "session/close", "params" => params}, state) do
     session_id = params["sessionId"]
 
-    state =
+    {messages, state} =
       if is_nil(session_id) or session_id == state.session_id do
         close_session(state)
       else
-        state
+        {[], state}
       end
 
-    state |> cleanup_reply() |> advance_after_reply()
+    state |> cleanup_reply() |> with_reply_messages(messages) |> advance_after_reply()
   end
 
   def translate_outbound(%{"method" => "session/delete", "params" => params}, state) do
     session_id = params["sessionId"]
 
-    state =
+    {messages, state} =
       if is_nil(session_id) or session_id == state.session_id do
         close_session(state)
       else
-        state
+        {[], state}
       end
 
     case state.cleanup_result do
@@ -284,7 +285,7 @@ defmodule Arbor.ACP.Adapters.Pi do
           if is_binary(session_id), do: SessionStore.delete(state.session_map_path, session_id)
 
         maybe_delete_session_file(state, entry || %{"sessionFile" => state.session_file})
-        advance_after_reply({:reply, %{}, state})
+        {:reply, %{}, state} |> with_reply_messages(messages) |> advance_after_reply()
 
       {:error, reason} ->
         {:error, inspect(reason), state}
@@ -539,11 +540,32 @@ defmodule Arbor.ACP.Adapters.Pi do
     end
   end
 
-  # A managed close ends the Pi process and the operation in flight with it;
-  # queued model work was for the closed session, and waiting setups start
-  # next. An unmanaged consumer's Pi process outlives the session, so the
-  # operation in flight, and a running setup's group, still get their replies.
-  defp close_session(%{managed?: false} = state) do
+  @closed_during_setup "The session was closed before this session setup completed"
+
+  # A managed close ends the Pi process and the operation in flight with it.
+  # A running setup is answered with an error, queued model work was for the
+  # closed session, and waiting setups start next. An unmanaged consumer's Pi
+  # process outlives the session, so the operation in flight, and a running
+  # setup's group, still get their replies.
+  defp close_session(%{managed?: false} = state), do: {[], keep_operation_across_close(state)}
+
+  defp close_session(state) do
+    messages =
+      case state.op_in_flight do
+        %{type: :setup, acp_id: acp_id} = op ->
+          if Map.get(op, :cancelled?, false),
+            do: [],
+            else: [Envelope.error(acp_id, -32_603, @closed_during_setup)]
+
+        _op ->
+          []
+      end
+
+    state = close_active_session(state)
+    {messages, %{state | op_queue: Enum.filter(state.op_queue, &(&1.type == :setup))}}
+  end
+
+  defp keep_operation_across_close(state) do
     in_flight = state.op_in_flight
     group = running_setup_group(state)
     refs = if group, do: MapSet.to_list(group.refs), else: []
@@ -561,10 +583,12 @@ defmodule Arbor.ACP.Adapters.Pi do
       else: state
   end
 
-  defp close_session(state) do
-    state = close_active_session(state)
-    %{state | op_queue: Enum.filter(state.op_queue, &(&1.type == :setup))}
-  end
+  defp with_reply_messages(result, []), do: result
+
+  defp with_reply_messages({:reply, result, state}, messages),
+    do: {:messages_and_reply, messages, result, state}
+
+  defp with_reply_messages(result, _messages), do: result
 
   defp close_active_session(%{port: nil} = state) do
     demonitor_port(state)
@@ -798,13 +822,22 @@ defmodule Arbor.ACP.Adapters.Pi do
         translate_slash_command(slash, acp_id, params, state)
 
       true ->
-        start_prompt(acp_id, message, images, params, state)
+        start_requested_prompt(acp_id, message, images, params, state)
     end
   end
 
   defp start_prompt(acp_id, message, images, params, state) do
     {data, state} = PromptFlow.start_plan(acp_id, message, images, params, state)
     deliver_pending(data, state)
+  end
+
+  # A prompt the client sent that Pi never received is not pending: its ACP
+  # request is answered with the error.
+  defp start_requested_prompt(acp_id, message, images, params, state) do
+    case start_prompt(acp_id, message, images, params, state) do
+      {:error, reason, state} -> {:error, reason, %{state | pending_prompt: nil, text_acc: []}}
+      result -> result
+    end
   end
 
   # session/load and session/resume differ only in whether the transcript is
@@ -845,17 +878,89 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   @unanswered_change "Pi has not answered an earlier session change"
 
+  @changing_sessions "Pi is changing sessions; send the prompt again once the session change completes"
+
+  # A prompt runs in the session Pi is on, and its updates are tagged with the
+  # adapter's session, so a prompt never overlaps a session change. A setup
+  # cancels the prompts and prompt commands it finds: they are answered as
+  # cancelled and Pi is asked to abort. A prompt that arrives while a setup or
+  # a switch back is waiting or running fails at once, because the session it
+  # names may not survive the change; the client can send it again once the
+  # change has settled which session is current.
   defp begin_session_setup(plan, state) do
-    cond do
-      cancelled_change_unanswered?(state) ->
-        {:error, @unanswered_change, state}
+    if cancelled_change_unanswered?(state) do
+      {:error, @unanswered_change, state}
+    else
+      {cancelled, abort?, state} = cancel_prompts_for_setup(state)
+      {abort, state} = abort_running_prompt(abort?, state)
 
-      state.op_in_flight != nil or state.op_queue != [] ->
-        deliver_queued(enqueue_op(state, %{type: :setup, plan: plan}))
+      result =
+        if state.op_in_flight != nil or state.op_queue != [],
+          do: deliver_queued(enqueue_op(state, %{type: :setup, plan: plan})),
+          else: run_session_setup(plan, state)
 
-      true ->
-        run_session_setup(plan, state)
+      with_setup_notices(result, cancelled, abort, plan)
     end
+  end
+
+  defp check_no_session_change(state) do
+    changing? =
+      match?(%{type: type} when type in [:setup, :switch_back], state.op_in_flight) or
+        Enum.any?(state.op_queue, &(&1.type == :setup))
+
+    if changing?, do: {:error, @changing_sessions}, else: :ok
+  end
+
+  defp cancel_prompts_for_setup(state) do
+    {queued, state} = PromptFlow.cancel_queued(state)
+
+    {running, abort?, state} =
+      case state.pending_prompt do
+        %{acp_id: acp_id} ->
+          response = Envelope.response(acp_id, %{"stopReason" => "cancelled"})
+          {[response], true, %{state | pending_prompt: nil, text_acc: []}}
+
+        _none ->
+          {[], false, state}
+      end
+
+    {commands, state} =
+      state.control_groups
+      |> Map.values()
+      |> Enum.reject(&(&1.type in [:session_new, :session_load]))
+      |> Enum.sort_by(& &1.seq)
+      |> Enum.map_reduce(state, fn group, state ->
+        {Envelope.response(group.acp_id, %{"stopReason" => "cancelled"}),
+         delete_group(state, group)}
+      end)
+
+    {running ++ commands ++ queued, abort? or commands != [], state}
+  end
+
+  defp abort_running_prompt(false, state), do: {nil, state}
+
+  defp abort_running_prompt(true, %{managed?: false} = state),
+    do: {RPC.encode_notification(RPC.method(:abort)), state}
+
+  defp abort_running_prompt(true, state) do
+    _ = write_managed(RPC.encode_notification(RPC.method(:abort)), state)
+    {nil, state}
+  end
+
+  defp with_setup_notices(result, [], nil, _plan), do: result
+
+  defp with_setup_notices({:ok, :pending, state}, messages, _abort, _plan),
+    do: {:messages, messages, state}
+
+  defp with_setup_notices({:ok, :skip, state}, messages, abort, _plan),
+    do: add_write({:messages, messages, state}, abort)
+
+  defp with_setup_notices({:ok, data, state}, messages, abort, _plan),
+    do: {:messages_and_write, messages, IO.iodata_to_binary([abort || "", data]), state}
+
+  defp with_setup_notices({:error, reason, state}, messages, abort, plan) do
+    error = Envelope.error(elem(plan, 1), -32_603, to_string(reason))
+    add_write({:messages, messages ++ [error], state}, abort)
   end
 
   # The client cancelled a setup whose change Pi has not answered (a
@@ -1007,6 +1112,22 @@ defmodule Arbor.ACP.Adapters.Pi do
 
       {:messages_and_write, messages, data, state} ->
         {:messages_and_reply_and_write, messages, result, data, state}
+    end
+  end
+
+  defp advance_after_reply({:messages_and_reply, messages, result, state}) do
+    case advance_after_reply({:reply, result, state}) do
+      {:reply, result, state} ->
+        {:messages_and_reply, messages, result, state}
+
+      {:messages_and_reply, new, result, state} ->
+        {:messages_and_reply, messages ++ new, result, state}
+
+      {:reply_and_write, result, data, state} ->
+        {:messages_and_reply_and_write, messages, result, data, state}
+
+      {:messages_and_reply_and_write, new, result, data, state} ->
+        {:messages_and_reply_and_write, messages ++ new, result, data, state}
     end
   end
 

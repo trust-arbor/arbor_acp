@@ -432,16 +432,24 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
           steps
         )
 
+      # The first session/new cancels the running and queued prompts before
+      # it changes the session, so the exit fails only the two setups.
+      assert %{
+               messages: [
+                 %{"id" => 2, "result" => %{"stopReason" => "cancelled"}},
+                 %{"id" => 3, "result" => %{"stopReason" => "cancelled"}},
+                 %{"id" => 4, "result" => %{"stopReason" => "cancelled"}}
+               ],
+               writes: [%{"type" => "abort"}, %{"type" => "new_session"}]
+             } = Enum.at(transcript, 10).result
+
       assert %{
                messages: [
                  %{
-                   "id" => 2,
+                   "id" => 5,
                    "error" => %{"code" => -32_603, "message" => "Pi process exited: 137"}
                  },
-                 %{"id" => 5, "error" => %{"message" => "Pi process exited: 137"}},
-                 %{"id" => 6, "error" => %{"message" => "Pi process exited: 137"}},
-                 %{"id" => 3, "result" => %{"stopReason" => "cancelled"}},
-                 %{"id" => 4, "result" => %{"stopReason" => "cancelled"}}
+                 %{"id" => 6, "error" => %{"message" => "Pi process exited: 137"}}
                ]
              } = Enum.at(transcript, 12).result
 
@@ -526,14 +534,18 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
           [Flows.prompt(2, "working")] ++
           Flows.open_session(3) ++
           [
-            {:note, "The first session's prompt was dropped with the old process"},
+            {:note, "The new setup answered the first session's prompt as cancelled"},
             Flows.agent_settled()
           ]
 
       transcript =
         PiGolden.assert_golden(@area, "managed_session_new_replaces_the_running_process", steps)
 
-      assert %{port: :respawned, pending: true} = Enum.at(transcript, 8).result
+      assert %{
+               port: :respawned,
+               messages: [%{"id" => 2, "result" => %{"stopReason" => "cancelled"}}]
+             } = Enum.at(transcript, 8).result
+
       assert %{tag: :skip} = PiGolden.last_result(transcript)
     end
   end

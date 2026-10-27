@@ -607,6 +607,45 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
              ] = String.split(argv.content, "\n", trim: true)
     end
 
+    # A managed close ends the Pi process, and the running setup with it; its
+    # ACP request is answered, and a setup waiting behind it starts.
+    for method <- ["session/close", "session/delete"] do
+      @close_method method
+      test "managed_#{String.replace(method, "/", "_")}_answers_the_running_setup" do
+        steps =
+          [{:init, managed: true}] ++
+            Flows.open_session(1) ++
+            [
+              Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
+              Flows.session_load(2, "mapped"),
+              Flows.session_new(3),
+              {:outbound,
+               %{"method" => @close_method, "id" => 4, "params" => %{"sessionId" => "pi-session"}}}
+            ]
+
+        transcript =
+          PiGolden.assert_golden(
+            @area,
+            "managed_#{String.replace(unquote(method), "/", "_")}_answers_the_running_setup",
+            steps
+          )
+
+        assert %{
+                 messages: [
+                   %{
+                     "id" => 2,
+                     "error" => %{
+                       "message" => "The session was closed before this session setup completed"
+                     }
+                   }
+                 ],
+                 reply: %{},
+                 port: :respawned,
+                 port_writes: [%{"type" => "new_session"}]
+               } = PiGolden.last_result(transcript)
+      end
+    end
+
     test "managed_failed_new_session_restores_the_previous_session" do
       steps =
         [{:init, managed: true}] ++

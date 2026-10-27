@@ -1444,27 +1444,88 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert pi_two.active == "s1" and pi_many.active == "s1"
     end
 
-    test "a usage request waits for a setup and is dropped once the setup replaces the session",
-         ctx do
+    # A prompt runs in the session Pi is on; while a session change runs, Pi
+    # may already be on the other session.
+    for phase <- [:setup_running, :setup_waiting, :switch_back_running] do
+      @change_phase phase
+      test "a prompt sent while a session change is #{phase} fails at once", ctx do
+        {state, pi} = {ordered_state(ctx), %{ordered_pi(ctx) | hold_queries?: true}}
+        {state, pi} = enter_change_phase(@change_phase, state, pi, ctx)
+        writes_before = pi.requests
+
+        prompt = %{
+          "method" => "session/prompt",
+          "id" => 80,
+          "params" => %{"sessionId" => "s1", "prompt" => [%{"type" => "text", "text" => "hi"}]}
+        }
+
+        assert {:error, reason, state} = Pi.translate_outbound(prompt, state),
+               "#{@change_phase}: the prompt reached Pi during the session change"
+
+        assert reason =~ "Pi is changing sessions"
+        assert pi.requests == writes_before
+
+        # Once the change settles, prompts for the current session run.
+        {state, _pi, _messages} = ordered_drive(state, pi)
+        current = put_in(prompt, ["params", "sessionId"], state.session_id)
+        assert {:ok, data, _state} = Pi.translate_outbound(current, state)
+        assert [%{"type" => "prompt"}] = decode_many(data)
+      end
+    end
+
+    test "a setup answers the running prompt, queued prompts and commands as cancelled", ctx do
+      {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
+      text = fn text -> [%{"type" => "text", "text" => text}] end
+
+      prompt =
+        &%{
+          "method" => "session/prompt",
+          "id" => &1,
+          "params" => %{"sessionId" => "s1", "prompt" => &2}
+        }
+
+      assert {:ok, _data, state} = Pi.translate_outbound(prompt.(60, text.("working")), state)
+
+      assert {:messages, _notices, state} =
+               Pi.translate_outbound(prompt.(61, text.("queued")), state)
+
+      state = %{state | pending_prompt: nil}
+      assert {:ok, _data, state} = Pi.translate_outbound(prompt.(62, text.("/session")), state)
+      state = %{state | pending_prompt: %{acp_id: 60, msg_id: "msg-1", cancel_requested: false}}
+
+      {state, pi, messages} = outbound(state, pi, session_change("session/load", ctx))
+
+      assert Enum.map(messages, &{&1["id"], &1["result"]}) == [
+               {60, %{"stopReason" => "cancelled"}},
+               {62, %{"stopReason" => "cancelled"}},
+               {61, %{"stopReason" => "cancelled"}}
+             ]
+
+      assert ["abort", "switch_session"] = pi.requests
+      assert state.pending_prompt == nil
+      assert state.control_groups |> Map.values() |> Enum.map(& &1.type) == [:session_load]
+    end
+
+    test "a prompt a setup cancelled sends no usage request", ctx do
       {state, pi} = {ordered_state(ctx), ordered_pi(ctx)}
       state = %{state | pending_prompt: %{acp_id: 9, msg_id: "msg-9", cancel_requested: false}}
-      {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+      {state, pi, [cancelled]} = outbound(state, pi, session_change("session/load", ctx))
 
-      assert {:skip, state} =
-               Pi.translate_inbound(
-                 Jason.encode!(%{"type" => "agent_end", "messages" => []}),
-                 state
-               )
+      assert cancelled == %{
+               "jsonrpc" => "2.0",
+               "id" => 9,
+               "result" => %{"stopReason" => "cancelled"}
+             }
 
-      assert [%{type: :usage, session_id: "s1"}] = state.op_queue
-      {state, pi, messages} = ordered_drive(state, pi)
+      # The cancelled prompt's late agent_end and agent_settled change nothing.
+      for event <- [%{"type" => "agent_end", "messages" => []}, %{"type" => "agent_settled"}] do
+        assert {:skip, state} = Pi.translate_inbound(Jason.encode!(event), state)
+        assert state.op_queue == []
+      end
 
-      refute Enum.any?(
-               messages,
-               &match?(%{"params" => %{"update" => %{"sessionUpdate" => "usage_update"}}}, &1)
-             )
-
-      refute Enum.any?(pi.requests, &(&1 == "get_session_stats"))
+      {state, pi, _messages} = ordered_drive(state, pi)
+      refute "get_session_stats" in pi.requests
+      assert pi.requests |> Enum.take(1) == ["abort"]
       assert state.session_id == "s2"
     end
 
@@ -1478,9 +1539,11 @@ defmodule Arbor.ACP.Adapters.PiTest do
                  state
                )
 
-      assert {:ok, :skip, state} =
-               Pi.translate_outbound(session_change("session/load", ctx), state)
+      # The setup cancels the running prompt and waits for the usage request.
+      assert {:messages_and_write, [%{"id" => 9, "result" => %{"stopReason" => "cancelled"}}],
+              abort, state} = Pi.translate_outbound(session_change("session/load", ctx), state)
 
+      assert [%{"type" => "abort"}] = decode_many(abort)
       [%{"id" => stats_id}] = decode_many(stats)
 
       usage =
@@ -1943,19 +2006,14 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert response["result"]["stopReason"] == "end_turn"
     end
 
-    test "file slash commands expand to prompts", %{state: state, tmp_dir: tmp_dir} do
+    test "file slash commands expand to prompts", %{state: state, tmp_dir: tmp_dir} = ctx do
       prompts_dir = Path.join([tmp_dir, ".pi", "prompts"])
       File.mkdir_p!(prompts_dir)
       File.write!(Path.join(prompts_dir, "review.md"), "Review $1 and $@")
 
       msg = %{"method" => "session/new", "id" => 25, "params" => %{"cwd" => tmp_dir}}
-      assert {:ok, _data, state} = Pi.translate_outbound(msg, state)
-
-      state = %{
-        state
-        | file_commands:
-            state.control_groups |> Map.values() |> hd() |> Map.fetch!(:file_commands)
-      }
+      {state, pi, _messages} = outbound(state, ordered_pi(ctx), msg)
+      {state, _pi, _messages} = ordered_drive(state, pi)
 
       prompt_msg = %{
         "method" => "session/prompt",
@@ -2790,6 +2848,24 @@ defmodule Arbor.ACP.Adapters.PiTest do
     end)
   end
 
+  defp enter_change_phase(:setup_running, state, pi, ctx) do
+    {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+    {state, pi}
+  end
+
+  defp enter_change_phase(:setup_waiting, state, pi, ctx) do
+    {state, pi, _} = outbound(state, pi, set_model_request("openai/gpt-5.1"))
+    {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+    {state, pi}
+  end
+
+  defp enter_change_phase(:switch_back_running, state, pi, ctx) do
+    {state, pi, _} = outbound(state, pi, session_change("session/load", ctx))
+    {state, pi, []} = finish_held(state, pi)
+    {state, pi, [_error]} = outbound(state, pi, cancel_request(70))
+    {state, pi}
+  end
+
   defp ordered_state(ctx) do
     state = with_session_file(switch_ready_state(ctx.state), ctx)
 
@@ -2851,6 +2927,9 @@ defmodule Arbor.ACP.Adapters.PiTest do
       cond do
         request["type"] in ["set_model", "new_session", "switch_session"] ->
           {[], %{pi | held: pi.held ++ [request]}}
+
+        request["type"] == "abort" ->
+          {[], pi}
 
         pi.hold_queries? ->
           {[], %{pi | held_queries: pi.held_queries ++ [request]}}

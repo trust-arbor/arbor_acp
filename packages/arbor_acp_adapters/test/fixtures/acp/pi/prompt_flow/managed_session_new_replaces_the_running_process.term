@@ -298,10 +298,10 @@
       }
     },
     result: %{
-      pending: true,
+      messages: [%{"id" => 2, "jsonrpc" => "2.0", "result" => %{"stopReason" => "cancelled"}}],
       port: :respawned,
       port_writes: [%{"id" => "pi-<6>", "type" => "new_session"}],
-      tag: :ok
+      tag: :messages
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
@@ -548,7 +548,7 @@
     }
   },
   %Arbor.ACP.Test.PiGolden.Entry{
-    step: %{kind: :note, text: "The first session's prompt was dropped with the old process"},
+    step: %{kind: :note, text: "The new setup answered the first session's prompt as cancelled"},
     result: %{}
   },
   %Arbor.ACP.Test.PiGolden.Entry{
