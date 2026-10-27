@@ -278,6 +278,7 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
         })
 
       :ok = Agent.usage(ctx.agent, session_id, 42, 100)
+      :ok = send_opt_in_updates(ctx, session_id)
 
       :ok = Agent.agent_message(ctx.agent, session_id, "Hello from ExMCP everything agent")
       {:reply, %{"stopReason" => "end_turn"}, state}
@@ -287,6 +288,42 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
   @impl true
   def handle_cancel(_session_id, _ctx, state) do
     {:reply, %{"stopReason" => "cancelled"}, state}
+  end
+
+  # Agents MUST only send notices and compaction updates when the client
+  # advertised the matching `clientCapabilities.session` entry.
+  defp send_opt_in_updates(ctx, session_id) do
+    session = Map.get(ctx.client_capabilities || %{}, "session") || %{}
+
+    if is_map(session["notices"]) do
+      :ok =
+        Agent.session_update(ctx.agent, session_id, %{
+          "sessionUpdate" => "notice",
+          "severity" => "info",
+          "title" => "ExMCP notice",
+          "description" => "Sent because the client advertised notices"
+        })
+    end
+
+    if is_map(session["compaction"]) do
+      for update <- [
+            %{"sessionUpdate" => "compaction_update", "status" => "in_progress"},
+            %{
+              "sessionUpdate" => "compaction_summary_chunk",
+              "content" => %{"type" => "text", "text" => "ExMCP compaction summary"}
+            },
+            %{"sessionUpdate" => "compaction_update", "status" => "completed"}
+          ] do
+        :ok =
+          Agent.session_update(
+            ctx.agent,
+            session_id,
+            Map.put(update, "compactionId", "compact_elixir_1")
+          )
+      end
+    end
+
+    :ok
   end
 
   defp send_loaded_history(agent, session_id) do

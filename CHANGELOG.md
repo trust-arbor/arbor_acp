@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix: the ACP client rejected `notice` and context compaction session updates as invalid even when the application had opted in with `clientCapabilities.session.notices` or `.compaction`. It now delivers them, accepting and salvaging them as the ACP SDK 1.9.0 v1 deserializer does (invalid optional values removed, invalid summary items skipped); without the capability it still drops them.
+
 ## ArborACP / Adapters 1.0.0-rc.4 — 2026-10-26
 
 - **Security:** `Arbor.ACP.Registry` fetch no longer follows HTTP redirects, which re-sent the caller's request headers to the redirect target, even another host or an `http:` URL. A redirect returns `{:error, {:redirect_refused, status, location}}`, with the location's userinfo, query and fragment removed.

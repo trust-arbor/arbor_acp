@@ -15,11 +15,15 @@ class EverythingAgent {
     this.model = "fast";
     this.autoRetry = false;
     this.supportsBooleanConfig = false;
+    this.supportsNotices = false;
+    this.supportsCompaction = false;
   }
 
   async initialize(params) {
     this.supportsBooleanConfig =
       params.clientCapabilities?.session?.configOptions?.boolean != null;
+    this.supportsNotices = params.clientCapabilities?.session?.notices != null;
+    this.supportsCompaction = params.clientCapabilities?.session?.compaction != null;
 
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
@@ -338,6 +342,49 @@ class EverythingAgent {
         size: 100,
       },
     });
+
+    // Opt-in updates: agents MUST only send these when the client advertised
+    // the matching clientCapabilities.session entry.
+    if (this.supportsNotices) {
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "notice",
+          severity: "warning",
+          title: "TypeScript notice",
+          description: "Sent because the client advertised notices",
+        },
+      });
+    }
+
+    if (this.supportsCompaction) {
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "compaction_update",
+          compactionId: "compact_ts_1",
+          status: "in_progress",
+        },
+      });
+
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "compaction_summary_chunk",
+          compactionId: "compact_ts_1",
+          content: { type: "text", text: "TypeScript compaction summary" },
+        },
+      });
+
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "compaction_update",
+          compactionId: "compact_ts_1",
+          status: "completed",
+        },
+      });
+    }
 
     await this.connection.sessionUpdate({
       sessionId,

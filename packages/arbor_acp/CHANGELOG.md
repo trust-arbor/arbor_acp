@@ -10,6 +10,7 @@
 - `outbound_write_failed/3` may return `{:write, iodata, state}`, on every failed-write path, `:pending_and_write` included. The AdapterBridge writes that small replacement in place of a client response it could not write, such as an error answer on the same native id, so an agent waiting on the answer (often with no timeout) is not left stranded. If the replacement cannot be written either, the native connection is broken and the bridge closes it.
 - Fix: when the write for a client's response to an agent request fails, the AdapterBridge returns the error from `send_message/2` instead of pushing an error response under the response's id. Each side numbers its own requests, so that id could belong to one of the client's requests, which the error would then answer.
 - **Behaviour change:** the AdapterBridge never answers a `{:ok, :pending, state}` translation itself. `session/set_mode`, `session/set_model`, `session/set_config_option`, `session/close`, `session/delete` and `logout` synthesized a success for it, although the behaviour docs say an adapter-managed `:pending` request is answered later by the adapter.
+- Fix: `Arbor.ACP.Client` delivers `notice`, `compaction_update` and `compaction_summary_chunk` session updates to the handler and event listener when the application advertised `{}` for `clientCapabilities.session.notices` or `.compaction`. The client validated neither kind, so it rejected these updates as invalid and logged a warning, even after opting in. They are now validated the way the ACP SDK 1.9.0 v1 deserializer does it: an update whose required fields are missing or invalid is rejected; an invalid optional value (including the notification's `_meta`) is removed, and an invalid `summary` item is skipped, so one bad block does not lose a completed compaction. Without the matching capability the client drops them with a warning, because agents must not send them unadvertised. `Arbor.ACP.Types` documents the three update shapes and the client session capabilities.
 
 ## 1.0.0-rc.4 — 2026-10-26
 
@@ -29,7 +30,6 @@
 - **Security:** validate `Arbor.ACP.Registry.npx_command/1` npm package specifiers and separate them from `npx` flags with `--`, so a registry entry cannot inject `npx` options. An invalid specifier returns `{:error, :invalid_npx_package}`.
 - Add generic, bidirectional ACP extension requests/notifications, optional handler callbacks, bounded monitored subscriptions and standard session/prompt metadata.
 - Refresh published-RC installation guidance and consolidate current documentation.
-
 
 ## 1.0.0-rc.1 — 2026-10-08
 

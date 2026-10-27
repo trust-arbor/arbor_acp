@@ -215,8 +215,8 @@ defmodule Arbor.ACP.CompatTest do
   describe "checked-in manifest" do
     test "tracks the full catalog baseline and all adapter reference repositories" do
       assert {:ok, manifest} = ACPCompat.load_manifest()
-      assert length(manifest["catalog"]["agents"]) == 40
-      assert length(manifest["registry"]["agents"]) == 41
+      assert length(manifest["catalog"]["agents"]) == 48
+      assert length(manifest["registry"]["agents"]) == 43
 
       repositories = Enum.map(manifest["adapterUpstreams"], & &1["repository"])
 
