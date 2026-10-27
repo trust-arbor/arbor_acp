@@ -220,7 +220,57 @@ defmodule Arbor.ACP.Internal.McpTest do
     {waiting, []} = Mcp.release_session(again, "session-1")
     {aborted, []} = Mcp.abort(waiting, "load-2")
     assert :error = Mcp.session_id(aborted, "tools")
+    refute Mcp.release_pending?(aborted, "session-1")
     assert {:ok, _after_abort} = Mcp.begin_new(aborted, "open-3", ["tools"])
+  end
+
+  test "release_session covers an id reserved before the session owns any" do
+    {:ok, held} = Mcp.begin_existing(Mcp.new(), "session-1", "load-1", ["tools"])
+    assert {:error, :pending} = Mcp.session_id(held, "tools")
+
+    {waiting, []} = Mcp.release_session(held, "session-1")
+    assert Mcp.release_pending?(waiting, "session-1")
+    assert {:error, :pending} = Mcp.session_id(waiting, "tools")
+    assert {:error, :mcp_server_id_in_use} = Mcp.begin_new(waiting, "open-2", ["tools"])
+
+    {released, []} = Mcp.commit_existing(waiting, "load-1", "session-1", ["tools"])
+    assert :error = Mcp.session_id(released, "tools")
+    refute Mcp.release_pending?(released, "session-1")
+    assert {:ok, _claimed} = Mcp.begin_new(released, "open-2", ["tools"])
+
+    {:ok, again} = Mcp.begin_existing(Mcp.new(), "session-1", "load-2", ["tools"])
+    {waiting, []} = Mcp.release_session(again, "session-1")
+    {aborted, []} = Mcp.abort(waiting, "load-2")
+    refute Mcp.release_pending?(aborted, "session-1")
+    assert :error = Mcp.session_id(aborted, "tools")
+
+    {:ok, reopened} = Mcp.begin_existing(aborted, "session-1", "load-3", ["tools"])
+    {bound, []} = Mcp.commit_existing(reopened, "load-3", "session-1", ["tools"])
+    assert {:ok, "session-1"} = Mcp.session_id(bound, "tools")
+  end
+
+  test "a close waits for every in-flight reservation of a session that owns nothing" do
+    {:ok, first} = Mcp.begin_existing(Mcp.new(), "session-1", "load-a", ["tools"])
+    {:ok, both} = Mcp.begin_existing(first, "session-1", "load-b", ["docs"])
+    {waiting, []} = Mcp.release_session(both, "session-1")
+
+    {mid, []} = Mcp.commit_existing(waiting, "load-a", "session-1", ["tools"])
+    assert :error = Mcp.session_id(mid, "tools")
+    assert {:error, :pending} = Mcp.session_id(mid, "docs")
+    assert Mcp.release_pending?(mid, "session-1")
+
+    {done, []} = Mcp.commit_existing(mid, "load-b", "session-1", ["docs"])
+    assert :error = Mcp.session_id(done, "docs")
+    refute Mcp.release_pending?(done, "session-1")
+    assert {:ok, _tools} = Mcp.begin_new(done, "open-2", ["tools"])
+    assert {:ok, _docs} = Mcp.begin_new(done, "open-3", ["docs"])
+  end
+
+  test "closing a session does not cancel a session/new reservation" do
+    {:ok, reserved} = Mcp.begin_new(Mcp.new(), "open-1", ["tools"])
+    {released, []} = Mcp.release_session(reserved, "session-1")
+    assert {:error, :pending} = Mcp.session_id(released, "tools")
+    refute Mcp.release_pending?(released, "session-1")
   end
 
   test "tracks an in-flight request until it finishes" do

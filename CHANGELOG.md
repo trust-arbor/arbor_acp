@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Fix: `:handler` MCP requests keep the state they return, disconnect stops an in-flight module or `:handler` provider, and closing a session waits for a load or resume that still holds its server ids. That lifecycle call then fails with `mcp_server_id_in_use`.
+- **Contract:** `:handler` MCP callbacks run concurrently and must return the handler state unchanged. A changed state is logged, emitted as `[:arbor_acp, :mcp, :handler, :state_discarded]`, and discarded; the MCP request is still answered. Disconnect does not start a provider callback that has not already entered. Closing a session also covers a server id an in-flight load has reserved before the session owns any id, and that load fails with `mcp_server_id_in_use` instead of reopening the session.
 - Fix: the ACP client rejected `notice` and context compaction session updates as invalid even when the application had opted in with `clientCapabilities.session.notices` or `.compaction`. It now delivers them, accepting and salvaging them as the ACP SDK 1.9.0 v1 deserializer does (invalid optional values removed, invalid summary items skipped); without the capability it still drops them.
 - Fix: MCP-over-ACP notifications are bound to the in-flight request's token. Provider timeouts stop the provider process. Lifecycle calls keep ownership of the server ids they touch. The agent uses the capabilities it sent. Oversized provider results return a visible error. Omitted ACP servers appear on the session result. Empty SDK string ids are accepted.
 

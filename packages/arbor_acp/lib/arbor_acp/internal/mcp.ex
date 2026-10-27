@@ -6,9 +6,11 @@ defmodule Arbor.ACP.Internal.Mcp do
   # A server id is pending for one in-flight session call or bound to one live
   # session. A lifecycle call that reuses a session also holds every id that
   # session owns until the call commits or aborts, so a concurrent call cannot
-  # release or claim those ids. Closing a session while one of those holds is
-  # active records the release and applies it when the hold commits or aborts,
-  # instead of freeing the ids for another session. The hold does not change
+  # release or claim those ids. A new id reserved for that session is tagged
+  # with the session even before the session owns anything. Closing a session
+  # while one of those holds or reservations is active records the release and
+  # applies it when the call commits or aborts, instead of freeing the ids for
+  # another session or letting the call bind them. The hold does not change
   # the bound session:
   # in-flight MCP requests keep working. An inner request id is unique per
   # server while that request is in flight, and its ref is the notify token.
@@ -37,7 +39,8 @@ defmodule Arbor.ACP.Internal.Mcp do
 
   @type server :: %{
           required(:owner) => {:pending, term()} | {:session, String.t()},
-          optional(:held_by) => term()
+          optional(:held_by) => term(),
+          optional(:for_session) => String.t()
         }
 
   @type t :: %__MODULE__{
@@ -144,7 +147,7 @@ defmodule Arbor.ACP.Internal.Mcp do
 
     Enum.reduce(sessions, {table, []}, fn session_id, {table, acc} ->
       if release_pending?(table, session_id) do
-        {table, dropped} = drop_session(forget_release(table, session_id), session_id)
+        {table, dropped} = drop_session(maybe_forget_release(table, session_id), session_id)
         {table, acc ++ dropped}
       else
         {table, acc}
@@ -164,7 +167,7 @@ defmodule Arbor.ACP.Internal.Mcp do
   def commit_existing(%__MODULE__{} = table, token, session_id, ids) when is_list(ids) do
     if release_pending?(table, session_id) do
       table = clear_pending(table, token)
-      drop_session(forget_release(table, session_id), session_id)
+      drop_session(maybe_forget_release(table, session_id), session_id)
     else
       table = clear_pending(table, token)
       removed = MapSet.difference(servers_for(table, session_id), MapSet.new(ids))
@@ -398,7 +401,7 @@ defmodule Arbor.ACP.Internal.Mcp do
             Map.put(servers, id, Map.put(server, :held_by, token))
 
           nil ->
-            Map.put(servers, id, %{owner: {:pending, token}})
+            Map.put(servers, id, %{owner: {:pending, token}, for_session: session_id})
 
           _taken ->
             servers
@@ -419,9 +422,14 @@ defmodule Arbor.ACP.Internal.Mcp do
     %{table | servers: servers}
   end
 
+  # Owned ids held by a lifecycle call, and ids that call reserved for this
+  # session before they were bound. A `session/new` reservation has no session
+  # yet, so it does not block a close.
   defp release_blocked?(table, session_id) do
-    Enum.any?(servers_for(table, session_id), fn id ->
-      match?(%{held_by: _token}, Map.get(table.servers, id))
+    Enum.any?(table.servers, fn
+      {_id, %{held_by: _token, owner: {:session, ^session_id}}} -> true
+      {_id, %{owner: {:pending, _token}, for_session: ^session_id}} -> true
+      _other -> false
     end)
   end
 
@@ -429,9 +437,16 @@ defmodule Arbor.ACP.Internal.Mcp do
     table.servers
     |> Enum.flat_map(fn
       {_id, %{held_by: ^token, owner: {:session, session_id}}} -> [session_id]
+      {_id, %{owner: {:pending, ^token}, for_session: session_id}} -> [session_id]
       _other -> []
     end)
     |> Enum.uniq()
+  end
+
+  # Another in-flight call may still have reserved an id for this session.
+  # Forgetting the close then would let that call bind the id and reopen it.
+  defp maybe_forget_release(table, session_id) do
+    if release_blocked?(table, session_id), do: table, else: forget_release(table, session_id)
   end
 
   defp forget_release(table, session_id) do

@@ -14,17 +14,49 @@ defmodule Arbor.ACP.ClientMcpTest do
 
     @impl true
     def init(opts) do
-      {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid), seen: 0, updates: 0}}
+      {:ok,
+       %{
+         test_pid: Keyword.fetch!(opts, :test_pid),
+         seen: 0,
+         updates: 0,
+         block_updates: Keyword.get(opts, :block_updates, false)
+       }}
     end
 
     @impl true
+    def handle_session_update(_session_id, _update, %{block_updates: true} = state) do
+      send(state.test_pid, {:update_blocking, self()})
+
+      receive do
+        :release_update ->
+          state = %{state | updates: state.updates + 1, block_updates: false}
+          send(state.test_pid, {:session_updated, state.updates})
+          {:ok, state}
+      end
+    end
+
     def handle_session_update(_session_id, _update, state) do
-      {:ok, %{state | updates: state.updates + 1}}
+      state = %{state | updates: state.updates + 1}
+      send(state.test_pid, {:session_updated, state.updates})
+      {:ok, state}
     end
 
     @impl true
     def handle_permission_request(_session_id, _tool_call, _options, state) do
+      send(state.test_pid, {:permission, self()})
       {:ok, %{"outcome" => "cancelled"}, state}
+    end
+
+    @impl true
+    def handle_file_read(_session_id, _path, _opts, state) do
+      send(state.test_pid, {:file_read, self()})
+      {:ok, "contents", state}
+    end
+
+    @impl true
+    def handle_terminal_request(_method, _params, _id, state) do
+      send(state.test_pid, {:terminal, self()})
+      {:ok, %{"terminalId" => "term-1"}, state}
     end
 
     @impl true
@@ -47,9 +79,22 @@ defmodule Arbor.ACP.ClientMcpTest do
 
           receive do
             :release ->
-              {:ok, %{"n" => state.seen, "updates" => state.updates},
-               %{state | seen: state.seen + 1}}
+              {:ok, %{"n" => state.seen, "updates" => state.updates}, state}
           end
+
+        "mutate" ->
+          {:ok, %{"n" => state.seen}, %{state | seen: state.seen + 1}}
+
+        "outer" ->
+          send(state.test_pid, {:outer, self()})
+
+          receive do
+            :release -> {:ok, %{"nested" => true}, state}
+          end
+
+        "inner" ->
+          send(state.test_pid, {:inner, self()})
+          {:ok, %{"inner" => true}, state}
 
         "fail" ->
           {:error, :nope, state}
@@ -191,7 +236,7 @@ defmodule Arbor.ACP.ClientMcpTest do
 
     id = agent_mcp(ctx, "app", "a2", "tools/list")
     assert_receive {:handler_mcp, "sess-1", _request, _context}
-    assert %{"id" => ^id, "result" => %{"result" => %{"n" => 1}}} = await_frame()
+    assert %{"id" => ^id, "result" => %{"result" => %{"n" => 0}}} = await_frame()
 
     id = agent_mcp(ctx, "app", "a3", "fail")
     assert_receive {:handler_mcp, "sess-1", _request, _context}
@@ -757,7 +802,7 @@ defmodule Arbor.ACP.ClientMcpTest do
     assert %{"id" => ^id, "result" => %{"result" => %{"n" => 0}}} = await_frame()
   end
 
-  test "concurrent handler requests keep every returned state" do
+  test "handler callbacks run concurrently and a changed state is discarded" do
     ctx =
       boot(
         handler: McpHandler,
@@ -770,25 +815,124 @@ defmodule Arbor.ACP.ClientMcpTest do
     first_id = agent_mcp(ctx, "app", "c1", "count")
     assert_receive {:counting, 0, 0, first}
     second_id = agent_mcp(ctx, "app", "c2", "count")
-    await_handler_request_queued(ctx)
+    assert_receive {:counting, 0, 0, second}
+    assert map_size(handler_runner(ctx).mcp_workers) == 2
     send(first, :release)
-    assert_receive {:counting, 1, 0, second}
     send(second, :release)
 
     assert %{"id" => ^first_id, "result" => %{"result" => %{"n" => 0, "updates" => 0}}} =
              await_frame()
 
-    assert %{"id" => ^second_id, "result" => %{"result" => %{"n" => 1, "updates" => 0}}} =
+    assert %{"id" => ^second_id, "result" => %{"result" => %{"n" => 0, "updates" => 0}}} =
              await_frame()
 
-    third_id = agent_mcp(ctx, "app", "c3", "tools/list")
+    handler_id = "mcp-state-#{System.unique_integer([:positive])}"
+    parent = self()
+
+    :telemetry.attach(
+      handler_id,
+      [:arbor_acp, :mcp, :handler, :state_discarded],
+      fn event, measurements, metadata, _config ->
+        send(parent, {:discarded, event, measurements, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      capture_log(fn ->
+        mutated = agent_mcp(ctx, "app", "c3", "mutate")
+        assert_receive {:handler_mcp, "sess-count", %{"method" => "mutate"}, context}
+        assert context.session_id == "sess-count"
+
+        assert %{"id" => ^mutated, "result" => %{"result" => %{"n" => 0}}} = await_frame()
+        send(parent, :mutated)
+      end)
+
+    assert_receive :mutated
+
+    assert_receive {:discarded, [:arbor_acp, :mcp, :handler, :state_discarded], %{count: 1},
+                    metadata}
+
+    assert metadata.session_id_hash == LogSummary.fingerprint("sess-count")
+    refute Map.has_key?(metadata, :state)
+    assert log =~ "changed state"
+    refute log =~ "sess-count"
+
+    third_id = agent_mcp(ctx, "app", "c4", "tools/list")
     assert_receive {:handler_mcp, "sess-count", %{"method" => "tools/list"}, _context}
-    assert %{"id" => ^third_id, "result" => %{"result" => %{"n" => 2}}} = await_frame()
+    assert %{"id" => ^third_id, "result" => %{"result" => %{"n" => 0}}} = await_frame()
   end
 
-  test "a session update during a handler request does not discard that request's state" do
+  test "a nested handler request runs while the outer callback is waiting" do
     ctx =
       boot(
+        handler: McpHandler,
+        handler_opts: [test_pid: self()],
+        mcp_providers: %{"app" => :handler}
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-nested")
+    outer_id = agent_mcp(ctx, "app", "outer", "outer")
+    assert_receive {:outer, outer}
+    inner_id = agent_mcp(ctx, "app", "inner", "inner")
+    assert_receive {:inner, _inner}
+    send(outer, :release)
+
+    assert %{"id" => ^inner_id, "result" => %{"result" => %{"inner" => true}}} = await_frame()
+    assert %{"id" => ^outer_id, "result" => %{"result" => %{"nested" => true}}} = await_frame()
+  end
+
+  test "permission, file, and terminal callbacks run during a handler request" do
+    ctx =
+      boot(
+        handler: McpHandler,
+        handler_opts: [test_pid: self()],
+        mcp_providers: %{"app" => :handler}
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-side")
+    id = agent_mcp(ctx, "app", "slow", "block")
+    assert_receive {:blocking, worker}
+
+    permission_id =
+      send_agent_request(ctx, "session/request_permission", %{
+        "sessionId" => "sess-side",
+        "toolCall" => %{"toolCallId" => "call-1"},
+        "options" => [%{"optionId" => "reject", "name" => "Reject", "kind" => "reject_once"}]
+      })
+
+    file_id =
+      send_agent_request(ctx, "fs/read_text_file", %{
+        "sessionId" => "sess-side",
+        "path" => "/tmp/note.txt"
+      })
+
+    terminal_id =
+      send_agent_request(ctx, "terminal/create", %{
+        "sessionId" => "sess-side",
+        "command" => "echo"
+      })
+
+    assert_receive {:permission, _permission}
+    assert_receive {:file_read, _file}
+    assert_receive {:terminal, _terminal}
+    assert_receive {:from_client, %{"id" => ^permission_id}}, 5_000
+
+    assert_receive {:from_client, %{"id" => ^file_id, "result" => %{"content" => "contents"}}},
+                   5_000
+
+    assert_receive {:from_client, %{"id" => ^terminal_id}}, 5_000
+
+    send(worker, :release)
+    assert %{"id" => ^id, "result" => %{"result" => %{"released" => true}}} = await_frame()
+  end
+
+  test "a session update during a handler request is applied before that request returns" do
+    ctx =
+      boot(
+        close: false,
         handler: McpHandler,
         handler_opts: [test_pid: self()],
         mcp_providers: %{"app" => :handler}
@@ -797,54 +941,43 @@ defmodule Arbor.ACP.ClientMcpTest do
     open_session(ctx, [acp("App", "app")], "sess-update")
     id = agent_mcp(ctx, "app", "c1", "count")
     assert_receive {:counting, 0, 0, worker}
+    assert await_mcp_worker(ctx.client) == worker
 
     send_session_chunk(ctx, "sess-update")
-    runner = await_inbound_settled(ctx)
-    assert deferred_len(runner) >= 1 or runner.handler_state.updates >= 1
-    send(worker, :release)
+    assert_receive {:session_updated, 1}
 
-    assert %{"id" => ^id, "result" => %{"result" => %{"n" => 0, "updates" => 0}}} = await_frame()
+    monitor = Process.monitor(worker)
+    assert :ok = Client.end_session(ctx.client, "sess-update")
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}
+    refute_receive {:session_updated, _}
+    assert_cancelled(await_frame(), id)
 
     next_id = agent_mcp(ctx, "app", "c2", "count")
-    assert_receive {:counting, 1, 1, next}
-    send(next, :release)
-
-    assert %{"id" => ^next_id, "result" => %{"result" => %{"n" => 1, "updates" => 1}}} =
-             await_frame()
+    assert_unknown_server(await_frame(), next_id)
   end
 
-  test "session updates queued behind a handler request still hit the mailbox cap" do
+  test "session updates hit the mailbox cap while a handler callback is running" do
     ctx =
       boot(
         handler: McpHandler,
-        handler_opts: [test_pid: self()],
-        mcp_providers: %{"app" => :handler},
+        handler_opts: [test_pid: self(), block_updates: true],
         max_update_queue: 2
       )
 
-    open_session(ctx, [acp("App", "app")], "sess-cap")
-    id = agent_mcp(ctx, "app", "c1", "count")
-    assert_receive {:counting, 0, 0, worker}
+    open_session(ctx, [], "sess-cap")
+    send_session_chunk(ctx, "sess-cap")
+    assert_receive {:update_blocking, pid}
 
     send_session_chunk(ctx, "sess-cap")
-    assert deferred_len(await_inbound_settled(ctx)) == 1
-
     send_session_chunk(ctx, "sess-cap")
-    assert deferred_len(await_inbound_settled(ctx)) == 2
-
     send_session_chunk(ctx, "sess-cap")
-    assert deferred_len(await_inbound_settled(ctx)) == 2
+    await_handler_mailbox(ctx, 2)
 
-    send(worker, :release)
-
-    assert %{"id" => ^id, "result" => %{"result" => %{"n" => 0, "updates" => 0}}} = await_frame()
-
-    next_id = agent_mcp(ctx, "app", "c2", "count")
-    assert_receive {:counting, 1, 2, next}
-    send(next, :release)
-
-    assert %{"id" => ^next_id, "result" => %{"result" => %{"n" => 1, "updates" => 2}}} =
-             await_frame()
+    send(pid, :release_update)
+    assert_receive {:session_updated, 1}
+    assert_receive {:session_updated, 2}
+    assert_receive {:session_updated, 3}
+    refute_receive {:session_updated, _}
   end
 
   test "disconnect stops a blocked module provider and a blocked handler provider" do
@@ -875,6 +1008,54 @@ defmodule Arbor.ACP.ClientMcpTest do
     handler_monitor = Process.monitor(handler_worker)
     assert :ok = Client.disconnect(ctx.client)
     assert_receive {:DOWN, ^handler_monitor, :process, ^handler_worker, :killed}
+  end
+
+  test "disconnect does not start a handler callback waiting in the mailbox" do
+    ctx =
+      boot(
+        handler: McpHandler,
+        handler_opts: [test_pid: self(), block_updates: true],
+        mcp_providers: %{"app" => :handler},
+        handler_request_timeout: 60_000
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-queued")
+    send_session_chunk(ctx, "sess-queued")
+    assert_receive {:update_blocking, update_pid}
+
+    _id = agent_mcp(ctx, "app", "queued", "tools/list")
+    await_mcp_admitted(ctx)
+
+    provider = provider_loop(self())
+    :ok = Client.register_mcp_provider(ctx.client, "live", provider)
+    live = Process.monitor(provider)
+
+    assert :ok = Client.disconnect(ctx.client)
+    send(update_pid, :release_update)
+    refute_receive {:handler_mcp, _session_id, _request, _context}, 500
+    refute_receive {:DOWN, ^live, :process, ^provider, _reason}
+    assert Process.alive?(provider)
+  end
+
+  test "end_session during a load of a session that owns no ids does not reopen it" do
+    provider = provider_loop(self())
+    ctx = boot(close: false, mcp_providers: %{"tools" => provider})
+    open_session(ctx, [])
+
+    task =
+      Task.async(fn ->
+        Client.load_session(ctx.client, "sess-1", "/tmp", mcp_servers: [acp("Tools", "tools")])
+      end)
+
+    request = await_frame()
+    assert request["method"] == "session/load"
+    assert :ok = Client.end_session(ctx.client, "sess-1")
+    send_result(ctx.outbound, request["id"], %{})
+
+    assert {:error, {:invalid_params, :mcp_server_id_in_use}} = Task.await(task, 5_000)
+    refute Map.has_key?(:sys.get_state(ctx.client).sessions, "sess-1")
+
+    open_session(ctx, [acp("Tools", "tools")], "sess-2")
   end
 
   test "end_session during a load does not free a held server id" do
@@ -1071,72 +1252,76 @@ defmodule Arbor.ACP.ClientMcpTest do
   # The memory peer hands a frame to the client receiver before `send_json/2`
   # returns. The receiver is parked on the next read only after the client
   # has acked that frame, so this waits out that handoff.
-  # The second `:handler` request must be sitting in the runner queue, with
-  # the first still the only worker. A single `:sys.get_state/1` can run
-  # before that frame has been admitted.
-  defp await_handler_request_queued(ctx, attempts \\ 80) do
+  defp await_mcp_admitted(ctx, attempts \\ 40) do
     client = :sys.get_state(ctx.client)
-    runner = :sys.get_state(client.handler_pid)
 
     pending =
       Enum.count(client.pending_agent_requests, fn {_ref, request} ->
         request.kind == :mcp
       end)
 
-    workers = map_size(runner.mcp_workers)
+    # The runner is blocked inside the session-update callback, so a system
+    # call would wait behind that receive. The cast is visible in its mailbox.
+    queued = queue_len(client.handler_pid)
 
     cond do
-      pending == 2 and workers > 1 ->
-        flunk("both handler requests ran at once")
-
-      pending == 2 and workers == 1 and deferred_len(runner) >= 1 ->
+      pending == 1 and queued >= 1 ->
         :ok
 
       attempts > 0 ->
         receive do
         after
-          20 -> await_handler_request_queued(ctx, attempts - 1)
+          20 -> await_mcp_admitted(ctx, attempts - 1)
         end
 
       true ->
-        flunk(
-          "second handler request was not queued behind the first " <>
-            "(pending=#{pending}, workers=#{workers}, deferred=#{deferred_len(runner)})"
-        )
+        flunk("handler request was not waiting to start (pending=#{pending}, queued=#{queued})")
     end
   end
 
-  defp await_inbound_settled(ctx, attempts \\ 40) do
+  defp await_handler_mailbox(ctx, length, attempts \\ 40) do
     client = :sys.get_state(ctx.client)
-    runner = :sys.get_state(client.handler_pid)
     peer = :sys.get_state(ctx.peer)
     parked? = not :queue.is_empty(peer.waiters.client)
+    queued = queue_len(client.handler_pid)
 
-    if parked? and queue_len(ctx.client) == 0 and queue_len(client.handler_pid) == 0 do
-      runner
+    if parked? and queue_len(ctx.client) == 0 and queued == length do
+      :ok
     else
       if attempts > 0 do
         receive do
         after
-          20 -> await_inbound_settled(ctx, attempts - 1)
+          20 -> await_handler_mailbox(ctx, length, attempts - 1)
         end
       else
-        flunk("inbound frame was not processed")
+        flunk("handler mailbox did not settle at #{length} (queued=#{queued})")
       end
     end
+  end
+
+  defp handler_runner(ctx) do
+    :sys.get_state(:sys.get_state(ctx.client).handler_pid)
+  end
+
+  # One id source. Protocol.encode_* draws from a different counter and can
+  # reuse an id this test already gave an in-flight `mcp/message`.
+  defp send_agent_request(ctx, method, params) do
+    id = System.unique_integer([:positive])
+
+    send_json(ctx.outbound, %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "method" => method,
+      "params" => params
+    })
+
+    id
   end
 
   defp queue_len(pid) do
     case Process.info(pid, :message_queue_len) do
       {:message_queue_len, length} -> length
       _dead -> 0
-    end
-  end
-
-  defp deferred_len(state) do
-    case Map.get(state, :deferred) do
-      queue when is_tuple(queue) -> :queue.len(queue)
-      _other -> 0
     end
   end
 

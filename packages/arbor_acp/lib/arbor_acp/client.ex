@@ -914,6 +914,10 @@ defmodule Arbor.ACP.Client do
     result
   end
 
+  def handle_info({:transport_message, _raw_message}, %{status: :disconnected} = state) do
+    {:noreply, state}
+  end
+
   def handle_info({:transport_message, raw_message}, state)
       when is_binary(raw_message) and byte_size(raw_message) > state.max_frame_bytes do
     Logger.warning("ACP client closed an oversized inbound frame",
@@ -1810,6 +1814,8 @@ defmodule Arbor.ACP.Client do
   end
 
   defp reply_all_pending(error, state) do
+    refuse_handler_mcp(state)
+
     for pending <- PendingRequests.values(state.pending_requests) do
       case pending do
         {from, _tag, monitor_ref, timer_ref} ->
@@ -2572,7 +2578,14 @@ defmodule Arbor.ACP.Client do
 
   defp path_within_roots?(_path, _roots), do: false
 
+  defp refuse_handler_mcp(%{handler_pid: pid}) when is_pid(pid),
+    do: Arbor.ACP.Client.HandlerRunner.refuse_mcp(pid)
+
+  defp refuse_handler_mcp(_state), do: :ok
+
   defp do_disconnect(state) do
+    refuse_handler_mcp(state)
+
     if state.transport_actor_monitor,
       do: Process.demonitor(state.transport_actor_monitor, [:flush])
 

@@ -163,9 +163,12 @@ defmodule Arbor.ACP.Client.Handler do
   element: `{:ok, json, state}`, `{:mcp_error, error_map, state}`, or
   `{:error, reason, state}`.
 
-  `:handler` callbacks run one at a time, and the state this callback
-  returns is stored. A session update that arrives while it is running is
-  applied after it returns. The design note is `docs/MCP_OVER_ACP.md`.
+  Callbacks run concurrently with each other and with the client's other
+  handler callbacks. The client handler has no stateful mode. Return `state`
+  unchanged. A changed state is a contract violation: it is logged at error
+  level, emitted as `[:arbor_acp, :mcp, :handler, :state_discarded]`, and
+  discarded. The MCP request is still answered. The design note is
+  `docs/MCP_OVER_ACP.md`.
   """
   @callback handle_mcp_request(session_id :: String.t(), request :: map(), map(), state()) ::
               {:ok, term(), state()}

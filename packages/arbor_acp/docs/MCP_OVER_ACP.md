@@ -108,11 +108,19 @@ Outcomes:
 - `{:error, reason}` — outer JSON-RPC error, `-32603`.
 
 The handler form also returns the handler state as the last element.
-`:handler` callbacks run one at a time, and the state they return is kept.
-A session update that arrives during a callback runs after that callback
-commits. Module providers leave handler state unchanged and run
-concurrently. Disconnect stops an in-flight module or `:handler` provider
-process. A pid provider stays the caller's process.
+`:handler` callbacks run concurrently, like the client's other handler
+callbacks, and like a module provider. The client handler has no stateful
+execution mode. A callback must return the handler state it was given.
+Returning a changed state is a contract violation: the client logs it at
+error level, emits `[:arbor_acp, :mcp, :handler, :state_discarded]` with
+`%{count: 1}` and `%{session_id_hash: hash}`, answers the MCP request, and
+discards the change. The returned state and the handler state are not in
+the log or the telemetry metadata. Permission, file, and terminal callbacks
+are not held behind an MCP callback. Module providers leave handler state
+unchanged. `Client.disconnect/1` does not start a provider callback that has
+not already entered, including one still waiting in the handler mailbox, and
+it stops an in-flight module or `:handler` provider process. A pid provider
+stays the caller's process.
 
 While the request is in flight, the provider sends notifications with
 `Arbor.ACP.Client.mcp_notify/5`:
@@ -181,12 +189,18 @@ time (SDK requirement).
   The agent answers the same case with JSON-RPC `-32602`.
 - `session/load` and `session/resume` may repeat the ids already bound to that
   same session. The call holds every id that session owns, including ids the
-  new list removes, until it commits or aborts. Another lifecycle call that
+  new list removes, until it commits or aborts. An id the call reserves for
+  that session and has not bound yet is part of the same hold, including the
+  first id of a session that owns none. Another lifecycle call that
   needs one of those ids gets
   `{:error, {:invalid_params, :mcp_server_id_in_use}}`. In-flight MCP requests
   on a held id continue, because the id stays bound to the session. Ids
   removed from the new list are released when the call succeeds. A failed
   load leaves the previous binding in place.
+- Closing a session also covers that hold. The in-flight load, resume, or
+  fork then fails with `{:error, {:invalid_params, :mcp_server_id_in_use}}`,
+  releases the reservation, and does not put the session back. A `session/new`
+  reservation has no session id yet, so a close does not cancel it.
 - `session/new` and `session/fork` bind ids to the **new** session id. A fork
   cannot reuse an id the source session still holds. The caller supplies new
   ids for the forked session.

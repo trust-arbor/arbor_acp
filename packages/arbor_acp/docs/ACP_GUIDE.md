@@ -240,7 +240,11 @@ that session. It follows the capabilities the agent actually sent, including
 a `handle_initialize/3` override. Register the provider with
 `Client.register_mcp_provider/3` or the `mcp_providers` start option.
 `Client.mcp_notify/5` sends a notification for a request that is still in
-flight when called with that request's `:token`. The design note is
+flight when called with that request's `:token`. A `:handler` provider
+callback runs concurrently and must return its handler state unchanged. A
+changed state is logged, emitted as
+`[:arbor_acp, :mcp, :handler, :state_discarded]`, and discarded. The client
+handler has no stateful execution mode. The design note is
 [MCP-over-ACP](MCP_OVER_ACP.md).
 
 Serving an Arbor MCP server through a provider, so its tools are available on

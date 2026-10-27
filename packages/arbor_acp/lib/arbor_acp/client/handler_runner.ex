@@ -3,15 +3,16 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
   use GenServer
 
+  alias Arbor.RPC.LogSummary
+
   require Logger
 
   defstruct [
     :handler_mod,
     :handler_state,
     :owner,
-    mcp_workers: %{},
-    mcp_handler_active: nil,
-    deferred: :queue.new()
+    :mcp_gate,
+    mcp_workers: %{}
   ]
 
   def start_link(handler_mod, handler_opts, owner, scope \\ nil) do
@@ -55,14 +56,11 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   end
 
   defp update_mailbox_below_limits?(pid, count_limit, byte_limit, incoming_bytes) do
-    {deferred_count, deferred_bytes} = deferred_account(pid)
-
-    with {:message_queue_len, length} when length + deferred_count < count_limit <-
+    with {:message_queue_len, length} when length < count_limit <-
            Process.info(pid, :message_queue_len),
-         {:messages, messages} when length(messages) + deferred_count < count_limit <-
+         {:messages, messages} when length(messages) < count_limit <-
            Process.info(pid, :messages) do
-      queued_bytes = queued_update_bytes(messages, byte_limit) + deferred_bytes
-      incoming_bytes <= byte_limit - queued_bytes
+      incoming_bytes <= byte_limit - queued_update_bytes(messages, byte_limit)
     else
       _full_or_closed -> false
     end
@@ -131,6 +129,29 @@ defmodule Arbor.ACP.Client.HandlerRunner do
     GenServer.cast(pid, {:mcp_request, ref, provider, context, params})
   end
 
+  # Closes the MCP gate without waiting behind casts already in the mailbox.
+  # A provider callback that has not entered `run_mcp/5` does not start.
+  @doc false
+  def refuse_mcp(pid) when is_pid(pid) do
+    case mcp_gate(pid) do
+      nil -> :ok
+      gate -> :atomics.put(gate, 1, 0)
+    end
+  end
+
+  defp mcp_gate(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} ->
+        case List.keyfind(dict, :acp_mcp_gate, 0) do
+          {:acp_mcp_gate, gate} -> gate
+          _missing -> nil
+        end
+
+      _dead ->
+        nil
+    end
+  end
+
   # Each of these has a legacy arity and a context-aware arity that also takes
   # the decoded JSON-RPC message. Both are optional on the behaviour so a
   # handler can implement just one, but it must export at least one of each
@@ -155,7 +176,17 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   defp init_handler(handler_mod, handler_opts, owner) do
     case safe_call(fn -> handler_mod.init(handler_opts) end) do
       {:ok, {:ok, handler_state}} ->
-        {:ok, %__MODULE__{handler_mod: handler_mod, handler_state: handler_state, owner: owner}}
+        gate = :atomics.new(1, signed: false)
+        :atomics.put(gate, 1, 1)
+        Process.put(:acp_mcp_gate, gate)
+
+        {:ok,
+         %__MODULE__{
+           handler_mod: handler_mod,
+           handler_state: handler_state,
+           owner: owner,
+           mcp_gate: gate
+         }}
 
       {:ok, {:error, reason}} ->
         {:stop, {:handler_init_failed, reason}}
@@ -177,30 +208,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   end
 
   @impl true
-  def handle_cast(message, state) do
-    if defer_for_handler?(message, state) do
-      {:noreply, enqueue_deferred(state, message)}
-    else
-      cast_message(message, state)
-    end
-  end
-
-  # A `:handler` MCP callback runs off this process so a timeout can stop it.
-  # It still owns handler state until it returns: other state-changing casts
-  # wait, then run against the state it returned. Module providers do not
-  # change handler state and keep running.
-  defp defer_for_handler?(_message, %{mcp_handler_active: nil}), do: false
-
-  defp defer_for_handler?({:mcp_request, _ref, provider, _context, _params}, _state)
-       when provider != :handler,
-       do: false
-
-  defp defer_for_handler?(_message, %{mcp_handler_active: ref}) when is_reference(ref), do: true
-
-  defp enqueue_deferred(state, message) do
-    note_deferred(message, :add)
-    %{state | deferred: :queue.in(message, state.deferred)}
-  end
+  def handle_cast(message, state), do: cast_message(message, state)
 
   defp cast_message({:session_update, session_id, update, message}, state) do
     case safe_call(fn ->
@@ -393,9 +401,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
       {%{monitor: monitor}, workers} ->
         Process.demonitor(monitor, [:flush])
         state = %{state | mcp_workers: workers}
-        state = apply_mcp_state(state, new_state)
-        # Commit queued handler work before the client observes this result.
-        state = release_handler_turn(state, ref)
+        _ = apply_mcp_state(new_state)
         send(state.owner, {:acp_handler_result, ref, {:mcp, outcome}})
         {:noreply, state}
     end
@@ -408,7 +414,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
       {{ref, _worker}, state} ->
         send(state.owner, {:acp_handler_result, ref, {:mcp, {:error, {:exit, reason}}}})
-        {:noreply, release_handler_turn(state, ref)}
+        {:noreply, state}
     end
   end
 
@@ -437,98 +443,49 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
   # Unlinked so a stalled or crashed provider cannot take the runner down.
   # The client kills the worker when its handler timeout, a cancel, or a
-  # disconnect fires. `:handler` callbacks run one at a time and the state
-  # they return is stored. Module providers do not change handler state.
-  # In-flight workers stay bounded by the client's pending-request cap.
+  # disconnect fires. `:handler` and module callbacks run concurrently and
+  # do not change handler state. A callback that has not entered after
+  # `refuse_mcp/1` does not start. In-flight workers stay bounded by the
+  # client's pending-request cap.
   defp start_mcp_worker(state, ref, provider, context, params) do
+    if mcp_open?(state.mcp_gate) do
+      launch_mcp_worker(state, ref, provider, context, params)
+    else
+      send(state.owner, {:acp_handler_result, ref, {:mcp, {:error, :disconnected}}})
+      {:noreply, state}
+    end
+  end
+
+  defp launch_mcp_worker(state, ref, provider, context, params) do
     runner = self()
     owner = state.owner
     handler_mod = state.handler_mod
     snapshot = state.handler_state
+    gate = state.mcp_gate
 
     {:ok, pid} =
       Task.start(fn ->
         send(owner, {:acp_mcp_worker, ref, self()})
-        {outcome, new_state} = run_mcp(provider, context, params, handler_mod, snapshot)
-        send(runner, {:mcp_worker_done, ref, outcome, new_state})
+
+        if mcp_open?(gate) do
+          {outcome, new_state} = run_mcp(provider, context, params, handler_mod, snapshot)
+          send(runner, {:mcp_worker_done, ref, outcome, new_state})
+        else
+          send(runner, {:mcp_worker_done, ref, {:error, :disconnected}, :unchanged})
+        end
       end)
 
     monitor = Process.monitor(pid)
 
-    state = %{
-      state
-      | mcp_workers: Map.put(state.mcp_workers, ref, %{pid: pid, monitor: monitor})
-    }
-
-    state = if provider == :handler, do: %{state | mcp_handler_active: ref}, else: state
-    {:noreply, state}
+    {:noreply,
+     %{state | mcp_workers: Map.put(state.mcp_workers, ref, %{pid: pid, monitor: monitor})}}
   end
 
-  defp apply_mcp_state(state, :unchanged), do: state
-  defp apply_mcp_state(state, {:replace, new_state}), do: %{state | handler_state: new_state}
+  # Handler state is never replaced from an MCP callback. `:unchanged` is the
+  # only accepted outcome so a returned state cannot be stored by mistake.
+  defp apply_mcp_state(:unchanged), do: :ok
 
-  defp release_handler_turn(state, ref) do
-    if state.mcp_handler_active == ref do
-      drain(%{state | mcp_handler_active: nil})
-    else
-      state
-    end
-  end
-
-  defp drain(state) do
-    case :queue.out(state.deferred) do
-      {:empty, _queue} ->
-        state
-
-      {{:value, message}, queue} ->
-        note_deferred(message, :remove)
-        {:noreply, state} = cast_message(message, %{state | deferred: queue})
-
-        if is_reference(state.mcp_handler_active) do
-          state
-        else
-          drain(state)
-        end
-    end
-  end
-
-  defp note_deferred(message, direction) do
-    {count, bytes} = deferred_account(self())
-    size = deferred_bytes(message)
-
-    {count, bytes} =
-      case direction do
-        :add -> {count + 1, bytes + size}
-        :remove -> {max(count - 1, 0), max(bytes - size, 0)}
-      end
-
-    Process.put(:acp_mcp_deferred, {count, bytes})
-  end
-
-  defp deferred_account(pid) do
-    case Process.info(pid, :dictionary) do
-      {:dictionary, dict} ->
-        case List.keyfind(dict, :acp_mcp_deferred, 0) do
-          {:acp_mcp_deferred, {count, bytes}} when is_integer(count) and is_integer(bytes) ->
-            {count, bytes}
-
-          _missing ->
-            {0, 0}
-        end
-
-      _dead ->
-        {0, 0}
-    end
-  end
-
-  defp deferred_bytes({:session_update, _session_id, update, message}),
-    do: update_size(update, message)
-
-  defp deferred_bytes({:extension_notification, method, params}) do
-    :erlang.external_size({:"$gen_cast", {:extension_notification, method, params}})
-  end
-
-  defp deferred_bytes(_message), do: 0
+  defp mcp_open?(gate), do: :atomics.get(gate, 1) == 1
 
   defp pop_mcp_worker(state, monitor) do
     case Enum.find(state.mcp_workers, fn {_ref, worker} -> worker.monitor == monitor end) do
@@ -544,11 +501,23 @@ defmodule Arbor.ACP.Client.HandlerRunner do
     case safe_call(fn ->
            handler_mod.handle_mcp_request(context.session_id, params, context, handler_state)
          end) do
-      {:ok, {:ok, result, new_state}} -> {{:ok, result}, {:replace, new_state}}
-      {:ok, {:mcp_error, error, new_state}} -> {{:mcp_error, error}, {:replace, new_state}}
-      {:ok, {:error, reason, new_state}} -> {{:error, reason}, {:replace, new_state}}
-      {:ok, other} -> {{:error, {:invalid_return, other}}, :unchanged}
-      {:error, reason} -> {{:error, reason}, :unchanged}
+      {:ok, {:ok, result, new_state}} ->
+        discard_changed_state(handler_state, new_state, context)
+        {{:ok, result}, :unchanged}
+
+      {:ok, {:mcp_error, error, new_state}} ->
+        discard_changed_state(handler_state, new_state, context)
+        {{:mcp_error, error}, :unchanged}
+
+      {:ok, {:error, reason, new_state}} ->
+        discard_changed_state(handler_state, new_state, context)
+        {{:error, reason}, :unchanged}
+
+      {:ok, other} ->
+        {{:error, {:invalid_return, other}}, :unchanged}
+
+      {:error, reason} ->
+        {{:error, reason}, :unchanged}
     end
   end
 
@@ -560,6 +529,23 @@ defmodule Arbor.ACP.Client.HandlerRunner do
       {:ok, other} -> {{:error, {:invalid_return, other}}, :unchanged}
       {:error, reason} -> {{:error, reason}, :unchanged}
     end
+  end
+
+  defp discard_changed_state(handler_state, handler_state, _context), do: :ok
+
+  defp discard_changed_state(_handler_state, _new_state, context) do
+    session_id_hash = LogSummary.fingerprint(context.session_id)
+
+    Logger.error(
+      "ACP handler MCP callback returned a changed state and the change was discarded",
+      session_id_hash: session_id_hash
+    )
+
+    :telemetry.execute(
+      [:arbor_acp, :mcp, :handler, :state_discarded],
+      %{count: 1},
+      %{session_id_hash: session_id_hash}
+    )
   end
 
   defp safe_call(fun) do
