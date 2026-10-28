@@ -58,6 +58,11 @@ defmodule Arbor.ACP.Adapters.Codex do
     pending_auth: nil,
     sessions: %{},
     gateway_config: nil,
+    # The first native id the latest outbound translation used, and the
+    # native request a client response in it answered; see
+    # outbound_write_failed/3.
+    last_write_first_id: 1,
+    last_answered: nil,
     opts: []
   ]
 
@@ -226,15 +231,77 @@ defmodule Arbor.ACP.Adapters.Codex do
   def translate_outbound(msg, state) do
     with :ok <- NativeProtocol.validate_outbound(msg, state),
          :ok <- NativeProtocol.validate_overrides(msg, msg["method"]) do
-      do_translate_outbound(msg, state)
+      msg |> do_translate_outbound(state) |> remember_write(state)
     else
       {:error, reason} -> {:error, reason, state}
     end
   end
 
+  # The bridge writes what translate_outbound/2 returns. When it cannot, it
+  # answers the request with the error and calls this, so nothing the write
+  # was to start is tracked any more: Codex never received it, and a late
+  # reply for one of its ids would answer the request a second time. Native
+  # ids only grow, so the write's requests are the ids it took.
+  #
+  # Codex waits for the answers to its own requests, so when a client's
+  # answer cannot be written a small error on the same id takes its place.
   @impl true
-  def outbound_write_failed(%{"id" => id}, _reason, state), do: NativeProtocol.cancel(id, state)
-  def outbound_write_failed(_msg, _reason, state), do: state
+  def outbound_write_failed(message, reason, state) do
+    first = state.last_write_first_id
+    written = first..(state.next_id - 1)//1
+    pending = Map.reject(state.pending_requests, fn {id, _entry} -> id in written end)
+    state = retire_unsent_prompt(message, %{state | pending_requests: pending})
+
+    case state.last_answered do
+      nil ->
+        state
+
+      codex_id ->
+        error = "The ACP client's response could not be forwarded: #{inspect(reason)}"
+        {:write, Protocol.encode_error(codex_id, -32_603, error), %{state | last_answered: nil}}
+    end
+  end
+
+  defp retire_unsent_prompt(
+         %{"id" => acp_id, "method" => "session/prompt", "params" => params},
+         state
+       ) do
+    with {:ok, session_id} <- Sessions.fetch_id(params),
+         %{active_prompt_acp_id: ^acp_id} <- Map.get(state.sessions, session_id) do
+      Sessions.update(state, session_id, &Map.put(&1, :active_prompt_acp_id, nil))
+    else
+      _other -> state
+    end
+  end
+
+  defp retire_unsent_prompt(_message, state), do: state
+
+  # Only a translation that writes can fail to; the others leave the record
+  # of the last write alone.
+  defp writes?({:ok, data, _state}), do: data not in [:skip, :pending]
+  defp writes?({:pending_and_write, _data, _state}), do: true
+  defp writes?({:reply_and_write, _result, _data, _state}), do: true
+  defp writes?({:messages_and_write, _messages, _data, _state}), do: true
+  defp writes?({:messages_and_reply_and_write, _messages, _result, _data, _state}), do: true
+  defp writes?(_result), do: false
+
+  defp remember_write(result, before) do
+    last = tuple_size(result) - 1
+
+    case {writes?(result), elem(result, last)} do
+      {true, %__MODULE__{} = state} ->
+        answered =
+          Enum.find_value(before.pending_client_requests, fn {acp_id, entry} ->
+            if not Map.has_key?(state.pending_client_requests, acp_id), do: entry.codex_id
+          end)
+
+        state = %{state | last_write_first_id: before.next_id, last_answered: answered}
+        put_elem(result, last, state)
+
+      _other ->
+        result
+    end
+  end
 
   defp do_translate_outbound(%{"method" => "_arbor/codex/" <> _} = msg, state),
     do: NativeProtocol.outbound(msg, state)
@@ -350,19 +417,16 @@ defmodule Arbor.ACP.Adapters.Codex do
               |> Config.merge_thread_mode_wire_params(mode_id)
 
             {id, state} = next_request_id(state)
-
-            request =
-              Protocol.encode_request(
-                id,
-                Protocol.method(:thread_resume),
-                NativeProtocol.overrides(wire_params, params)
-              )
+            wire_params = NativeProtocol.overrides(wire_params, params)
+            request = Protocol.encode_request(id, Protocol.method(:thread_resume), wire_params)
 
             state =
               track_request(state, id, :thread_resume, acp_id, %{
+                session_id: session_id,
                 mode_id: mode_id,
                 additional_directories: additional_directories,
-                page_history: true
+                page_history: true,
+                resume_overrides: resume_overrides(wire_params)
               })
 
             {:ok, request, state}
@@ -398,19 +462,16 @@ defmodule Arbor.ACP.Adapters.Codex do
               |> Config.merge_thread_mode_wire_params(mode_id)
 
             {id, state} = next_request_id(state)
-
-            request =
-              Protocol.encode_request(
-                id,
-                Protocol.method(:thread_resume),
-                NativeProtocol.overrides(wire_params, params)
-              )
+            wire_params = NativeProtocol.overrides(wire_params, params)
+            request = Protocol.encode_request(id, Protocol.method(:thread_resume), wire_params)
 
             state =
               track_request(state, id, :thread_resume, acp_id, %{
+                session_id: session_id,
                 mode_id: mode_id,
                 additional_directories: additional_directories,
-                page_history: false
+                page_history: false,
+                resume_overrides: resume_overrides(wire_params)
               })
 
             {:ok, request, state}
@@ -1111,6 +1172,80 @@ defmodule Arbor.ACP.Adapters.Codex do
       response = Envelope.response(acp_id, session_result(session_id, result, session, state))
       {:messages, replay_messages ++ [response], state}
     end
+  end
+
+  # Codex persists a rollout only after the first prompt, so thread/resume of a
+  # thread started on this connection fails until then, while thread/read can
+  # still find it. thread/read does not subscribe, though: the fallback is only
+  # safe for a thread this connection started and has not closed, which is
+  # still subscribed. After session/close (thread/unsubscribe) Codex keeps an
+  # idle thread loaded for `thread_unload_delay`; attaching it through
+  # thread/read would leave the session without turn/completed events, so
+  # such a thread, like one this adapter does not own, keeps the resume error.
+  defp handle_typed_response(
+         :thread_resume,
+         %{acp_id: acp_id, meta: %{session_id: session_id} = meta},
+         {:error, %{"message" => message} = error},
+         state
+       )
+       when is_binary(message) and is_binary(session_id) do
+    if String.contains?(message, "no rollout found for thread id") and
+         subscribed_session?(state, session_id) do
+      {id, state} = next_request_id(state)
+
+      request =
+        Protocol.encode_request(id, Protocol.method(:thread_read), %{"threadId" => session_id})
+
+      state =
+        track_request(state, id, :thread_read_fallback, acp_id, %{
+          resume_meta: meta,
+          resume_error: error
+        })
+
+      {:skip_and_write, request, state}
+    else
+      {:messages, [error_response(acp_id, error)], state}
+    end
+  end
+
+  defp handle_typed_response(
+         :thread_read_fallback,
+         %{acp_id: acp_id, meta: %{resume_meta: resume_meta, resume_error: error}},
+         {:ok, %{"thread" => %{"id" => session_id} = thread}},
+         state
+       )
+       when session_id == resume_meta.session_id do
+    if subscribed_session?(state, session_id) do
+      # The resume overrides (the cwd the load authorized, the requested model)
+      # did not reach Codex, so the session carries them into later turns.
+      result =
+        %{
+          "thread" => thread,
+          "cwd" => thread["cwd"],
+          "model" => thread["model"],
+          "modelProvider" => thread["modelProvider"],
+          "reasoningEffort" => thread["reasoningEffort"]
+        }
+        |> Map.merge(Map.get(resume_meta, :resume_overrides, %{}))
+
+      handle_typed_response(
+        :thread_resume,
+        %{acp_id: acp_id, meta: %{resume_meta | page_history: false}},
+        {:ok, result},
+        state
+      )
+    else
+      {:messages, [error_response(acp_id, error)], state}
+    end
+  end
+
+  defp handle_typed_response(
+         :thread_read_fallback,
+         %{acp_id: acp_id, meta: %{resume_error: error}},
+         _reply,
+         state
+       ) do
+    {:messages, [error_response(acp_id, error)], state}
   end
 
   defp handle_typed_response(:thread_turns_list, %{acp_id: acp_id} = entry, reply, state) do
@@ -3044,6 +3179,16 @@ defmodule Arbor.ACP.Adapters.Codex do
     do: Keyword.get(state.opts, :model_provider) || System.get_env("MODEL_PROVIDER")
 
   defp resume_model_provider(state), do: model_provider(state) || "openai"
+
+  # The thread/resume parameters a session reads back from the resume result,
+  # for a resume answered through thread/read. `cwd` is ACP-owned and cannot
+  # be replaced by native overrides, so it is the authorized workspace.
+  defp resume_overrides(wire_params), do: Map.take(wire_params, ["cwd", "model", "serviceTier"])
+
+  defp subscribed_session?(state, session_id) do
+    Map.has_key?(state.sessions, session_id) and
+      not Map.has_key?(state.closed_sessions, session_id)
+  end
 
   # Auth helpers
 

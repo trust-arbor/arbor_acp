@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix: the AdapterBridge no longer crashes when `translate_outbound/2` answers `session/new`, `session/load` or `session/resume` with `:messages`, `:messages_and_write`, `:pending_and_write` or `:one_shot`. These forms leave the response to the adapter, which answers once the agent has set the session up; `{:ok, :skip, _}` is still answered with the synthesized session. The Pi adapter returns the first two when a setup cancels a running prompt.
+- Fix: the AdapterBridge accepts every `translate_outbound/2` result form on the other routes the Pi adapter uses: `session/set_config_option` takes `:messages`, `:one_shot` and a bare `{:error, reason}`; `authenticate` takes `:pending_and_write`, `:messages_and_reply_and_write` and `:one_shot`; and `session/close`, `session/delete`, `session/set_mode`, `session/set_model` and `logout` take `:one_shot`. A contract test drives every form through every such route, with its write accepted and rejected.
+- Fix: when the write accompanying a translation fails, the responses among its messages are still delivered: they answer other requests the adapter has already settled, such as prompts it cancelled. The notifications are still dropped with the write, and the request is answered with the write's error.
+- **Behaviour change:** the AdapterBridge calls `outbound_write_failed/3` after any failed outbound write, not only `:pending_and_write`, so an adapter can stop tracking a request the bridge answered with the write's error. That includes `initialize` and the `session/list` route of adapters without `list_sessions/2`, whose failed writes previously skipped the callback.
+- Fix: `session/list` through `translate_outbound/2` accepts every result form, with the session setups' rules: a write or other form without a result leaves the response to the adapter, and `{:ok, :skip, _}` is answered with an empty list.
+- `outbound_write_failed/3` may return `{:write, iodata, state}`, on every failed-write path, `:pending_and_write` included. The AdapterBridge writes that small replacement in place of a client response it could not write, such as an error answer on the same native id, so an agent waiting on the answer (often with no timeout) is not left stranded. If the replacement cannot be written either, the native connection is broken and the bridge closes it.
+- Fix: when the write for a client's response to an agent request fails, the AdapterBridge returns the error from `send_message/2` instead of pushing an error response under the response's id. Each side numbers its own requests, so that id could belong to one of the client's requests, which the error would then answer.
+- **Behaviour change:** the AdapterBridge never answers a `{:ok, :pending, state}` translation itself. `session/set_mode`, `session/set_model`, `session/set_config_option`, `session/close`, `session/delete` and `logout` synthesized a success for it, although the behaviour docs say an adapter-managed `:pending` request is answered later by the adapter.
 - Fix: `Arbor.ACP.Client` delivers `notice`, `compaction_update` and `compaction_summary_chunk` session updates to the handler and event listener when the application advertised `{}` for `clientCapabilities.session.notices` or `.compaction`. The client validated neither kind, so it rejected these updates as invalid and logged a warning, even after opting in. They are now validated the way the ACP SDK 1.9.0 v1 deserializer does it: an update whose required fields are missing or invalid is rejected; an invalid optional value (including the notification's `_meta`) is removed, and an invalid `summary` item is skipped, so one bad block does not lose a completed compaction. Without the matching capability the client drops them with a warning, because agents must not send them unadvertised. `Arbor.ACP.Types` documents the three update shapes and the client session capabilities.
 
 ## 1.0.0-rc.4 — 2026-10-26
@@ -22,7 +30,6 @@
 - **Security:** validate `Arbor.ACP.Registry.npx_command/1` npm package specifiers and separate them from `npx` flags with `--`, so a registry entry cannot inject `npx` options. An invalid specifier returns `{:error, :invalid_npx_package}`.
 - Add generic, bidirectional ACP extension requests/notifications, optional handler callbacks, bounded monitored subscriptions and standard session/prompt metadata.
 - Refresh published-RC installation guidance and consolidate current documentation.
-
 
 ## 1.0.0-rc.1 — 2026-10-08
 

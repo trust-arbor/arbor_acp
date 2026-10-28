@@ -10,7 +10,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
   alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
   alias Arbor.ACP.Adapters.Internal.Maps, as: MapHelpers
 
-  @sdk_version "0.3.238"
+  @sdk_version "0.3.310"
 
   @permission_modes %{
     default: "default",

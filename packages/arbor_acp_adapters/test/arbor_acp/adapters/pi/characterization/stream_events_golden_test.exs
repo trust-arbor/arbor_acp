@@ -548,6 +548,7 @@ defmodule Arbor.ACP.Adapters.Pi.StreamEventsGoldenTest do
               "cacheWrite" => 7,
               "cost" => %{"total" => 0.012}
             }),
+            {:respond, "get_session_stats", %{}},
             Flows.agent_settled(),
             Flows.prompt(3, "next"),
             {:inbound,
@@ -559,12 +560,15 @@ defmodule Arbor.ACP.Adapters.Pi.StreamEventsGoldenTest do
                  %{"role" => "assistant", "usage" => %{"output" => 9}}
                ]
              }},
+            {:respond, "get_session_stats", %{}},
             Flows.agent_settled(),
             Flows.prompt(4, "third"),
             Flows.agent_end(nil),
+            {:respond, "get_session_stats", %{}},
             Flows.agent_settled(),
             Flows.prompt(5, "fourth"),
             {:inbound, %{"type" => "agent_end"}},
+            {:respond, "get_session_stats", %{}},
             Flows.agent_settled()
           ]
 
@@ -660,7 +664,7 @@ defmodule Arbor.ACP.Adapters.Pi.StreamEventsGoldenTest do
       transcript =
         PiGolden.assert_golden(@area, "lifecycle_and_unknown_events_are_skipped", steps)
 
-      assert Enum.all?(Enum.drop(transcript, 7), &match?(%{tag: :skip}, &1.result))
+      assert Enum.all?(Enum.drop(transcript, 8), &match?(%{tag: :skip}, &1.result))
     end
   end
 

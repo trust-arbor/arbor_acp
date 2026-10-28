@@ -169,14 +169,15 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
              ] = transcript |> PiGolden.writes() |> Enum.filter(&(&1["type"] == "prompt"))
     end
 
-    test "failed_prompt_leaves_queued_prompts_stranded" do
+    test "failed_prompt_starts_the_next_queued_prompt" do
       steps =
         Flows.open_session(1) ++
           [
             Flows.prompt(2, "first"),
             Flows.prompt(3, "second"),
+            {:note,
+             "Pi runs no turn for a prompt it refused, so the queued prompt starts at once"},
             {:respond_error, "prompt", "model failed"},
-            {:note, "No settlement follows a failed prompt, so the queue is not drained"},
             Flows.agent_settled(),
             Flows.prompt(4, "third"),
             Flows.agent_settled(),
@@ -184,13 +185,19 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
           ]
 
       transcript =
-        PiGolden.assert_golden(@area, "failed_prompt_leaves_queued_prompts_stranded", steps)
+        PiGolden.assert_golden(@area, "failed_prompt_starts_the_next_queued_prompt", steps)
 
       assert [
                %{"id" => 2, "error" => %{"message" => "model failed"}},
-               %{"id" => 4, "result" => %{"stopReason" => "end_turn"}},
-               %{"id" => 3, "result" => %{"stopReason" => "end_turn"}}
+               %{"id" => 3, "result" => %{"stopReason" => "end_turn"}},
+               %{"id" => 4, "result" => %{"stopReason" => "end_turn"}}
              ] = responses(transcript) |> Enum.drop(1)
+
+      assert ["first", "second", "third"] =
+               for(
+                 %{"type" => "prompt", "message" => message} <- PiGolden.writes(transcript),
+                 do: message
+               )
     end
 
     test "settlement_without_a_pending_prompt_is_skipped" do
@@ -224,7 +231,7 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
         PiGolden.assert_golden(@area, "cancel_with_active_prompt_settles_as_cancelled", steps)
 
       assert %{tag: :messages_and_write, messages: [], writes: [%{"type" => "abort"}]} =
-               Enum.at(transcript, 8).result
+               Enum.at(transcript, 9).result
 
       assert [
                %{
@@ -274,10 +281,10 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
                  }
                ],
                writes: [%{"type" => "abort"}]
-             } = Enum.at(transcript, 9).result
+             } = Enum.at(transcript, 10).result
 
       assert %{messages: [%{"id" => 2, "result" => %{"stopReason" => "cancelled"}}]} =
-               Enum.at(transcript, 10).result
+               Enum.at(transcript, 11).result
 
       assert %{tag: :messages_and_write, messages: [], writes: [%{"type" => "abort"}]} =
                PiGolden.last_result(transcript)
@@ -432,18 +439,26 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
           steps
         )
 
+      # The first session/new cancels the running and queued prompts before
+      # it changes the session, so the exit fails only the two setups.
+      assert %{
+               messages: [
+                 %{"id" => 2, "result" => %{"stopReason" => "cancelled"}},
+                 %{"id" => 3, "result" => %{"stopReason" => "cancelled"}},
+                 %{"id" => 4, "result" => %{"stopReason" => "cancelled"}}
+               ],
+               writes: [%{"type" => "abort"}, %{"type" => "new_session"}]
+             } = Enum.at(transcript, 10).result
+
       assert %{
                messages: [
                  %{
-                   "id" => 2,
+                   "id" => 5,
                    "error" => %{"code" => -32_603, "message" => "Pi process exited: 137"}
                  },
-                 %{"id" => 5, "error" => %{"message" => "Pi process exited: 137"}},
-                 %{"id" => 6, "error" => %{"message" => "Pi process exited: 137"}},
-                 %{"id" => 3, "result" => %{"stopReason" => "cancelled"}},
-                 %{"id" => 4, "result" => %{"stopReason" => "cancelled"}}
+                 %{"id" => 6, "error" => %{"message" => "Pi process exited: 137"}}
                ]
-             } = Enum.at(transcript, 11).result
+             } = Enum.at(transcript, 12).result
 
       assert Enum.all?(Enum.take(transcript, -3), &match?(%{tag: :skip}, &1.result))
     end
@@ -502,19 +517,20 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
                messages: [%{"id" => 2, "error" => %{"message" => "Pi process exited: 3"}}],
                port: :closed
              } =
-               Enum.at(transcript, 8).result
+               Enum.at(transcript, 9).result
 
+      # A cancel has nothing to answer and no Pi to abort, which is not an error.
       assert [
                %{tag: :error, error: ":no_active_pi_session"},
-               %{tag: :error, error: ":no_active_pi_session"},
+               %{tag: :messages, messages: []},
                %{tag: :error, error: ":no_active_pi_session"}
-             ] = Enum.map(Enum.slice(transcript, 9..11), & &1.result)
+             ] = Enum.map(Enum.slice(transcript, 10..12), & &1.result)
 
       assert %{port: :spawned, pending: true, port_writes: [%{"type" => "new_session"} | _]} =
-               Enum.at(transcript, 12).result
+               Enum.at(transcript, 13).result
 
       assert %{messages: [%{"id" => 6, "result" => %{"stopReason" => "end_turn"}}]} =
-               Enum.at(transcript, 18).result
+               Enum.at(transcript, 20).result
 
       assert %{port: :closed} = PiGolden.last_result(transcript)
     end
@@ -526,20 +542,24 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
           [Flows.prompt(2, "working")] ++
           Flows.open_session(3) ++
           [
-            {:note, "The first session's prompt was dropped with the old process"},
+            {:note, "The new setup answered the first session's prompt as cancelled"},
             Flows.agent_settled()
           ]
 
       transcript =
         PiGolden.assert_golden(@area, "managed_session_new_replaces_the_running_process", steps)
 
-      assert %{port: :respawned, pending: true} = Enum.at(transcript, 7).result
+      assert %{
+               port: :respawned,
+               messages: [%{"id" => 2, "result" => %{"stopReason" => "cancelled"}}]
+             } = Enum.at(transcript, 8).result
+
       assert %{tag: :skip} = PiGolden.last_result(transcript)
     end
   end
 
   describe "close and shutdown" do
-    test "close_discards_active_prompt_and_queue_silently" do
+    test "close_answers_active_prompt_and_queue_as_cancelled" do
       steps =
         Flows.open_session(1) ++
           [
@@ -553,12 +573,41 @@ defmodule Arbor.ACP.Adapters.Pi.PromptFlowGoldenTest do
           ]
 
       transcript =
-        PiGolden.assert_golden(@area, "close_discards_active_prompt_and_queue_silently", steps)
+        PiGolden.assert_golden(@area, "close_answers_active_prompt_and_queue_as_cancelled", steps)
 
-      assert [%{"id" => 1}, %{"id" => 5}] = responses(transcript)
+      assert [
+               %{"id" => 1},
+               %{"id" => 2, "result" => %{"stopReason" => "cancelled"}},
+               %{"id" => 3, "result" => %{"stopReason" => "cancelled"}},
+               %{"id" => 5}
+             ] = responses(transcript)
 
       assert %{"id" => "msg-2", "message" => "fresh"} =
                transcript |> PiGolden.writes() |> List.last()
+    end
+
+    test "managed_close_answers_the_running_prompt_as_cancelled" do
+      steps =
+        [{:init, managed: true}] ++
+          Flows.open_session(1) ++
+          [Flows.prompt(2, "working"), Flows.prompt(3, "queued"), close_session(4)]
+
+      transcript =
+        PiGolden.assert_golden(
+          @area,
+          "managed_close_answers_the_running_prompt_as_cancelled",
+          steps
+        )
+
+      assert %{
+               tag: :messages_and_reply,
+               messages: [
+                 %{"id" => 2, "result" => %{"stopReason" => "cancelled"}},
+                 %{"id" => 3, "result" => %{"stopReason" => "cancelled"}}
+               ],
+               reply: %{},
+               port: :closed
+             } = PiGolden.last_result(transcript)
     end
 
     test "shutdown_discards_pending_work_silently" do

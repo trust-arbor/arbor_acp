@@ -29,6 +29,7 @@ defmodule Arbor.ACP.Adapters.Pi.RPC do
     get_state: "get_state",
     get_messages: "get_messages",
     get_available_models: "get_available_models",
+    get_available_thinking_levels: "get_available_thinking_levels",
     get_commands: "get_commands",
     prompt: "prompt",
     abort: "abort",

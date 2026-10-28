@@ -47,11 +47,30 @@
           "id" => "pi-<1>",
           "sessionPath" => "<sandbox>/sessions/mapped.jsonl",
           "type" => "switch_session"
-        },
+        }
+      ]
+    }
+  },
+  %Arbor.ACP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "command" => "switch_session",
+        "data" => %{},
+        "id" => "pi-<1>",
+        "success" => true,
+        "type" => "response"
+      }
+    },
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
         %{"id" => "pi-<2>", "type" => "get_messages"},
         %{"id" => "pi-<3>", "type" => "get_state"},
         %{"id" => "pi-<4>", "type" => "get_available_models"},
-        %{"id" => "pi-<5>", "type" => "get_commands"}
+        %{"id" => "pi-<5>", "type" => "get_available_thinking_levels"},
+        %{"id" => "pi-<6>", "type" => "get_commands"}
       ]
     }
   }

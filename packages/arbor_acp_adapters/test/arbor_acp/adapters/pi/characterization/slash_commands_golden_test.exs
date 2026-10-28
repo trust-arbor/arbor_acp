@@ -90,7 +90,7 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
                %{"type" => "compact"}
              ] = transcript |> PiGolden.writes() |> Enum.filter(&(&1["type"] == "compact"))
 
-      refute Map.has_key?(Enum.at(PiGolden.writes(transcript), 5), "customInstructions")
+      refute Map.has_key?(Enum.at(PiGolden.writes(transcript), 6), "customInstructions")
 
       assert [
                "Compaction completed.\nTokens before: 1200\nKept tests",
@@ -180,7 +180,7 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
                  },
                  %{"id" => 2}
                ]
-             } = Enum.at(transcript, 7).result
+             } = Enum.at(transcript, 8).result
 
       assert ["Session export completed.", "Session export completed."] =
                transcript |> chunk_texts() |> Enum.take(-2)
@@ -227,7 +227,7 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
       transcript = PiGolden.assert_golden(@area, "name_usage_set_and_title_update", steps)
 
       assert %{tag: :messages_and_reply, reply: %{"stopReason" => "end_turn"}} =
-               Enum.at(transcript, 6).result
+               Enum.at(transcript, 7).result
 
       assert [%{"name" => "My Project Session"}, %{"name" => "quoted  name and more"}] =
                transcript |> PiGolden.writes() |> Enum.filter(&(&1["type"] == "set_session_name"))
@@ -252,7 +252,7 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
                  },
                  %{"id" => 3}
                ]
-             } = Enum.at(transcript, 8).result
+             } = Enum.at(transcript, 9).result
     end
 
     test "model_and_thinking_notices" do
@@ -522,6 +522,8 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
             {:respond, "new_session", %{}},
             {:respond, "get_state", Flows.state_data()},
             {:respond, "get_available_models", %{"models" => Flows.models()}},
+            {:respond, "get_available_thinking_levels",
+             %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
             {:respond, "get_commands", %{"data" => %{"commands" => pi_commands}}}
           ]
 
@@ -550,12 +552,16 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
           {:respond, "get_messages", %{"messages" => []}},
           {:respond, "get_state", Flows.state_data(%{"sessionId" => "mapped"})},
           {:respond, "get_available_models", %{"models" => Flows.models()}},
+          {:respond, "get_available_thinking_levels",
+           %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
           {:respond, "get_commands",
            %{"commands" => [%{"name" => "pi-cmd", "description" => "from pi"}]}},
           Flows.session_resume(2, "mapped"),
           {:respond, "switch_session", %{}},
           {:respond, "get_state", Flows.state_data(%{"sessionId" => "mapped"})},
           {:respond, "get_available_models", %{"models" => Flows.models()}},
+          {:respond, "get_available_thinking_levels",
+           %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
           {:respond, "get_commands", %{}}
         ]
 

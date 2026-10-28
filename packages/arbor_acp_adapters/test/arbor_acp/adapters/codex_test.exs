@@ -680,6 +680,132 @@ defmodule Arbor.ACP.Adapters.CodexTest do
       assert response["result"]["sessionId"] == "thread-abc"
     end
 
+    test "an unprompted thread this connection started resumes through thread/read", %{
+      state: state
+    } do
+      state = start_live_thread(state, "thread-abc", "/tmp/project")
+
+      for {method, id} <- [{"session/resume", 29}, {"session/load", 30}] do
+        request = %{
+          "method" => method,
+          "id" => id,
+          "params" => %{"sessionId" => "thread-abc", "cwd" => "/tmp/other", "model" => "gpt-5.1"}
+        }
+
+        assert {:ok, data, state} = Codex.translate_outbound(request, state)
+        resume = decode(data)
+        assert resume["method"] == "thread/resume"
+
+        error = %{"code" => -32_603, "message" => "no rollout found for thread id thread-abc"}
+
+        assert {:skip_and_write, read_data, state} =
+                 Codex.translate_inbound(
+                   Jason.encode!(%{"id" => resume["id"], "error" => error}),
+                   state
+                 )
+
+        read = decode(read_data)
+        assert read["method"] == "thread/read"
+        assert read["params"] == %{"threadId" => "thread-abc"}
+
+        # thread/read reports the thread as started, not the resume overrides.
+        thread = %{"id" => "thread-abc", "cwd" => "/tmp/project", "model" => "gpt-5"}
+
+        assert {:messages, [response], state} =
+                 Codex.translate_inbound(
+                   Jason.encode!(%{"id" => read["id"], "result" => %{"thread" => thread}}),
+                   state
+                 )
+
+        assert response["id"] == id
+        assert response["result"]["sessionId"] == "thread-abc"
+        assert state.sessions["thread-abc"].cwd == "/tmp/other"
+        assert state.sessions["thread-abc"].model == "gpt-5.1"
+
+        prompt = %{
+          "method" => "session/prompt",
+          "id" => id + 100,
+          "params" => %{
+            "sessionId" => "thread-abc",
+            "prompt" => [%{"type" => "text", "text" => "hi"}]
+          }
+        }
+
+        assert {:ok, turn_data, _state} = Codex.translate_outbound(prompt, state)
+        turn = decode(turn_data)
+        assert turn["method"] == "turn/start"
+        assert turn["params"]["cwd"] == "/tmp/other"
+        assert turn["params"]["model"] == "gpt-5.1"
+      end
+    end
+
+    test "a closed or unowned unmaterialized thread keeps the resume error", %{state: state} do
+      # session/close unsubscribes, but Codex keeps the idle thread loaded, so
+      # thread/read would still find it. Attaching it would hang the next turn.
+      closed =
+        state
+        |> start_live_thread("thread-closed", "/tmp/project")
+        |> close_thread("thread-closed")
+
+      for {state, session_id} <- [{closed, "thread-closed"}, {state, "thread-unknown"}],
+          method <- ["session/resume", "session/load"] do
+        request = %{
+          "method" => method,
+          "id" => 31,
+          "params" => %{"sessionId" => session_id, "cwd" => "/tmp/project"}
+        }
+
+        assert {:ok, data, state} = Codex.translate_outbound(request, state)
+        error = %{"code" => -32_603, "message" => "no rollout found for thread id #{session_id}"}
+
+        assert {:messages, [response], state} =
+                 Codex.translate_inbound(
+                   Jason.encode!(%{"id" => decode(data)["id"], "error" => error}),
+                   state
+                 )
+
+        assert response["id"] == 31
+        assert response["error"] == error
+        refute Map.has_key?(state.sessions, session_id)
+        assert state.pending_requests == %{}
+      end
+    end
+
+    test "a thread closed while thread/read is pending keeps the resume error", %{state: state} do
+      state = start_live_thread(state, "thread-abc", "/tmp/project")
+
+      request = %{
+        "method" => "session/resume",
+        "id" => 32,
+        "params" => %{"sessionId" => "thread-abc", "cwd" => "/tmp/project"}
+      }
+
+      assert {:ok, data, state} = Codex.translate_outbound(request, state)
+      error = %{"code" => -32_603, "message" => "no rollout found for thread id thread-abc"}
+
+      assert {:skip_and_write, read_data, state} =
+               Codex.translate_inbound(
+                 Jason.encode!(%{"id" => decode(data)["id"], "error" => error}),
+                 state
+               )
+
+      state = close_thread(state, "thread-abc")
+      thread = %{"id" => "thread-abc", "cwd" => "/tmp/project"}
+
+      assert {:messages, [response], state} =
+               Codex.translate_inbound(
+                 Jason.encode!(%{
+                   "id" => decode(read_data)["id"],
+                   "result" => %{"thread" => thread}
+                 }),
+                 state
+               )
+
+      assert response["id"] == 32
+      assert response["error"] == error
+      refute Map.has_key?(state.sessions, "thread-abc")
+    end
+
     test "session/list response maps Codex threads to ACP session info", %{state: state} do
       state = %{state | pending_requests: %{1 => %{type: :session_list, acp_id: 22, meta: %{}}}}
 
@@ -2023,6 +2149,40 @@ defmodule Arbor.ACP.Adapters.CodexTest do
         ]
       }
     ]
+  end
+
+  # session/new answered by thread/start: the thread is live and this
+  # connection is subscribed to it.
+  defp start_live_thread(state, thread_id, cwd) do
+    msg = %{"method" => "session/new", "id" => 90, "params" => %{"cwd" => cwd}}
+    assert {:ok, data, state} = Codex.translate_outbound(msg, state)
+    thread = %{"id" => thread_id, "cwd" => cwd}
+
+    assert {:messages, [%{"id" => 90}], state} =
+             Codex.translate_inbound(
+               Jason.encode!(%{"id" => decode(data)["id"], "result" => %{"thread" => thread}}),
+               state
+             )
+
+    state
+  end
+
+  defp close_thread(state, thread_id) do
+    msg = %{"method" => "session/close", "id" => 91, "params" => %{"sessionId" => thread_id}}
+    assert {:messages_and_write, [], data, state} = Codex.translate_outbound(msg, state)
+    unsubscribe = decode(data)
+    assert unsubscribe["method"] == "thread/unsubscribe"
+
+    assert {:skip, state} =
+             Codex.translate_inbound(
+               Jason.encode!(%{
+                 "id" => unsubscribe["id"],
+                 "result" => %{"status" => "unsubscribed"}
+               }),
+               state
+             )
+
+    state
   end
 
   defp decode(data) do

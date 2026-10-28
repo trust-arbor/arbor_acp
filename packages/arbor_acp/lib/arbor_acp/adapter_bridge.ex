@@ -570,8 +570,11 @@ defmodule Arbor.ACP.AdapterBridge do
         state = %{state | adapter_state: new_adapter_state}
 
         case write_to_port(state, data) do
-          :ok -> {:reply, :ok, synthesize_init_response(state, id)}
-          {:error, reason} -> reply_translation_error(msg, reason, state)
+          :ok ->
+            {:reply, :ok, synthesize_init_response(state, id)}
+
+          {:error, reason} ->
+            reply_translation_error(msg, reason, write_failed(state, msg, reason))
         end
 
       {:reply, _result, new_adapter_state} ->
@@ -587,10 +590,10 @@ defmodule Arbor.ACP.AdapterBridge do
     end
   end
 
-  defp handle_outbound(%{"method" => "session/new", "id" => id} = msg, _json, _from, state) do
+  defp handle_outbound(%{"method" => "session/new", "id" => _id} = msg, _json, _from, state) do
     msg
     |> translate_lifecycle(state)
-    |> apply_lifecycle_translation(id, state, -32_602, fn state ->
+    |> apply_lifecycle_translation(msg, state, -32_602, fn state ->
       session_result(state, "session_#{System.unique_integer([:positive])}")
     end)
   end
@@ -599,7 +602,7 @@ defmodule Arbor.ACP.AdapterBridge do
     if ensure_capability(state, :load_session) do
       msg
       |> translate_lifecycle(state)
-      |> apply_lifecycle_translation(id, state, -32_603, &session_state_result/1)
+      |> apply_lifecycle_translation(msg, state, -32_603, &session_state_result/1)
     else
       {:reply, :ok, reject_unsupported_method(state, id, "session/load")}
     end
@@ -609,7 +612,7 @@ defmodule Arbor.ACP.AdapterBridge do
     if ensure_capability(state, :session_resume) do
       msg
       |> translate_lifecycle(state)
-      |> apply_lifecycle_translation(id, state, -32_603, &session_state_result/1)
+      |> apply_lifecycle_translation(msg, state, -32_603, &session_state_result/1)
     else
       {:reply, :ok, reject_unsupported_method(state, id, "session/resume")}
     end
@@ -667,37 +670,17 @@ defmodule Arbor.ACP.AdapterBridge do
         end
 
       true ->
-        # Let translate_outbound handle it (may send to native agent or skip)
-        case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
-          {:ok, :skip, new_adapter_state} ->
-            state = %{state | adapter_state: new_adapter_state}
-            state = synthesize_result(state, id, %{"sessions" => []})
-            {:reply, :ok, state}
-
-          {:ok, :pending, new_adapter_state} ->
-            {:reply, :ok, %{state | adapter_state: new_adapter_state}}
-
-          {:ok, data, new_adapter_state} ->
-            state = %{state | adapter_state: new_adapter_state}
-
-            case write_to_port(state, data) do
-              :ok -> {:reply, :ok, state}
-              {:error, reason} -> reply_translation_error(msg, reason, state)
-            end
-
-          {:reply, result, new_adapter_state} ->
-            state = %{state | adapter_state: new_adapter_state}
-            state = synthesize_result(state, id, result || %{"sessions" => []})
-            {:reply, :ok, state}
-
-          {:error, reason, new_adapter_state} ->
-            reply_translation_error(msg, reason, %{state | adapter_state: new_adapter_state})
-
-          # An adapter that reports a failed check without its state must not
-          # take the bridge down with a CaseClauseError (#7).
-          {:error, reason} ->
-            reply_translation_error(msg, reason, state)
-        end
+        # Like a session setup: a write without a result is answered by the
+        # adapter from the agent's reply.
+        msg
+        |> translate_lifecycle(state)
+        |> apply_deferred_translation(
+          msg,
+          state,
+          -32_603,
+          fn _state -> %{"sessions" => []} end,
+          fn _state, result -> result || %{"sessions" => []} end
+        )
     end
   end
 
@@ -762,7 +745,7 @@ defmodule Arbor.ACP.AdapterBridge do
   # enum (e.g. Pi's thinking_level) is invalid params from the client's
   # perspective.
   defp apply_config_option_translation({:error, reason, adapter_state}, %{"id" => id}, state) do
-    state = %{state | adapter_state: adapter_state}
+    state = if adapter_state == :keep, do: state, else: %{state | adapter_state: adapter_state}
     {:reply, :ok, synthesize_error(state, id, -32_602, to_string(reason))}
   end
 
@@ -773,9 +756,19 @@ defmodule Arbor.ACP.AdapterBridge do
     end
   end
 
+  defp apply_config_option_translation({:pending, adapter_state}, _msg, state),
+    do: {:reply, :ok, %{state | adapter_state: adapter_state}}
+
+  defp apply_config_option_translation({:one_shot, cmd_fn, adapter_state}, msg, state),
+    do:
+      handle_translated_outbound(
+        {:one_shot, cmd_fn, %{state | adapter_state: adapter_state}},
+        msg
+      )
+
   defp apply_config_option_translation(
          {:ok, messages, result, data, adapter_state},
-         %{"id" => id},
+         %{"id" => id} = msg,
          state
        ) do
     state = %{state | adapter_state: adapter_state}
@@ -786,7 +779,8 @@ defmodule Arbor.ACP.AdapterBridge do
         {:reply, :ok, synthesize_result(state, id, result || config_options_result(state))}
 
       {:error, reason} ->
-        reply_translation_error(%{"id" => id}, reason, state)
+        state = state |> push_responses(messages) |> write_failed(msg, reason)
+        reply_translation_error(msg, reason, state)
     end
   end
 
@@ -796,10 +790,15 @@ defmodule Arbor.ACP.AdapterBridge do
     do: {:pending_and_write, data, adapter_state}
 
   defp config_option_parts({:ok, :skip, adapter_state}), do: {:ok, [], nil, nil, adapter_state}
+  # An adapter-managed write already happened, and the adapter answers.
+  defp config_option_parts({:ok, :pending, adapter_state}), do: {:pending, adapter_state}
   defp config_option_parts({:ok, data, adapter_state}), do: {:ok, [], nil, data, adapter_state}
 
   defp config_option_parts({:reply, result, adapter_state}),
     do: {:ok, [], result, nil, adapter_state}
+
+  defp config_option_parts({:messages, messages, adapter_state}),
+    do: {:ok, messages, nil, nil, adapter_state}
 
   defp config_option_parts({:messages_and_reply, messages, result, adapter_state}),
     do: {:ok, messages, result, nil, adapter_state}
@@ -816,6 +815,11 @@ defmodule Arbor.ACP.AdapterBridge do
        do: {:ok, messages, result, data, adapter_state}
 
   defp config_option_parts({:error, reason, adapter_state}), do: {:error, reason, adapter_state}
+
+  defp config_option_parts({:one_shot, cmd_fn, adapter_state}),
+    do: {:one_shot, cmd_fn, adapter_state}
+
+  defp config_option_parts({:error, reason}), do: {:error, reason, :keep}
 
   defp handle_authenticate_translation_result({:ok, :skip, state}, _msg, id) do
     if adapter_auth_methods(state) == [] do
@@ -860,6 +864,26 @@ defmodule Arbor.ACP.AdapterBridge do
     state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
     {:reply, :ok, synthesize_result(state, id, %{})}
   end
+
+  defp handle_authenticate_translation_result(
+         {:messages_and_reply_and_write, messages, result, _delivery, state},
+         _msg,
+         id
+       ) do
+    state = push_encoded_messages(state, messages)
+    {:reply, :ok, synthesize_result(state, id, result || %{})}
+  end
+
+  # The adapter answers once the agent has.
+  defp handle_authenticate_translation_result({:pending_and_write, :sent, state}, _msg, _id),
+    do: {:reply, :ok, state}
+
+  defp handle_authenticate_translation_result(
+         {:one_shot, _cmd_fn, _state} = translated,
+         msg,
+         _id
+       ),
+       do: handle_translated_outbound(translated, msg)
 
   defp handle_authenticate_translation_result({:error, reason, state}, msg, _id),
     do: reply_translation_error(msg, reason, state)
@@ -919,7 +943,25 @@ defmodule Arbor.ACP.AdapterBridge do
   # load, resume): adopts the adapter state, writes any control data to the
   # port, pushes any replayed messages, and synthesizes the client's reply.
   # `skip_result` builds the reply when the adapter has nothing to add.
-  defp apply_lifecycle_translation(translation, id, state, error_code, skip_result) do
+  # A translation without a result (`:pending`, a write, `:messages`,
+  # `:messages_and_write`, `:pending_and_write`, `:one_shot`) leaves the reply
+  # to the adapter, which answers once the agent has set the session up.
+  defp apply_lifecycle_translation(translation, msg, state, error_code, skip_result) do
+    apply_deferred_translation(translation, msg, state, error_code, skip_result, fn state,
+                                                                                    result ->
+      Map.merge(session_state_result(state), result || %{})
+    end)
+  end
+
+  # `result_fun` builds the reply from the adapter's result.
+  defp apply_deferred_translation(
+         translation,
+         %{"id" => id} = msg,
+         state,
+         error_code,
+         skip_result,
+         result_fun
+       ) do
     case translation do
       {:ok, :skip, adapter_state} ->
         state = %{state | adapter_state: adapter_state}
@@ -932,21 +974,51 @@ defmodule Arbor.ACP.AdapterBridge do
         state = %{state | adapter_state: adapter_state}
 
         case write_to_port(state, data) do
-          :ok -> {:reply, :ok, state}
-          {:error, reason} -> reply_translation_error(%{"id" => id}, reason, state)
+          :ok ->
+            {:reply, :ok, state}
+
+          {:error, reason} ->
+            reply_translation_error(msg, reason, write_failed(state, msg, reason))
         end
 
+      {:messages, messages, adapter_state} ->
+        {:reply, :ok, push_encoded_messages(%{state | adapter_state: adapter_state}, messages)}
+
+      {:messages_and_write, messages, data, adapter_state} ->
+        state = %{state | adapter_state: adapter_state}
+
+        case write_to_port(state, data) do
+          :ok ->
+            {:reply, :ok, push_encoded_messages(state, messages)}
+
+          {:error, reason} ->
+            state = state |> push_responses(messages) |> write_failed(msg, reason)
+            reply_translation_error(msg, reason, state)
+        end
+
+      {:pending_and_write, data, adapter_state} ->
+        case write_pending_translation(msg, data, adapter_state, state) do
+          {:pending_and_write, :sent, state} -> {:reply, :ok, state}
+          {:error, reason, state} -> reply_translation_error(msg, reason, state)
+        end
+
+      {:one_shot, cmd_fn, adapter_state} ->
+        handle_translated_outbound(
+          {:one_shot, cmd_fn, %{state | adapter_state: adapter_state}},
+          %{"id" => id}
+        )
+
       {:reply, result, adapter_state} ->
-        lifecycle_reply(state, adapter_state, id, [], nil, result)
+        lifecycle_reply(state, adapter_state, msg, [], nil, result, result_fun)
 
       {:messages_and_reply, messages, result, adapter_state} ->
-        lifecycle_reply(state, adapter_state, id, messages, nil, result)
+        lifecycle_reply(state, adapter_state, msg, messages, nil, result, result_fun)
 
       {:reply_and_write, result, data, adapter_state} ->
-        lifecycle_reply(state, adapter_state, id, [], data, result)
+        lifecycle_reply(state, adapter_state, msg, [], data, result, result_fun)
 
       {:messages_and_reply_and_write, messages, result, data, adapter_state} ->
-        lifecycle_reply(state, adapter_state, id, messages, data, result)
+        lifecycle_reply(state, adapter_state, msg, messages, data, result, result_fun)
 
       {:error, reason, adapter_state} ->
         state = %{state | adapter_state: adapter_state}
@@ -958,18 +1030,25 @@ defmodule Arbor.ACP.AdapterBridge do
     end
   end
 
-  defp lifecycle_reply(state, adapter_state, id, messages, data, result) do
+  defp lifecycle_reply(
+         state,
+         adapter_state,
+         %{"id" => id} = msg,
+         messages,
+         data,
+         result,
+         result_fun
+       ) do
     state = %{state | adapter_state: adapter_state}
 
     case optional_write(state, data) do
       :ok ->
         state = push_encoded_messages(state, messages)
-
-        {:reply, :ok,
-         synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))}
+        {:reply, :ok, synthesize_result(state, id, result_fun.(state, result))}
 
       {:error, reason} ->
-        reply_translation_error(%{"id" => id}, reason, state)
+        state = state |> push_responses(messages) |> write_failed(msg, reason)
+        reply_translation_error(msg, reason, state)
     end
   end
 
@@ -1033,7 +1112,7 @@ defmodule Arbor.ACP.AdapterBridge do
     end
   end
 
-  defp synthesize_translated_reply(%{"id" => id}, result, state) do
+  defp synthesize_translated_reply(%{"id" => id, "method" => _method}, result, state) do
     {:reply, :ok, synthesize_result(state, id, result || %{})}
   end
 
@@ -1079,6 +1158,14 @@ defmodule Arbor.ACP.AdapterBridge do
   defp synthesize_after_translated({:pending_and_write, :sent, state}, _msg, _id, _result_fun),
     do: {:reply, :ok, state}
 
+  # An adapter-managed write already happened, and the adapter answers.
+  defp synthesize_after_translated({:ok, :pending, state}, _msg, _id, _result_fun),
+    do: {:reply, :ok, state}
+
+  # A one-shot task's messages answer the request.
+  defp synthesize_after_translated({:one_shot, _cmd_fn, _state} = translated, msg, _id, _fun),
+    do: handle_translated_outbound(translated, msg)
+
   defp synthesize_after_translated(translated, msg, id, result_fun) do
     case translated_reply_parts(translated) do
       {:ok, messages, result, state} ->
@@ -1117,7 +1204,10 @@ defmodule Arbor.ACP.AdapterBridge do
   defp push_encoded_messages(state, messages),
     do: push_messages(state, Enum.map(messages, &Jason.encode!/1))
 
-  defp reply_translation_error(%{"id" => id}, reason, state) do
+  # Only a request is answered. A client's response to an agent request
+  # carries the agent's id, which may equal one of the client's own request
+  # ids, so an error under it would answer the wrong request.
+  defp reply_translation_error(%{"id" => id, "method" => _method}, reason, state) do
     {:reply, :ok, synthesize_error(state, id, -32_603, to_string(reason))}
   end
 
@@ -1131,7 +1221,49 @@ defmodule Arbor.ACP.AdapterBridge do
         write_pending_translation(msg, data, adapter_state, state)
 
       translated ->
-        normalize_translated_outbound(translated, state)
+        case normalize_translated_outbound(translated, state) do
+          {:error, reason, state} ->
+            if writes?(translated),
+              do: {:error, reason, write_failed(state, msg, reason)},
+              else: {:error, reason, state}
+
+          normalized ->
+            normalized
+        end
+    end
+  end
+
+  defp writes?({:ok, data, _adapter_state}), do: data not in [:skip, :pending]
+  defp writes?({:reply_and_write, _result, _data, _adapter_state}), do: true
+  defp writes?({:messages_and_write, _messages, _data, _adapter_state}), do: true
+
+  defp writes?({:messages_and_reply_and_write, _messages, _result, _data, _adapter_state}),
+    do: true
+
+  defp writes?(_translated), do: false
+
+  # The request is answered with the write's error, so the adapter stops
+  # tracking anything it expected that write to start. An adapter may hand
+  # back a small replacement to write instead, such as an error answer to the
+  # native request a client's response was for, so the agent is not left
+  # waiting; when even that cannot be written the native connection is
+  # broken, and it is closed the way a failed reply to native output is.
+  defp write_failed(state, msg, reason) do
+    if function_exported?(state.adapter_mod, :outbound_write_failed, 3) do
+      case state.adapter_mod.outbound_write_failed(msg, reason, state.adapter_state) do
+        {:write, data, adapter_state} ->
+          state = %{state | adapter_state: adapter_state}
+
+          case write_to_port(state, data) do
+            :ok -> state
+            {:error, reason} -> overflow_close(state, {:native_write_failed, reason})
+          end
+
+        adapter_state ->
+          %{state | adapter_state: adapter_state}
+      end
+    else
+      state
     end
   end
 
@@ -1143,12 +1275,7 @@ defmodule Arbor.ACP.AdapterBridge do
         {:pending_and_write, :sent, state}
 
       {:error, reason} ->
-        adapter_state =
-          if function_exported?(state.adapter_mod, :outbound_write_failed, 3),
-            do: state.adapter_mod.outbound_write_failed(msg, reason, adapter_state),
-            else: adapter_state
-
-        {:error, reason, %{state | adapter_state: adapter_state}}
+        {:error, reason, write_failed(state, msg, reason)}
     end
   end
 
@@ -1189,7 +1316,8 @@ defmodule Arbor.ACP.AdapterBridge do
     write_translation_to_port(
       state,
       {:messages_and_reply_and_write, messages, result, :sent},
-      data
+      data,
+      messages
     )
   end
 
@@ -1198,7 +1326,7 @@ defmodule Arbor.ACP.AdapterBridge do
          state
        ) do
     state = %{state | adapter_state: adapter_state}
-    write_translation_to_port(state, {:messages_and_write, messages, :sent}, data)
+    write_translation_to_port(state, {:messages_and_write, messages, :sent}, data, messages)
   end
 
   defp normalize_translated_outbound({:error, reason}, state), do: {:error, reason, state}
@@ -1209,12 +1337,26 @@ defmodule Arbor.ACP.AdapterBridge do
   defp normalize_translated_outbound({:one_shot, cmd_fn, adapter_state}, state),
     do: {:one_shot, cmd_fn, %{state | adapter_state: adapter_state}}
 
-  defp write_translation_to_port(state, success, data) do
+  # A write that fails takes the notifications that describe its effect with
+  # it. Responses among the messages answer other requests the adapter has
+  # already settled (for example prompts it cancelled), so they are delivered
+  # whatever happens to the write.
+  defp write_translation_to_port(state, success, data, messages \\ []) do
     case write_to_port(state, data) do
       :ok -> translated_write_success(success, state)
-      {:error, reason} -> {:error, reason, state}
+      {:error, reason} -> {:error, reason, push_responses(state, messages)}
     end
   end
+
+  defp push_responses(state, messages),
+    do: push_encoded_messages(state, Enum.filter(messages, &response_message?/1))
+
+  defp response_message?(%{"id" => _id} = message),
+    do:
+      not Map.has_key?(message, "method") and
+        (Map.has_key?(message, "result") or Map.has_key?(message, "error"))
+
+  defp response_message?(_message), do: false
 
   defp translated_write_success({:ok, :sent}, state), do: {:ok, :sent, state}
 
