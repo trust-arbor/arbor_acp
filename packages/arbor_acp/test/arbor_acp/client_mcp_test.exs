@@ -820,11 +820,12 @@ defmodule Arbor.ACP.ClientMcpTest do
     send(first, :release)
     send(second, :release)
 
-    assert %{"id" => ^first_id, "result" => %{"result" => %{"n" => 0, "updates" => 0}}} =
-             await_frame()
+    # Both workers are already released, so either response may arrive first.
+    assert_receive {:from_client, %{"id" => ^first_id} = first_response}, 5_000
+    assert_receive {:from_client, %{"id" => ^second_id} = second_response}, 5_000
 
-    assert %{"id" => ^second_id, "result" => %{"result" => %{"n" => 0, "updates" => 0}}} =
-             await_frame()
+    assert first_response["result"] == %{"result" => %{"n" => 0, "updates" => 0}}
+    assert second_response["result"] == %{"result" => %{"n" => 0, "updates" => 0}}
 
     handler_id = "mcp-state-#{System.unique_integer([:positive])}"
     parent = self()
