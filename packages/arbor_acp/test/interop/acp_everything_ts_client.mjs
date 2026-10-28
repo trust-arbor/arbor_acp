@@ -116,6 +116,8 @@ try {
         configOptions: {
           boolean: {},
         },
+        notices: {},
+        compaction: {},
       },
     },
   });
@@ -247,6 +249,9 @@ try {
     "config_option_update",
     "session_info_update",
     "usage_update",
+    "notice",
+    "compaction_update",
+    "compaction_summary_chunk",
   ];
 
   const expectedClientRequests = [

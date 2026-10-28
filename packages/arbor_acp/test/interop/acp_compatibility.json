@@ -8,11 +8,13 @@
       "AutoDev",
       "Blackbox AI",
       "Bub",
+      "CUGA",
       "Claude Agent",
       "Claw Orchestrator",
       "Cline",
-      "Codex CLI",
       "Code Assistant",
+      "Codex CLI",
+      "Command Code",
       "Construct",
       "Cursor",
       "Docker's cagent",
@@ -21,12 +23,16 @@
       "GitHub Copilot",
       "Goose",
       "Hermes Agent",
+      "Inferpal",
       "Junie by JetBrains",
       "Kaagum",
       "Kimi CLI",
       "Kiro CLI",
+      "Mercury CLI",
       "Minion Code",
       "Mistral Vibe",
+      "Muse Spark Code",
+      "Octomind",
       "OpenClaw",
       "OpenCode",
       "OpenHands",
@@ -34,9 +40,11 @@
       "Poolside",
       "Qoder CLI",
       "Qwen Code",
+      "Raven",
       "Raxol",
       "Stakpak",
       "VT Code",
+      "ZenCODE",
       "crow-cli",
       "fast-agent",
       "fount",
@@ -54,11 +62,11 @@
       },
       {
         "id": "amp-acp",
-        "version": "0.9.0"
+        "version": "0.10.0"
       },
       {
         "id": "antigravity-acp",
-        "version": "1.1.1"
+        "version": "1.4.3"
       },
       {
         "id": "auggie",
@@ -69,20 +77,24 @@
         "version": "0.2.1"
       },
       {
+        "id": "bob",
+        "version": "2.0.9"
+      },
+      {
         "id": "claude-acp",
-        "version": "0.79.0"
+        "version": "0.97.0"
       },
       {
         "id": "cline",
-        "version": "3.0.62"
+        "version": "3.0.74"
       },
       {
         "id": "codebuddy-code",
-        "version": "2.155.0"
+        "version": "2.176.0"
       },
       {
         "id": "codex-acp",
-        "version": "1.12.0"
+        "version": "2.3.0"
       },
       {
         "id": "cortex-code",
@@ -98,7 +110,7 @@
       },
       {
         "id": "cursor",
-        "version": "2026.09.15"
+        "version": "2026.10.22"
       },
       {
         "id": "deepagents",
@@ -106,19 +118,19 @@
       },
       {
         "id": "devin",
-        "version": "3000.10.31"
+        "version": "3000.11.205"
       },
       {
         "id": "dimcode",
-        "version": "0.5.7"
+        "version": "0.5.21"
       },
       {
         "id": "dirac",
-        "version": "0.5.13"
+        "version": "0.5.24"
       },
       {
         "id": "factory-droid",
-        "version": "0.223.0"
+        "version": "0.249.0"
       },
       {
         "id": "fast-agent",
@@ -126,43 +138,43 @@
       },
       {
         "id": "gemini",
-        "version": "0.60.0"
+        "version": "0.65.0"
       },
       {
         "id": "github-copilot-cli",
-        "version": "1.0.86"
+        "version": "1.0.103"
       },
       {
         "id": "glm-acp-agent",
-        "version": "1.12.0"
+        "version": "1.15.0"
       },
       {
         "id": "goose",
-        "version": "1.51.0"
+        "version": "1.56.0"
       },
       {
         "id": "grok-build",
-        "version": "1.0.38"
+        "version": "1.0.70"
       },
       {
         "id": "harn",
-        "version": "0.10.139"
+        "version": "0.10.180"
       },
       {
         "id": "junie",
-        "version": "3331.4.0"
+        "version": "3813.9.0"
       },
       {
         "id": "kilo",
-        "version": "7.7.5"
+        "version": "7.8.17"
       },
       {
         "id": "kimchi",
-        "version": "1.1.26"
+        "version": "1.21.0"
       },
       {
         "id": "kimi",
-        "version": "1.50.0"
+        "version": "1.52.0"
       },
       {
         "id": "minimax-code",
@@ -174,19 +186,23 @@
       },
       {
         "id": "mistral-vibe",
-        "version": "2.24.1"
+        "version": "3.0.1"
       },
       {
         "id": "nova",
-        "version": "1.1.45"
+        "version": "1.1.59"
       },
       {
         "id": "opencode",
-        "version": "1.18.31"
+        "version": "1.19.4"
+      },
+      {
+        "id": "opencode-v2",
+        "version": "2.1.4"
       },
       {
         "id": "pi-acp",
-        "version": "0.0.33"
+        "version": "0.0.34"
       },
       {
         "id": "poolside",
@@ -198,11 +214,11 @@
       },
       {
         "id": "qwen-code",
-        "version": "0.24.2"
+        "version": "0.26.1"
       },
       {
         "id": "sigit",
-        "version": "1.5.10"
+        "version": "1.7.5"
       },
       {
         "id": "stakpak",

@@ -11,6 +11,7 @@ defmodule Arbor.ACP.RequestValidation do
   @tool_statuses ~w(pending in_progress completed failed)
   @plan_priorities ~w(high medium low)
   @plan_statuses ~w(pending in_progress completed)
+  @salvaged_session_updates ~w(notice compaction_update compaction_summary_chunk)
 
   @spec validate_protocol_version(term(), [non_neg_integer()]) ::
           :ok | {:error, :invalid_protocol_version | {:unsupported_protocol_version, term()}}
@@ -248,17 +249,45 @@ defmodule Arbor.ACP.RequestValidation do
   defp optional_map?(value), do: is_map(value)
 
   @spec validate_session_update(term()) :: :ok | {:error, :invalid_params}
-  def validate_session_update(%{"sessionId" => session_id, "update" => update} = params)
-      when is_map(update) do
-    if valid_session_id?(session_id) and valid_session_update?(update) and
-         optional_meta?(params) do
-      :ok
-    else
-      {:error, :invalid_params}
+  def validate_session_update(params) do
+    case normalize_session_update(params) do
+      {:ok, _params} -> :ok
+      {:error, :invalid_params} = error -> error
     end
   end
 
-  def validate_session_update(_params), do: {:error, :invalid_params}
+  @doc """
+  Validates `session/update` params and returns the params to dispatch.
+
+  Most update kinds are returned unchanged or rejected. For the opt-in
+  `notice`, `compaction_update` and `compaction_summary_chunk` kinds the result
+  matches the ACP SDK 1.9.0 v1 deserializer: an invalid optional value
+  (including the notification's own `_meta`) is removed instead of rejecting
+  the update, and invalid summary items are skipped. Missing or invalid
+  required fields still reject the update.
+  """
+  @spec normalize_session_update(term()) :: {:ok, map()} | {:error, :invalid_params}
+  def normalize_session_update(%{"sessionId" => session_id, "update" => update} = params)
+      when is_map(update) do
+    with true <- valid_session_id?(session_id),
+         {:ok, update} <- normalize_update(update),
+         {:ok, params} <- normalize_notification_meta(params, update) do
+      {:ok, Map.put(params, "update", update)}
+    else
+      _invalid -> {:error, :invalid_params}
+    end
+  end
+
+  def normalize_session_update(_params), do: {:error, :invalid_params}
+
+  # The SDK salvages an invalid notification `_meta` for every kind; only the
+  # opt-in kinds follow it here, the others keep their existing strictness.
+  defp normalize_notification_meta(params, %{"sessionUpdate" => type})
+       when type in @salvaged_session_updates,
+       do: {:ok, drop_invalid_meta(params)}
+
+  defp normalize_notification_meta(params, _update),
+    do: if(optional_meta?(params), do: {:ok, params}, else: :error)
 
   @spec absolute_path?(term()) :: boolean()
   def absolute_path?(path) when is_binary(path) and path != "",
@@ -484,6 +513,147 @@ defmodule Arbor.ACP.RequestValidation do
            optional_cost?(update) and optional_meta?(update)
 
   defp valid_session_update?(_update), do: false
+
+  # `notice`, `compaction_update` and `compaction_summary_chunk` mirror the ACP
+  # SDK 1.9.0 v1 deserializer (zSessionNotification), which the schema marks
+  # with x-deserialize-default-on-error / x-deserialize-skip-invalid-items.
+  # Required fields must be valid. Severity and status are open string unions,
+  # and only the notice title has a minimum length. An invalid optional value is
+  # removed rather than rejecting the update, and invalid summary items are
+  # skipped, so a completed compaction is not lost over one bad block. The
+  # client also requires the matching opt-in session capability.
+  defp normalize_update(
+         %{"sessionUpdate" => "notice", "severity" => severity, "title" => title} = update
+       )
+       when is_binary(severity) and is_binary(title) and title != "" do
+    {:ok, update |> drop_invalid("description", &is_binary/1) |> drop_invalid_meta()}
+  end
+
+  defp normalize_update(
+         %{
+           "sessionUpdate" => "compaction_update",
+           "compactionId" => compaction_id,
+           "status" => status
+         } = update
+       )
+       when is_binary(compaction_id) and is_binary(status) do
+    {:ok,
+     update
+     |> skip_invalid_items("summary", &salvage_content_block/1)
+     |> drop_invalid("error", &is_binary/1)
+     |> drop_invalid_meta()}
+  end
+
+  defp normalize_update(
+         %{
+           "sessionUpdate" => "compaction_summary_chunk",
+           "compactionId" => compaction_id,
+           "content" => content
+         } = update
+       )
+       when is_binary(compaction_id) do
+    with {:ok, content} <- salvage_content_block(content) do
+      {:ok, update |> Map.put("content", content) |> drop_invalid_meta()}
+    end
+  end
+
+  defp normalize_update(%{"sessionUpdate" => type}) when type in @salvaged_session_updates,
+    do: :error
+
+  defp normalize_update(update),
+    do: if(valid_session_update?(update), do: {:ok, update}, else: :error)
+
+  # A content block whose required fields are valid, with invalid optional
+  # values removed (the SDK's zContentBlock). Unknown fields are preserved.
+  defp salvage_content_block(%{"type" => "text", "text" => text} = block) when is_binary(text),
+    do: {:ok, salvage_block_common(block)}
+
+  defp salvage_content_block(
+         %{"type" => "image", "data" => data, "mimeType" => mime_type} = block
+       )
+       when is_binary(data) and is_binary(mime_type),
+       do: {:ok, block |> drop_invalid("uri", &is_binary/1) |> salvage_block_common()}
+
+  defp salvage_content_block(
+         %{"type" => "audio", "data" => data, "mimeType" => mime_type} = block
+       )
+       when is_binary(data) and is_binary(mime_type),
+       do: {:ok, salvage_block_common(block)}
+
+  defp salvage_content_block(%{"type" => "resource_link", "name" => name, "uri" => uri} = block)
+       when is_binary(name) and is_binary(uri) do
+    {:ok,
+     block
+     |> drop_invalid("description", &is_binary/1)
+     |> drop_invalid("mimeType", &is_binary/1)
+     |> drop_invalid("title", &is_binary/1)
+     # The schema says int64, but the SDK accepts and delivers any number.
+     |> drop_invalid("size", &is_number/1)
+     |> salvage_block_common()}
+  end
+
+  defp salvage_content_block(
+         %{"type" => "resource", "resource" => %{"uri" => uri} = resource} = block
+       )
+       when is_binary(uri) do
+    # The SDK tries its text-resource branch first and its blob branch second,
+    # and each branch drops the other's content field.
+    resource =
+      cond do
+        is_binary(resource["text"]) -> {:ok, Map.delete(resource, "blob")}
+        is_binary(resource["blob"]) -> {:ok, Map.delete(resource, "text")}
+        true -> :error
+      end
+
+    with {:ok, resource} <- resource do
+      resource = resource |> drop_invalid("mimeType", &is_binary/1) |> drop_invalid_meta()
+      {:ok, block |> Map.put("resource", resource) |> salvage_block_common()}
+    end
+  end
+
+  defp salvage_content_block(_block), do: :error
+
+  defp salvage_block_common(block), do: block |> salvage_annotations() |> drop_invalid_meta()
+
+  defp salvage_annotations(%{"annotations" => annotations} = block) when is_map(annotations) do
+    annotations =
+      annotations
+      |> skip_invalid_items("audience", &salvage_role/1)
+      |> drop_invalid("lastModified", &is_binary/1)
+      |> drop_invalid("priority", &is_number/1)
+      |> drop_invalid_meta()
+
+    Map.put(block, "annotations", annotations)
+  end
+
+  defp salvage_annotations(block), do: drop_invalid(block, "annotations", &is_map/1)
+
+  defp salvage_role(role) when role in ["assistant", "user"], do: {:ok, role}
+  defp salvage_role(_role), do: :error
+
+  # x-deserialize-default-on-error: an invalid optional value becomes absent;
+  # an explicit null is kept.
+  defp drop_invalid(map, key, valid?) do
+    case Map.fetch(map, key) do
+      {:ok, nil} -> map
+      {:ok, value} -> if valid?.(value), do: map, else: Map.delete(map, key)
+      :error -> map
+    end
+  end
+
+  defp drop_invalid_meta(map), do: drop_invalid(map, "_meta", &is_map/1)
+
+  # x-deserialize-skip-invalid-items inside a default-on-error list: keep the
+  # salvageable items of a list, and treat a non-list value as absent.
+  defp skip_invalid_items(map, key, salvage) do
+    case Map.fetch(map, key) do
+      {:ok, items} when is_list(items) ->
+        Map.put(map, key, for(item <- items, {:ok, kept} <- [salvage.(item)], do: kept))
+
+      _null_absent_or_invalid ->
+        drop_invalid(map, key, &is_list/1)
+    end
+  end
 
   defp valid_tool_call_content?(%{"type" => "content", "content" => content} = value),
     do: valid_content_block?(content) and optional_meta?(value)

@@ -146,6 +146,11 @@ defmodule Arbor.ACP.Types do
   optional "elicitation" => %{
   optional "form" => map() | nil,
   optional "url" => map() | nil
+  },
+  optional "session" => %{
+  optional "configOptions" => %{optional "boolean" => map() | nil} | nil,
+  optional "notices" => map() | nil,
+  optional "compaction" => map() | nil
   }
   }
   ```
@@ -649,6 +654,10 @@ defmodule Arbor.ACP.Types do
   #   user_message_chunk, agent_message_chunk, tool_call, tool_call_update, plan,
   #   available_commands_update, config_option_update, current_mode_update,
   #   session_info_update, usage_update, agent_thought_chunk
+  #
+  # Opt-in types, sent only when the client advertised the matching
+  # `clientCapabilities.session` entry: notice, compaction_update,
+  # compaction_summary_chunk
 
   @typedoc """
   String-keyed JSON object for session update params. Wire field/variant shape:
@@ -677,6 +686,9 @@ defmodule Arbor.ACP.Types do
   | current_mode_update()
   | session_info_update()
   | usage_update()
+  | notice_update()
+  | compaction_update()
+  | compaction_summary_chunk_update()
   ```
   """
   @type session_update :: json_object()
@@ -836,6 +848,55 @@ defmodule Arbor.ACP.Types do
   ```
   """
   @type usage_update :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for a live user notice. Sent only when the client
+  advertised `clientCapabilities.session.notices`. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionUpdate" => "notice",
+  required "severity" => "info" | "warning" | "error" | String.t(),
+  required "title" => String.t(),
+  optional "description" => String.t() | nil,
+  optional "_meta" => map() | nil
+  }
+  ```
+  """
+  @type notice_update :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for a context compaction upsert. Sent only when the
+  client advertised `clientCapabilities.session.compaction`. Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionUpdate" => "compaction_update",
+  required "compactionId" => String.t(),
+  required "status" => "in_progress" | "completed" | "failed" | "cancelled" | String.t(),
+  optional "summary" => [content_block()] | nil,
+  optional "error" => String.t() | nil,
+  optional "_meta" => map() | nil
+  }
+  ```
+  """
+  @type compaction_update :: json_object()
+
+  @typedoc """
+  String-keyed JSON object for a content block appended to a compaction summary.
+  Sent only when the client advertised `clientCapabilities.session.compaction`.
+  Wire field/variant shape:
+
+  ```text
+  %{
+  required "sessionUpdate" => "compaction_summary_chunk",
+  required "compactionId" => String.t(),
+  required "content" => content_block(),
+  optional "_meta" => map() | nil
+  }
+  ```
+  """
+  @type compaction_summary_chunk_update :: json_object()
 
   # Permission handling
 

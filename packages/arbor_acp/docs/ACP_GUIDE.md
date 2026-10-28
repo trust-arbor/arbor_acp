@@ -93,6 +93,16 @@ capabilities = Arbor.ACP.Capabilities.put(%{}, :boolean_config_options, true)
 # Pass capabilities: capabilities to Client.start_link/1 only if the UI supports them.
 ```
 
+Live user notices and context compaction updates are opt-in in the same way.
+Advertise `{}` under `"session"` only when the host presents them:
+
+```elixir
+capabilities = %{"session" => %{"notices" => %{}, "compaction" => %{}}}
+```
+
+Without that entry the client drops `notice`, `compaction_update` and
+`compaction_summary_chunk` updates, because agents must not send them.
+
 ## Streaming and host handlers
 
 Pass `event_listener: listener_pid` to receive
@@ -100,7 +110,8 @@ Pass `event_listener: listener_pid` to receive
 the `"sessionUpdate"` discriminator. Common values include
 `agent_message_chunk`, `agent_thought_chunk`, `tool_call`, `tool_call_update`,
 `plan`, `available_commands_update`, `config_option_update`,
-`current_mode_update`, `session_info_update`, and `usage_update`.
+`current_mode_update`, `session_info_update`, and `usage_update`, plus the
+opt-in `notice`, `compaction_update` and `compaction_summary_chunk`.
 
 `Client.prompt/4` blocks its caller while updates continue to arrive. Put the
 prompt call in an application-owned task if the same UI process must receive
