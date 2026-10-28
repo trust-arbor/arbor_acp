@@ -291,6 +291,41 @@ defmodule Arbor.ACP.Internal.McpTest do
     assert :error = Mcp.session_id(aborted, "tools")
   end
 
+  test "a lifecycle call that starts after a close does not inherit it" do
+    {:ok, pending} = Mcp.begin_existing(Mcp.new(), "session-1", "load-a", [])
+    {waiting, []} = Mcp.release_session(pending, "session-1")
+    assert Mcp.release_pending?(waiting, "session-1")
+
+    {:ok, resume} = Mcp.begin_existing(waiting, "session-1", "resume-b", ["fresh"])
+    {bound, []} = Mcp.commit_existing(resume, "resume-b", "session-1", ["fresh"])
+    assert {:ok, "session-1"} = Mcp.session_id(bound, "fresh")
+
+    {settled, []} = Mcp.commit_existing(bound, "load-a", "session-1", [])
+    assert {:ok, "session-1"} = Mcp.session_id(settled, "fresh")
+    refute Mcp.release_pending?(settled, "session-1")
+  end
+
+  test "a close during a held load drops in-flight requests immediately" do
+    table =
+      Mcp.new()
+      |> commit_new("open-1", "session-1", ["tools"])
+      |> track!("session-1", "tools", "req-tools", 1)
+
+    {:ok, held} = Mcp.begin_existing(table, "session-1", "load-1", ["tools"])
+    {waiting, dropped} = Mcp.release_session(held, "session-1")
+
+    assert [%{request_id: "req-tools", outer_id: 1}] = dropped
+    assert Mcp.lookup(waiting, "tools", "req-tools") == nil
+    assert {:ok, "session-1"} = Mcp.session_id(waiting, "tools")
+
+    assert {:error, :unknown_mcp_server} =
+             Mcp.track(waiting, entry("session-1", "tools", "req-next", 2), true)
+
+    {released, []} = Mcp.commit_existing(waiting, "load-1", "session-1", ["tools"])
+    assert :error = Mcp.session_id(released, "tools")
+    refute Mcp.release_pending?(released, "session-1")
+  end
+
   test "closing a session does not cancel a session/new reservation" do
     {:ok, reserved} = Mcp.begin_new(Mcp.new(), "open-1", ["tools"])
     {released, []} = Mcp.release_session(reserved, "session-1")

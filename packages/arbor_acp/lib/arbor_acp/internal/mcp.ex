@@ -8,17 +8,21 @@ defmodule Arbor.ACP.Internal.Mcp do
   # session owns until the call commits or aborts, so a concurrent call cannot
   # release or claim those ids. A new id reserved for that session is tagged
   # with the session even before the session owns anything. A load or resume
-  # is tracked for its session even when it reserves no id. Closing a session
-  # while any of those calls is in flight records the release until every one
-  # of them has committed or aborted, instead of freeing the ids for another
-  # session or letting a later call bind them and reopen it. A session/new
-  # reservation has no session yet and does not keep the close. The hold does
-  # not change
-  # the bound session:
-  # in-flight MCP requests keep working. An inner request id is unique per
-  # server while that request is in flight, and its ref is the notify token.
-  # Both agent and client keep this table beside their existing pending
-  # request maps; this module does not send messages or start timers.
+  # is tracked for its session even when it reserves no id. A resume that
+  # omits its server list is tracked the same way and does not reserve or
+  # replace ids.
+  #
+  # Closing a session bumps that session's epoch and drops its in-flight MCP
+  # requests immediately. Calls that already started record the epoch from
+  # before the bump and may restore or register the session only when it is
+  # still current; their ids stay reserved until each of them finishes. A
+  # call that starts after the close records the new epoch, so the previous
+  # close does not fail it. A session/new reservation has no session yet and
+  # does not keep the close. A hold that is not a close leaves in-flight MCP
+  # requests running. An inner request id is unique per server while that
+  # request is in flight, and its ref is the notify token. Both agent and
+  # client keep this table beside their existing pending request maps; this
+  # module does not send messages or start timers.
 
   alias Arbor.ACP.Internal.Extensions
 
@@ -29,7 +33,8 @@ defmodule Arbor.ACP.Internal.Mcp do
             servers: %{},
             requests: %{},
             by_outer: %{},
-            pending_releases: MapSet.new(),
+            epochs: %{},
+            bound_epochs: %{},
             lifecycle: %{}
 
   @type entry :: %{
@@ -52,8 +57,9 @@ defmodule Arbor.ACP.Internal.Mcp do
           servers: %{optional(String.t()) => server()},
           requests: %{optional({String.t(), String.t()}) => entry()},
           by_outer: %{optional(term()) => {String.t(), String.t()}},
-          pending_releases: MapSet.t(String.t()),
-          lifecycle: %{optional(String.t()) => MapSet.t()}
+          epochs: %{optional(String.t()) => non_neg_integer()},
+          bound_epochs: %{optional(String.t()) => non_neg_integer()},
+          lifecycle: %{optional(String.t()) => %{optional(term()) => non_neg_integer()}}
         }
 
   @spec new() :: t()
@@ -145,18 +151,21 @@ defmodule Arbor.ACP.Internal.Mcp do
     end
   end
 
+  # Tracks a load or resume that does not send `mcpServers`. The call records
+  # the session epoch and does not reserve or replace ids.
+  @spec begin_unchanged(t(), String.t(), term()) :: {:ok, t()}
+  def begin_unchanged(%__MODULE__{} = table, session_id, token) when is_binary(session_id) do
+    {:ok, track_lifecycle(table, session_id, token)}
+  end
+
   @spec abort(t(), term()) :: {t(), [entry()]}
   def abort(%__MODULE__{} = table, token) do
     sessions = Enum.uniq(sessions_held(table, token) ++ lifecycle_sessions(table, token))
     table = table |> clear_pending(token) |> finish_lifecycle_token(token)
 
     Enum.reduce(sessions, {table, []}, fn session_id, {table, acc} ->
-      if release_pending?(table, session_id) do
-        {table, dropped} = drop_session(maybe_forget_release(table, session_id), session_id)
-        {table, acc ++ dropped}
-      else
-        {table, acc}
-      end
+      {table, dropped} = settle_closed(table, session_id)
+      {table, acc ++ dropped}
     end)
   end
 
@@ -165,35 +174,60 @@ defmodule Arbor.ACP.Internal.Mcp do
     table = clear_pending(table, token)
     table = bind_ids(table, session_id, ids)
     owned = Enum.filter(ids, &owned_by?(table, session_id, &1))
-    put_session(table, session_id, owned, :union)
+    table |> put_session(session_id, owned, :union) |> accept_epoch(session_id)
   end
 
   @spec commit_existing(t(), term(), String.t(), [String.t()]) :: {t(), [entry()]}
   def commit_existing(%__MODULE__{} = table, token, session_id, ids) when is_list(ids) do
+    stale? = token_stale?(table, session_id, token)
     table = table |> clear_pending(token) |> finish_lifecycle(session_id, token)
 
-    if release_pending?(table, session_id) do
-      drop_session(maybe_forget_release(table, session_id), session_id)
+    if stale? do
+      settle_closed(table, session_id)
     else
       removed = MapSet.difference(servers_for(table, session_id), MapSet.new(ids))
       {table, dropped} = drop_servers(table, removed)
       table = bind_ids(table, session_id, ids)
       owned = Enum.filter(ids, &owned_by?(table, session_id, &1))
-      {put_session(table, session_id, owned, :replace), dropped}
+      {table |> put_session(session_id, owned, :replace) |> accept_epoch(session_id), dropped}
+    end
+  end
+
+  # The call omitted `mcpServers`. Accept the current bindings when this call's
+  # epoch is still current; otherwise release the close without restoring them.
+  @spec finish_unchanged(t(), term(), String.t()) :: {t(), [entry()]}
+  def finish_unchanged(%__MODULE__{} = table, token, session_id) do
+    stale? = token_stale?(table, session_id, token)
+    table = finish_lifecycle(table, session_id, token)
+
+    if stale? do
+      settle_closed(table, session_id)
+    else
+      {accept_epoch(table, session_id), []}
     end
   end
 
   @spec release_pending?(t(), String.t()) :: boolean()
   def release_pending?(%__MODULE__{} = table, session_id) do
-    MapSet.member?(table.pending_releases, session_id)
+    doomed?(table, session_id) and stale_open?(table, session_id)
+  end
+
+  # True when this call started before the session's latest close.
+  @spec token_closed?(t(), String.t(), term()) :: boolean()
+  def token_closed?(%__MODULE__{} = table, session_id, token) do
+    token_stale?(table, session_id, token)
   end
 
   @spec release_session(t(), String.t()) :: {t(), [entry()]}
   def release_session(%__MODULE__{} = table, session_id) do
+    table = bump_epoch(table, session_id)
+    {table, dropped} = drop_requests(table, servers_for(table, session_id))
+
     if release_blocked?(table, session_id) do
-      {%{table | pending_releases: MapSet.put(table.pending_releases, session_id)}, []}
+      {table, dropped}
     else
-      drop_session(table, session_id)
+      {table, more} = drop_session(table, session_id)
+      {table, dropped ++ more}
     end
   end
 
@@ -230,6 +264,9 @@ defmodule Arbor.ACP.Internal.Mcp do
 
     cond do
       not owned_by?(table, session_id, server_id) ->
+        {:error, :unknown_mcp_server}
+
+      doomed?(table, session_id) ->
         {:error, :unknown_mcp_server}
 
       Map.has_key?(table.requests, key) or Map.has_key?(table.by_outer, outer_id) ->
@@ -429,8 +466,10 @@ defmodule Arbor.ACP.Internal.Mcp do
 
   # Owned ids held by a lifecycle call, ids that call reserved for this
   # session before they were bound, and any load or resume still in flight
-  # for the session, including one that reserved nothing. A `session/new`
-  # reservation has no session yet, so it does not block a close.
+  # for the session, including one that reserved nothing or omitted its
+  # server list. A `session/new` reservation has no session yet, so it does
+  # not block a close. Blocking keeps the ids reserved. The close has already
+  # dropped in-flight MCP requests.
   defp release_blocked?(table, session_id) do
     lifecycle_open?(table, session_id) or
       Enum.any?(table.servers, fn
@@ -441,8 +480,9 @@ defmodule Arbor.ACP.Internal.Mcp do
   end
 
   defp track_lifecycle(table, session_id, token) do
-    tokens = Map.get(table.lifecycle, session_id, MapSet.new())
-    %{table | lifecycle: Map.put(table.lifecycle, session_id, MapSet.put(tokens, token))}
+    tokens = Map.get(table.lifecycle, session_id, %{})
+    tokens = Map.put(tokens, token, epoch(table, session_id))
+    %{table | lifecycle: Map.put(table.lifecycle, session_id, tokens)}
   end
 
   defp finish_lifecycle(table, session_id, token) do
@@ -451,10 +491,10 @@ defmodule Arbor.ACP.Internal.Mcp do
         table
 
       tokens ->
-        tokens = MapSet.delete(tokens, token)
+        tokens = Map.delete(tokens, token)
 
         lifecycle =
-          if MapSet.size(tokens) == 0,
+          if map_size(tokens) == 0,
             do: Map.delete(table.lifecycle, session_id),
             else: Map.put(table.lifecycle, session_id, tokens)
 
@@ -470,11 +510,51 @@ defmodule Arbor.ACP.Internal.Mcp do
 
   defp lifecycle_sessions(table, token) do
     Enum.flat_map(table.lifecycle, fn {session_id, tokens} ->
-      if MapSet.member?(tokens, token), do: [session_id], else: []
+      if Map.has_key?(tokens, token), do: [session_id], else: []
     end)
   end
 
   defp lifecycle_open?(table, session_id), do: Map.has_key?(table.lifecycle, session_id)
+
+  defp epoch(table, session_id), do: Map.get(table.epochs, session_id, 0)
+
+  defp bound_epoch(table, session_id), do: Map.get(table.bound_epochs, session_id, 0)
+
+  defp doomed?(table, session_id), do: epoch(table, session_id) > bound_epoch(table, session_id)
+
+  defp bump_epoch(table, session_id) do
+    %{table | epochs: Map.put(table.epochs, session_id, epoch(table, session_id) + 1)}
+  end
+
+  defp accept_epoch(table, session_id) do
+    %{table | bound_epochs: Map.put(table.bound_epochs, session_id, epoch(table, session_id))}
+  end
+
+  defp token_stale?(table, session_id, token) do
+    case Map.get(table.lifecycle, session_id) do
+      %{^token => started} -> started < epoch(table, session_id)
+      _missing -> false
+    end
+  end
+
+  defp stale_open?(table, session_id) do
+    current = epoch(table, session_id)
+
+    case Map.get(table.lifecycle, session_id) do
+      nil -> false
+      tokens -> Enum.any?(tokens, fn {_token, started} -> started < current end)
+    end
+  end
+
+  # Drop a closed session once every call that started before the close has
+  # finished, unless a later call has already accepted this epoch.
+  defp settle_closed(table, session_id) do
+    if doomed?(table, session_id) and not lifecycle_open?(table, session_id) do
+      drop_session(table, session_id)
+    else
+      {table, []}
+    end
+  end
 
   defp sessions_held(table, token) do
     table.servers
@@ -484,17 +564,6 @@ defmodule Arbor.ACP.Internal.Mcp do
       _other -> []
     end)
     |> Enum.uniq()
-  end
-
-  # Another in-flight load or resume may still be running for this session,
-  # even one that reserved no id. Forgetting the close then would let that
-  # call bind its ids and reopen the session.
-  defp maybe_forget_release(table, session_id) do
-    if release_blocked?(table, session_id), do: table, else: forget_release(table, session_id)
-  end
-
-  defp forget_release(table, session_id) do
-    %{table | pending_releases: MapSet.delete(table.pending_releases, session_id)}
   end
 
   defp drop_session(table, session_id) do

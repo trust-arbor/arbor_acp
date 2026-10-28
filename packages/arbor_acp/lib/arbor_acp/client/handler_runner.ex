@@ -490,11 +490,11 @@ defmodule Arbor.ACP.Client.HandlerRunner do
      %{state | mcp_workers: Map.put(state.mcp_workers, ref, %{pid: pid, monitor: monitor})}}
   end
 
-  # A queued callback can sit behind another handler callback. Cancellation
-  # and session close only see a worker pid once this task has published one,
-  # so the session and the pending request are checked again immediately
-  # before the provider runs. `:skipped` settles the task without a second
-  # answer when the client has already cancelled the request.
+  # A queued callback can sit behind another handler callback. The client
+  # answers that request when the session closes, before this task has a
+  # worker pid. The session and the pending request are checked again
+  # immediately before the provider runs. `:skipped` settles the task
+  # without a second answer when that request was already answered.
   defp run_admitted_mcp(
          runner,
          owner,

@@ -196,15 +196,26 @@ time (SDK requirement).
   first id of a session that owns none. Another lifecycle call that
   needs one of those ids gets
   `{:error, {:invalid_params, :mcp_server_id_in_use}}`. In-flight MCP requests
-  on a held id continue, because the id stays bound to the session. Ids
-  removed from the new list are released when the call succeeds. A failed
-  load leaves the previous binding in place.
-- Closing a session also covers that hold, and it stays recorded until every
-  in-flight load or resume for that session has finished, including a call
-  that reserved no server id. Each of those calls fails with
+  on a held id continue, because the id stays bound to the session, until the
+  session is closed. Ids removed from the new list are released when the call
+  succeeds. A failed load leaves the previous binding in place.
+- Closing a session bumps that session's close epoch and answers its
+  in-flight MCP requests immediately, including while a load or resume still
+  holds the server ids. A queued provider is answered and does not start. A
+  module or `:handler` provider that has already entered is stopped. A pid
+  provider is left running. A late result from any of them is dropped, so
+  the caller is not left waiting for the load to finish. No new MCP request
+  is accepted for that session after the close.
+- Every load, resume, or other call that reuses the session records the
+  epoch when it starts. That includes a call that reserves no server id and
+  a resume that omits `mcpServers`. The call may restore or register the
+  session only if that epoch is still current. Otherwise it fails with
   `{:error, {:invalid_params, :mcp_server_id_in_use}}`, releases whatever it
-  reserved, and does not put the session back. A `session/new` reservation
-  has no session id yet, so a close does not cancel it.
+  reserved, and does not put the session back. A call that starts after the
+  close records the new epoch, so the previous close does not fail it. The
+  ids stay reserved until every call that started before the close has
+  finished. A `session/new` or `session/fork` reservation has no session id
+  yet, so a close does not cancel it.
 - `session/new` and `session/fork` bind ids to the **new** session id. A fork
   cannot reuse an id the source session still holds. The caller supplies new
   ids for the forked session.

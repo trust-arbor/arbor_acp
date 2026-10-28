@@ -1560,7 +1560,10 @@ defmodule Arbor.ACP.Agent do
   defp begin_mcp(state, token, {:existing, session_id}, params) do
     case Map.fetch(params, "mcpServers") do
       :error ->
-        {:ok, state, %{mcp_token: token, mcp_ids: :unchanged, mcp_kind: {:existing, session_id}}}
+        {:ok, mcp} = Mcp.begin_unchanged(state.mcp, session_id, token)
+
+        {:ok, %{state | mcp: mcp},
+         %{mcp_token: token, mcp_ids: :unchanged, mcp_kind: {:existing, session_id}}}
 
       {:ok, servers} ->
         with {:ok, ids} <- Mcp.acp_server_ids(servers),
@@ -1591,8 +1594,25 @@ defmodule Arbor.ACP.Agent do
          {:reply, result}
        )
        when is_list(ids) do
-    closed? = Mcp.release_pending?(state.mcp, session_id)
+    closed? = Mcp.token_closed?(state.mcp, session_id, token)
     {mcp, dropped} = Mcp.commit_existing(state.mcp, token, session_id, ids)
+    state = fail_mcp_entries(%{state | mcp: mcp}, dropped, :session_closed)
+
+    result =
+      if closed?,
+        do: {:error, {-32_602, "MCP server id is already in use", nil}},
+        else: {:reply, result}
+
+    {state, result}
+  end
+
+  defp settle_mcp_session(
+         state,
+         %{mcp_kind: {:existing, session_id}, mcp_token: token, mcp_ids: :unchanged},
+         {:reply, result}
+       ) do
+    closed? = Mcp.token_closed?(state.mcp, session_id, token)
+    {mcp, dropped} = Mcp.finish_unchanged(state.mcp, token, session_id)
     state = fail_mcp_entries(%{state | mcp: mcp}, dropped, :session_closed)
 
     result =

@@ -15,6 +15,7 @@ defmodule Arbor.ACP.AgentMcpTest do
        %{
          test_pid: Keyword.fetch!(opts, :test_pid),
          fail_close: false,
+         block_close: Keyword.get(opts, :block_close, false),
          advertise_acp: Keyword.get(opts, :advertise_acp)
        }}
     end
@@ -82,6 +83,14 @@ defmodule Arbor.ACP.AgentMcpTest do
     @impl true
     def handle_close_session(session_id, _ctx, state) do
       send(state.test_pid, {:close_session, session_id})
+
+      if state.block_close do
+        send(state.test_pid, {:close_blocking, self()})
+
+        receive do
+          :release_close -> :ok
+        end
+      end
 
       if state.fail_close do
         {:error, :failed, state}
@@ -436,6 +445,34 @@ defmodule Arbor.ACP.AgentMcpTest do
 
     assert {:ok, true} =
              call_mcp(agent, transport, "ping", true, session_id: "sess-d", server_id: "d")
+  end
+
+  test "a resume that omits mcpServers is failed by a close already in flight" do
+    {agent, transport, peer} = boot(handler_opts: [block_close: true])
+    open_session!(transport, 2, [acp("A", "a")])
+
+    send_raw(transport, 3, "session/close", %{"sessionId" => "sess-1"})
+    assert_receive {:close_blocking, closer}, 1_000
+
+    send_raw(transport, 4, "session/resume", %{"sessionId" => "sess-1", "cwd" => "/tmp"})
+    await_queued(agent)
+    send(closer, :release_close)
+
+    first = receive_raw(transport)
+    second = receive_raw(transport)
+    by_id = Map.new([first, second], &{&1["id"], &1})
+
+    assert by_id[3]["result"] == %{}
+
+    assert by_id[4]["error"]["code"] == -32_602
+    assert by_id[4]["error"]["message"] == "MCP server id is already in use"
+    assert_receive {:resume_session, params}
+    refute Map.has_key?(params, "mcpServers")
+
+    assert {:error, :unknown_mcp_server} =
+             Agent.mcp_request(agent, "sess-1", "a", "tools/list", timeout: 200)
+
+    refute_outbound(peer)
   end
 
   test "resume without mcpServers leaves bindings in place" do
@@ -804,6 +841,24 @@ defmodule Arbor.ACP.AgentMcpTest do
   defp receive_raw(transport) do
     assert {:ok, message, _transport} = Memory.receive_message(transport)
     Jason.decode!(message)
+  end
+
+  defp await_queued(agent, attempts \\ 40) do
+    runner = :sys.get_state(agent).handler_pid
+
+    case Process.info(runner, :message_queue_len) do
+      {:message_queue_len, length} when length >= 1 ->
+        :ok
+
+      _other when attempts > 0 ->
+        receive do
+        after
+          20 -> await_queued(agent, attempts - 1)
+        end
+
+      _other ->
+        flunk("resume was not queued behind the close")
+    end
   end
 
   defp refute_outbound(peer) do

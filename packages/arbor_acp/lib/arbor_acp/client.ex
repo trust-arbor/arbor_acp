@@ -2780,7 +2780,7 @@ defmodule Arbor.ACP.Client do
   defp commit_mcp_new(state, token, _reply, _ids), do: abort_mcp_token(state, token)
 
   defp commit_mcp_existing(state, token, session_id, ids, reply) do
-    closed? = Mcp.release_pending?(state.mcp, session_id)
+    closed? = Mcp.token_closed?(state.mcp, session_id, token)
     {mcp, dropped} = Mcp.commit_existing(state.mcp, token, session_id, ids)
     state = fail_mcp_entries(%{state | mcp: mcp}, dropped)
 

@@ -169,7 +169,9 @@ defmodule Arbor.ACP.Client.Handler do
   level, emitted as `[:arbor_acp, :mcp, :handler, :state_discarded]`, and
   discarded. The MCP request is still answered. A callback that has not
   entered does not start after its session closes or its request is
-  cancelled. The design note is
+  cancelled. A close answers the request then, even while a load or resume
+  still holds the server id, and a callback that has already entered is
+  stopped. A late result is not delivered. The design note is
   `docs/MCP_OVER_ACP.md`.
   """
   @callback handle_mcp_request(session_id :: String.t(), request :: map(), map(), state()) ::

@@ -1139,6 +1139,146 @@ defmodule Arbor.ACP.ClientMcpTest do
     open_session(ctx, [acp("Tools", "tools")], "sess-2")
   end
 
+  test "a resume that starts after end_session is not failed by an earlier empty load" do
+    provider = provider_loop(self())
+    ctx = boot(close: false, mcp_providers: %{"fresh" => provider})
+    open_session(ctx, [])
+
+    task_a =
+      Task.async(fn ->
+        Client.load_session(ctx.client, "sess-1", "/tmp", mcp_servers: [])
+      end)
+
+    request_a = await_frame()
+    assert request_a["method"] == "session/load"
+    assert :ok = Client.end_session(ctx.client, "sess-1")
+
+    task_b =
+      Task.async(fn ->
+        Client.resume_session(ctx.client, "sess-1", "/tmp", mcp_servers: [acp("Fresh", "fresh")])
+      end)
+
+    request_b = await_frame()
+    assert request_b["method"] == "session/resume"
+    send_result(ctx.outbound, request_b["id"], %{"sessionId" => "sess-1"})
+    assert {:ok, %{"sessionId" => "sess-1"}} = Task.await(task_b, 5_000)
+
+    send_result(ctx.outbound, request_a["id"], %{})
+    assert {:error, {:invalid_params, :mcp_server_id_in_use}} = Task.await(task_a, 5_000)
+    assert Map.has_key?(:sys.get_state(ctx.client).sessions, "sess-1")
+
+    id = agent_mcp(ctx, "fresh", "ping", "tools/list")
+    assert_receive {:provider, ref, _context, _params}
+    send(provider, {:reply, ref, {:ok, %{"ok" => true}}})
+    assert %{"id" => ^id, "result" => %{"result" => %{"ok" => true}}} = await_frame()
+  end
+
+  test "a close during a load answers a queued provider before the load finishes" do
+    ctx =
+      boot(
+        close: false,
+        handler: McpHandler,
+        handler_opts: [test_pid: self(), block_updates: true],
+        mcp_providers: %{"app" => :handler},
+        handler_request_timeout: 60_000
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-hold")
+    send_session_chunk(ctx, "sess-hold")
+    assert_receive {:update_blocking, update_pid}
+
+    task =
+      Task.async(fn ->
+        Client.load_session(ctx.client, "sess-hold", "/tmp", mcp_servers: [acp("App", "app")])
+      end)
+
+    request = await_frame()
+    assert request["method"] == "session/load"
+
+    id = agent_mcp(ctx, "app", "queued-hold", "tools/list")
+    await_mcp_admitted(ctx)
+
+    assert :ok = Client.end_session(ctx.client, "sess-hold")
+    assert_cancelled(await_frame(), id)
+
+    send(update_pid, :release_update)
+    assert_receive {:session_updated, 1}
+    refute_receive {:handler_mcp, _session_id, _request, _context}, 200
+
+    send_result(ctx.outbound, request["id"], %{})
+    assert {:error, {:invalid_params, :mcp_server_id_in_use}} = Task.await(task, 5_000)
+    refute Map.has_key?(:sys.get_state(ctx.client).sessions, "sess-hold")
+  end
+
+  test "a close during a load drops a running provider result" do
+    ctx =
+      boot(
+        close: false,
+        handler: McpHandler,
+        handler_opts: [test_pid: self()],
+        mcp_providers: %{"app" => :handler},
+        handler_request_timeout: 60_000
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-running")
+
+    task =
+      Task.async(fn ->
+        Client.load_session(ctx.client, "sess-running", "/tmp", mcp_servers: [acp("App", "app")])
+      end)
+
+    request = await_frame()
+    assert request["method"] == "session/load"
+
+    id = agent_mcp(ctx, "app", "running", "block")
+    assert_receive {:blocking, worker}
+    assert is_pid(await_mcp_worker(ctx.client))
+
+    assert :ok = Client.end_session(ctx.client, "sess-running")
+    assert_cancelled(await_frame(), id)
+    refute Process.alive?(worker)
+
+    send(worker, :release)
+    refute_receive {:from_client, %{"id" => ^id}}, 200
+
+    send_result(ctx.outbound, request["id"], %{})
+    assert {:error, {:invalid_params, :mcp_server_id_in_use}} = Task.await(task, 5_000)
+  end
+
+  test "a close during a load drops a pid provider result" do
+    provider = provider_loop(self())
+
+    ctx =
+      boot(
+        close: false,
+        mcp_providers: %{"app" => provider},
+        handler_request_timeout: 60_000
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-pid")
+
+    task =
+      Task.async(fn ->
+        Client.load_session(ctx.client, "sess-pid", "/tmp", mcp_servers: [acp("App", "app")])
+      end)
+
+    request = await_frame()
+    assert request["method"] == "session/load"
+
+    id = agent_mcp(ctx, "app", "running-pid", "tools/list")
+    assert_receive {:provider, ref, _context, _params}
+
+    assert :ok = Client.end_session(ctx.client, "sess-pid")
+    assert_cancelled(await_frame(), id)
+    assert Process.alive?(provider)
+
+    send(provider, {:reply, ref, {:ok, %{"late" => true}}})
+    refute_receive {:from_client, %{"id" => ^id}}, 200
+
+    send_result(ctx.outbound, request["id"], %{})
+    assert {:error, {:invalid_params, :mcp_server_id_in_use}} = Task.await(task, 5_000)
+  end
+
   test "end_session stays closed while an empty load is still in flight" do
     provider = provider_loop(self())
     ctx = boot(close: false, mcp_providers: %{"tools" => provider})
