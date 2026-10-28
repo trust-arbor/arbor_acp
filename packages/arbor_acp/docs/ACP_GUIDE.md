@@ -243,8 +243,9 @@ a `handle_initialize/3` override. Register the provider with
 flight when called with that request's `:token`. A `:handler` provider
 callback runs concurrently and must return its handler state unchanged. A
 changed state is logged, emitted as
-`[:arbor_acp, :mcp, :handler, :state_discarded]`, and discarded. The client
-handler has no stateful execution mode. The design note is
+`[:arbor_acp, :mcp, :handler, :state_discarded]`, and discarded. A queued
+callback does not start after its session closes or its request is cancelled.
+The client handler has no stateful execution mode. The design note is
 [MCP-over-ACP](MCP_OVER_ACP.md).
 
 Serving an Arbor MCP server through a provider, so its tools are available on

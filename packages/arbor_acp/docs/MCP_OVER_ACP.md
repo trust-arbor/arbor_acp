@@ -118,8 +118,10 @@ discards the change. The returned state and the handler state are not in
 the log or the telemetry metadata. Permission, file, and terminal callbacks
 are not held behind an MCP callback. Module providers leave handler state
 unchanged. `Client.disconnect/1` does not start a provider callback that has
-not already entered, including one still waiting in the handler mailbox, and
-it stops an in-flight module or `:handler` provider process. A pid provider
+not already entered, including one still waiting in the handler mailbox.
+A queued callback also checks, immediately before it enters, that its
+session is still open and that its request has not been cancelled. Disconnect
+stops an in-flight module or `:handler` provider process. A pid provider
 stays the caller's process.
 
 While the request is in flight, the provider sends notifications with
@@ -197,10 +199,12 @@ time (SDK requirement).
   on a held id continue, because the id stays bound to the session. Ids
   removed from the new list are released when the call succeeds. A failed
   load leaves the previous binding in place.
-- Closing a session also covers that hold. The in-flight load, resume, or
-  fork then fails with `{:error, {:invalid_params, :mcp_server_id_in_use}}`,
-  releases the reservation, and does not put the session back. A `session/new`
-  reservation has no session id yet, so a close does not cancel it.
+- Closing a session also covers that hold, and it stays recorded until every
+  in-flight load or resume for that session has finished, including a call
+  that reserved no server id. Each of those calls fails with
+  `{:error, {:invalid_params, :mcp_server_id_in_use}}`, releases whatever it
+  reserved, and does not put the session back. A `session/new` reservation
+  has no session id yet, so a close does not cancel it.
 - `session/new` and `session/fork` bind ids to the **new** session id. A fork
   cannot reuse an id the source session still holds. The caller supplies new
   ids for the forked session.

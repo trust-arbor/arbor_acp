@@ -401,9 +401,14 @@ defmodule Arbor.ACP.Client.HandlerRunner do
       {%{monitor: monitor}, workers} ->
         Process.demonitor(monitor, [:flush])
         state = %{state | mcp_workers: workers}
-        _ = apply_mcp_state(new_state)
-        send(state.owner, {:acp_handler_result, ref, {:mcp, outcome}})
-        {:noreply, state}
+
+        if outcome == :skipped do
+          {:noreply, state}
+        else
+          _ = apply_mcp_state(new_state)
+          send(state.owner, {:acp_handler_result, ref, {:mcp, outcome}})
+          {:noreply, state}
+        end
     end
   end
 
@@ -445,8 +450,9 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   # The client kills the worker when its handler timeout, a cancel, or a
   # disconnect fires. `:handler` and module callbacks run concurrently and
   # do not change handler state. A callback that has not entered after
-  # `refuse_mcp/1` does not start. In-flight workers stay bounded by the
-  # client's pending-request cap.
+  # `refuse_mcp/1` does not start. One that is still queued also checks, right
+  # before it enters, that its session is open and its request is still
+  # pending. In-flight workers stay bounded by the client's pending-request cap.
   defp start_mcp_worker(state, ref, provider, context, params) do
     if mcp_open?(state.mcp_gate) do
       launch_mcp_worker(state, ref, provider, context, params)
@@ -465,20 +471,69 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
     {:ok, pid} =
       Task.start(fn ->
-        send(owner, {:acp_mcp_worker, ref, self()})
-
-        if mcp_open?(gate) do
-          {outcome, new_state} = run_mcp(provider, context, params, handler_mod, snapshot)
-          send(runner, {:mcp_worker_done, ref, outcome, new_state})
-        else
-          send(runner, {:mcp_worker_done, ref, {:error, :disconnected}, :unchanged})
-        end
+        run_admitted_mcp(
+          runner,
+          owner,
+          ref,
+          gate,
+          provider,
+          context,
+          params,
+          handler_mod,
+          snapshot
+        )
       end)
 
     monitor = Process.monitor(pid)
 
     {:noreply,
      %{state | mcp_workers: Map.put(state.mcp_workers, ref, %{pid: pid, monitor: monitor})}}
+  end
+
+  # A queued callback can sit behind another handler callback. Cancellation
+  # and session close only see a worker pid once this task has published one,
+  # so the session and the pending request are checked again immediately
+  # before the provider runs. `:skipped` settles the task without a second
+  # answer when the client has already cancelled the request.
+  defp run_admitted_mcp(
+         runner,
+         owner,
+         ref,
+         gate,
+         provider,
+         context,
+         params,
+         handler_mod,
+         snapshot
+       ) do
+    cond do
+      not mcp_open?(gate) ->
+        send(runner, {:mcp_worker_done, ref, {:error, :disconnected}, :unchanged})
+
+      not provider_admitted?(owner, ref, context.session_id) ->
+        send(runner, {:mcp_worker_done, ref, :skipped, :unchanged})
+
+      true ->
+        send(owner, {:acp_mcp_worker, ref, self()})
+
+        cond do
+          not mcp_open?(gate) ->
+            send(runner, {:mcp_worker_done, ref, {:error, :disconnected}, :unchanged})
+
+          not provider_admitted?(owner, ref, context.session_id) ->
+            send(runner, {:mcp_worker_done, ref, :skipped, :unchanged})
+
+          true ->
+            {outcome, new_state} = run_mcp(provider, context, params, handler_mod, snapshot)
+            send(runner, {:mcp_worker_done, ref, outcome, new_state})
+        end
+    end
+  end
+
+  defp provider_admitted?(owner, ref, session_id) do
+    GenServer.call(owner, {:mcp_provider_admitted, ref, session_id}) == true
+  catch
+    :exit, _reason -> false
   end
 
   # Handler state is never replaced from an MCP callback. `:unchanged` is the

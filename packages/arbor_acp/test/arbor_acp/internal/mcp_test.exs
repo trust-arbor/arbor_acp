@@ -266,6 +266,31 @@ defmodule Arbor.ACP.Internal.McpTest do
     assert {:ok, _docs} = Mcp.begin_new(done, "open-3", ["docs"])
   end
 
+  test "a close waits for an in-flight lifecycle call that reserved nothing" do
+    {:ok, reserved} = Mcp.begin_existing(Mcp.new(), "session-1", "load-a", ["tools"])
+    {:ok, both} = Mcp.begin_existing(reserved, "session-1", "load-b", [])
+    {waiting, []} = Mcp.release_session(both, "session-1")
+    assert Mcp.release_pending?(waiting, "session-1")
+
+    {mid, []} = Mcp.commit_existing(waiting, "load-a", "session-1", ["tools"])
+    assert :error = Mcp.session_id(mid, "tools")
+    assert Mcp.release_pending?(mid, "session-1")
+
+    {done, []} = Mcp.commit_existing(mid, "load-b", "session-1", [])
+    refute Mcp.release_pending?(done, "session-1")
+    assert :error = Mcp.session_id(done, "tools")
+    assert {:ok, _reclaimed} = Mcp.begin_new(done, "open-2", ["tools"])
+
+    {:ok, reserved} = Mcp.begin_existing(Mcp.new(), "session-1", "load-c", ["tools"])
+    {:ok, both} = Mcp.begin_existing(reserved, "session-1", "load-d", [])
+    {waiting, []} = Mcp.release_session(both, "session-1")
+    {mid, []} = Mcp.abort(waiting, "load-c")
+    assert Mcp.release_pending?(mid, "session-1")
+    {aborted, []} = Mcp.abort(mid, "load-d")
+    refute Mcp.release_pending?(aborted, "session-1")
+    assert :error = Mcp.session_id(aborted, "tools")
+  end
+
   test "closing a session does not cancel a session/new reservation" do
     {:ok, reserved} = Mcp.begin_new(Mcp.new(), "open-1", ["tools"])
     {released, []} = Mcp.release_session(reserved, "session-1")

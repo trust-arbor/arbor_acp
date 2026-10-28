@@ -888,6 +888,19 @@ defmodule Arbor.ACP.Client do
     end
   end
 
+  # A provider task asks this immediately before it enters. The session must
+  # still be open and this request must still be pending, so a callback that
+  # was only queued does not run after close or cancellation.
+  def handle_call({:mcp_provider_admitted, ref, session_id}, _from, state) do
+    request = Map.get(state.pending_agent_requests, ref)
+
+    admitted? =
+      match?(%{kind: :mcp, session_id: ^session_id}, request) and
+        Map.has_key?(state.sessions, session_id)
+
+    {:reply, admitted?, state}
+  end
+
   # Not ready
   def handle_call(_request, _from, %{status: status} = state) when status != :ready do
     {:reply, {:error, {:not_ready, status}}, state}

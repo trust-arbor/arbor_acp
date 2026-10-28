@@ -1037,6 +1037,59 @@ defmodule Arbor.ACP.ClientMcpTest do
     assert Process.alive?(provider)
   end
 
+  test "a queued provider does not start after its session closes" do
+    ctx =
+      boot(
+        close: false,
+        handler: McpHandler,
+        handler_opts: [test_pid: self(), block_updates: true],
+        mcp_providers: %{"app" => :handler},
+        handler_request_timeout: 60_000
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-queued-close")
+    send_session_chunk(ctx, "sess-queued-close")
+    assert_receive {:update_blocking, update_pid}
+
+    id = agent_mcp(ctx, "app", "queued-close", "tools/list")
+    await_mcp_admitted(ctx)
+
+    assert :ok = Client.end_session(ctx.client, "sess-queued-close")
+    assert_cancelled(await_frame(), id)
+
+    send(update_pid, :release_update)
+    assert_receive {:session_updated, 1}
+    refute_receive {:handler_mcp, _session_id, _request, _context}, 500
+    refute Map.has_key?(:sys.get_state(ctx.client).sessions, "sess-queued-close")
+  end
+
+  test "a queued provider does not start after its request is cancelled" do
+    ctx =
+      boot(
+        handler: McpHandler,
+        handler_opts: [test_pid: self(), block_updates: true],
+        mcp_providers: %{"app" => :handler},
+        handler_request_timeout: 60_000
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-queued-cancel")
+    send_session_chunk(ctx, "sess-queued-cancel")
+    assert_receive {:update_blocking, update_pid}
+
+    id = agent_mcp(ctx, "app", "queued-cancel", "tools/list")
+    await_mcp_admitted(ctx)
+
+    send_json(ctx.outbound, Protocol.encode_cancel_request(id))
+    assert_cancelled(await_frame(), id)
+
+    send(update_pid, :release_update)
+    assert_receive {:session_updated, 1}
+    refute_receive {:handler_mcp, _session_id, _request, _context}, 500
+
+    next_id = agent_mcp(ctx, "app", "queued-after", "tools/list")
+    assert %{"id" => ^next_id, "result" => %{"result" => %{"tools" => []}}} = await_frame()
+  end
+
   test "end_session during a load of a session that owns no ids does not reopen it" do
     provider = provider_loop(self())
     ctx = boot(close: false, mcp_providers: %{"tools" => provider})
@@ -1082,6 +1135,39 @@ defmodule Arbor.ACP.ClientMcpTest do
     send_result(ctx.outbound, request["id"], %{})
 
     assert {:error, {:invalid_params, :mcp_server_id_in_use}} = Task.await(task, 5_000)
+
+    open_session(ctx, [acp("Tools", "tools")], "sess-2")
+  end
+
+  test "end_session stays closed while an empty load is still in flight" do
+    provider = provider_loop(self())
+    ctx = boot(close: false, mcp_providers: %{"tools" => provider})
+    open_session(ctx, [])
+
+    task_a =
+      Task.async(fn ->
+        Client.load_session(ctx.client, "sess-1", "/tmp", mcp_servers: [acp("Tools", "tools")])
+      end)
+
+    request_a = await_frame()
+    assert request_a["method"] == "session/load"
+
+    task_b =
+      Task.async(fn ->
+        Client.load_session(ctx.client, "sess-1", "/tmp", mcp_servers: [])
+      end)
+
+    request_b = await_frame()
+    assert request_b["method"] == "session/load"
+    assert :ok = Client.end_session(ctx.client, "sess-1")
+
+    send_result(ctx.outbound, request_a["id"], %{})
+    assert {:error, {:invalid_params, :mcp_server_id_in_use}} = Task.await(task_a, 5_000)
+    refute Map.has_key?(:sys.get_state(ctx.client).sessions, "sess-1")
+
+    send_result(ctx.outbound, request_b["id"], %{})
+    assert {:error, {:invalid_params, :mcp_server_id_in_use}} = Task.await(task_b, 5_000)
+    refute Map.has_key?(:sys.get_state(ctx.client).sessions, "sess-1")
 
     open_session(ctx, [acp("Tools", "tools")], "sess-2")
   end
