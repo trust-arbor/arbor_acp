@@ -897,27 +897,33 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert File.exists?(secret)
     end
 
-    test "session/delete does not follow a 41-symlink chain out of the session directory", %{
-      state: state,
-      tmp_dir: tmp_dir,
-      session_dir: session_dir,
-      session_map_path: session_map_path
-    } do
+    test "session/delete does not follow a directory-symlink chain out of the session directory",
+         %{
+           state: state,
+           tmp_dir: tmp_dir,
+           session_dir: session_dir,
+           session_map_path: session_map_path
+         } do
       outside = Path.join(tmp_dir, "outside")
       File.mkdir_p!(outside)
       secret = Path.join(outside, "secret.jsonl")
       File.write!(secret, "keep\n")
 
-      # Depth 40 is the resolver cap; the 41st link is left half-resolved under
-      # the sessions root and currently passes a prefix/within? check.
-      last = Path.join(session_dir, "link41")
-      File.ln_s!(outside, last)
+      # Final hop is a directory link, so File.rm follows it. A 41-file-link
+      # chain returns :eloop and would pass even on a lexical prefix check.
+      hop2 = Path.join(session_dir, "hop2")
+      hop1 = Path.join(session_dir, "hop1")
+      File.ln_s!(outside, hop2)
+      File.ln_s!(hop2, hop1)
 
-      Enum.each(40..1//-1, fn n ->
-        File.ln_s!(Path.join(session_dir, "link#{n + 1}"), Path.join(session_dir, "link#{n}"))
-      end)
+      session_file = Path.join(hop1, "secret.jsonl")
+      expanded_root = Path.expand(session_dir)
+      expanded_file = Path.expand(session_file)
+      root_prefix = String.trim_trailing(expanded_root, "/") <> "/"
 
-      session_file = Path.join(session_dir, "link1/secret.jsonl")
+      assert String.starts_with?(expanded_file, root_prefix)
+      assert {:ok, %File.Stat{type: :directory}} = File.stat(hop1)
+      assert File.exists?(session_file)
 
       File.write!(
         session_map_path,
