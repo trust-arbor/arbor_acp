@@ -82,4 +82,15 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
     File.ln_s!(Path.join(root, "loop_a"), Path.join(root, "loop_b"))
     assert is_binary(WorkspacePath.canonical(Path.join(root, "loop_a/file")))
   end
+
+  test "a 41-symlink chain that leaves the root is rejected", %{root: root, outside: outside} do
+    last = Path.join(root, "link41")
+    File.ln_s!(outside, last)
+
+    Enum.each(40..1, fn n ->
+      File.ln_s!(Path.join(root, "link#{n + 1}"), Path.join(root, "link#{n}"))
+    end)
+
+    refute WorkspacePath.within?(Path.join(root, "link1/secret.txt"), root)
+  end
 end

@@ -896,6 +896,53 @@ defmodule Arbor.ACP.Adapters.PiTest do
 
       assert File.exists?(secret)
     end
+
+    test "session/delete does not follow a 41-symlink chain out of the session directory", %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_dir: session_dir,
+      session_map_path: session_map_path
+    } do
+      outside = Path.join(tmp_dir, "outside")
+      File.mkdir_p!(outside)
+      secret = Path.join(outside, "secret.jsonl")
+      File.write!(secret, "keep\n")
+
+      # Depth 40 is the resolver cap; the 41st link is left half-resolved under
+      # the sessions root and currently passes a prefix/within? check.
+      last = Path.join(session_dir, "link41")
+      File.ln_s!(outside, last)
+
+      Enum.each(40..1, fn n ->
+        File.ln_s!(Path.join(session_dir, "link#{n + 1}"), Path.join(session_dir, "link#{n}"))
+      end)
+
+      session_file = Path.join(session_dir, "link1/secret.jsonl")
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "chain-session" => %{
+              "sessionId" => "chain-session",
+              "cwd" => tmp_dir,
+              "sessionFile" => session_file
+            }
+          }
+        })
+      )
+
+      state = %{state | delete_session_files?: true}
+
+      assert {:reply, %{}, _state} =
+               Pi.translate_outbound(
+                 %{"method" => "session/delete", "params" => %{"sessionId" => "chain-session"}},
+                 state
+               )
+
+      assert File.exists?(secret)
+    end
   end
 
   describe "translate_outbound/2 — model, mode, and config" do
