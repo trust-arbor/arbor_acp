@@ -15,7 +15,7 @@ Pass the module as `adapter`, and vendor settings inside `adapter_opts`:
 | --- | --- | --- | --- |
 | Claude Code | `Arbor.ACP.Adapters.ClaudeSDK` | SDK stream-json control protocol | `cli_path`, then `CLAUDE_CODE_EXECUTABLE`, then `claude` |
 | Codex | `Arbor.ACP.Adapters.Codex` | `app-server` JSON-RPC | `codex_path`, then `CODEX_PATH`, then `codex` |
-| Pi | `Arbor.ACP.Adapters.Pi` | `--mode rpc --no-themes` (plus `--no-context-files` unless `trust_workspace_config`) | `cli_path`, `pi_command`, `PI_ACP_PI_COMMAND`, Pi settings, then `pi` |
+| Pi | `Arbor.ACP.Adapters.Pi` | `--mode rpc --no-themes` (plus `--no-context-files` and `--no-approve` unless `trust_workspace_config`) | `cli_path`, `pi_command`, `PI_ACP_PI_COMMAND`, Pi settings, then `pi` |
 | ZCode | `Arbor.ACP.Adapters.ZCode` | `app-server` NDJSON | `cli_path`, then `ZCODE_EXECUTABLE`, then `zcode` |
 
 The README contains a complete Codex session including cleanup. For another
@@ -61,9 +61,10 @@ when the adapter is not minting a private vendor config dir.
 Claude, Codex and Pi isolate workspace agent configuration by default:
 Claude is launched with `--setting-sources user` and `--strict-mcp-config`,
 and each of those adapters mints a private `CLAUDE_CONFIG_DIR` /
-`CODEX_HOME` / `PI_CODING_AGENT_DIR` per ACP session. Codex's minted home
-disables project `AGENTS.md`; Pi is launched with `--no-context-files` and
-ignores the workspace `.pi` tree, inherited `PI_CODING_AGENT_DIR`, and a
+`CODEX_HOME` / `PI_CODING_AGENT_DIR` keyed by ACP session id. Codex's minted
+home has no `AGENTS.md`, disables skills, and does not trust the project; Pi
+is launched with `--no-context-files` and `--no-approve` and ignores the
+workspace `.pi` tree, inherited `PI_CODING_AGENT_DIR`, and a
 `pi` executable that resolves inside the workspace. Existing vendor logins,
 global settings, models, skills and prompts are invisible until you point
 the adapter at a real home. Cleanup deletes the generated home, including

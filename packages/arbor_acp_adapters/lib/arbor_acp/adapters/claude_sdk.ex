@@ -941,7 +941,9 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       limit: params["limit"] || params[:limit],
       offset: params["offset"] || params[:offset],
       claude_config_dir: Keyword.get(state.opts, :claude_config_dir),
-      env: Keyword.get(state.opts, :env, [])
+      env: Keyword.get(state.opts, :env, []),
+      session_id: state.session_id || Keyword.get(state.opts, :session_id),
+      trust_workspace_config: Keyword.get(state.opts, :trust_workspace_config, false)
     }
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
@@ -1055,6 +1057,10 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     {queued_messages, state} = cancel_queued_prompts(state, session_id)
     {active_messages, state} = cancel_active_prompt(state, session_id)
 
+    if owns_runtime_home?(state, session_id) do
+      _ = RuntimeHome.release(runtime_home_release_opts(state, session_id), :claude)
+    end
+
     state =
       if state.session_id == session_id do
         %{
@@ -1076,6 +1082,18 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       end
 
     {active_messages ++ queued_messages, state}
+  end
+
+  defp owns_runtime_home?(state, session_id) do
+    state.session_id == session_id or Keyword.get(state.opts, :session_id) == session_id
+  end
+
+  defp runtime_home_release_opts(state, session_id) do
+    Keyword.put(
+      state.opts,
+      :session_id,
+      session_id || state.session_id || Keyword.get(state.opts, :session_id)
+    )
   end
 
   defp cancel_active_prompt(%{pending_prompt_id: nil} = state, _session_id), do: {[], state}

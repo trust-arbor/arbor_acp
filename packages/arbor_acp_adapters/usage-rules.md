@@ -59,7 +59,7 @@ options.
   Claude, Codex and Pi ignore workspace agent config (`.claude/settings*.json`,
   `.mcp.json`, `.pi/`, `AGENTS.md`) unless `trust_workspace_config: true`, and
   they mint a private per-session vendor config dir unless `:claude_config_dir`,
-  `:codex_home` or `:agent_dir` is set. That empty home hides existing logins,
+  `:codex_home`, `:agent_dir`, or the matching `:env` variable is set. That empty home hides existing logins,
   global settings, models, skills and prompts; cleanup deletes transcripts and
   credentials written into it. Pass `trust_workspace_config: true` or an
   explicit directory to keep today's behavior.

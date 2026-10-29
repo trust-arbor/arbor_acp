@@ -1,10 +1,11 @@
 defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   @moduledoc false
 
-  # Private per-session config directories for vendor CLIs. Created 0700 under
-  # System.tmp_dir/0 and removed when the process that requested them exits
-  # (the AdapterBridge for a managed launch). Cached per vendor and workspace
-  # so a later session with a different cwd does not reuse the previous home.
+  # Private per-ACP-session config directories for vendor CLIs. Created 0700
+  # under System.tmp_dir/0, keyed by session id (or :connection before one
+  # exists), and removed on session close or when the process that requested
+  # them exits. A caller :env vendor var or explicit option is the source of
+  # truth and is not minted over.
 
   @dir_prefix "arbor_acp_runtime_home_"
 
@@ -23,15 +24,35 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   @spec env_var(atom()) :: String.t()
   def env_var(kind), do: spec!(kind).env
 
+  @spec env_value(keyword(), String.t()) :: String.t() | nil
+  def env_value(opts, name) when is_list(opts) and is_binary(name) do
+    case env_get(Keyword.get(opts, :env, []), name) do
+      value when is_binary(value) and value != "" ->
+        value
+
+      _ ->
+        if Keyword.get(opts, :environment_policy) == :inherit do
+          case System.get_env(name) do
+            value when is_binary(value) and value != "" -> value
+            _ -> nil
+          end
+        else
+          nil
+        end
+    end
+  end
+
+  def env_value(_opts, _name), do: nil
+
   @spec path(keyword(), atom()) :: String.t() | nil
   def path(opts, kind) when is_list(opts) do
     spec = spec!(kind)
 
-    case Keyword.get(opts, spec.option) do
-      path when is_binary(path) and path != "" ->
-        Path.expand(path)
+    case configured_path(opts, spec) do
+      path when is_binary(path) ->
+        path
 
-      _ ->
+      nil ->
         if trust_workspace_config?(opts) do
           nil
         else
@@ -61,6 +82,83 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
     end
   end
 
+  @spec release(keyword(), atom()) :: :ok
+  def release(opts, kind) when is_list(opts) do
+    spec = spec!(kind)
+    key = cache_key(opts, kind)
+
+    cached =
+      case Process.delete(key) do
+        path when is_binary(path) -> path
+        _ -> nil
+      end
+
+    configured = configured_path(opts, spec)
+    option = option_path(opts, spec)
+
+    [cached, configured, option]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.uniq()
+    |> Enum.each(&remove_minted/1)
+
+    :ok
+  end
+
+  def release(_opts, _kind), do: :ok
+
+  defp configured_path(opts, spec) do
+    case option_path(opts, spec) do
+      path when is_binary(path) ->
+        path
+
+      nil ->
+        case env_get(Keyword.get(opts, :env, []), spec.env) do
+          path when is_binary(path) and path != "" -> Path.expand(path)
+          _ -> nil
+        end
+    end
+  end
+
+  defp option_path(opts, spec) do
+    case Keyword.get(opts, spec.option) do
+      path when is_binary(path) and path != "" -> Path.expand(path)
+      _ -> nil
+    end
+  end
+
+  defp env_get(env, name) do
+    env
+    |> normalize_env()
+    |> Map.get(name)
+    |> env_string()
+  end
+
+  defp normalize_env(env) when is_map(env) do
+    Map.new(env, fn {key, value} -> {to_string(key), env_string(value)} end)
+  end
+
+  defp normalize_env(env) when is_list(env) do
+    Enum.reduce(env, %{}, fn
+      {key, value}, acc ->
+        Map.put(acc, to_string(key), env_string(value))
+
+      %{"name" => name, "value" => value}, acc ->
+        Map.put(acc, to_string(name), env_string(value))
+
+      %{name: name, value: value}, acc ->
+        Map.put(acc, to_string(name), env_string(value))
+
+      _other, acc ->
+        acc
+    end)
+  end
+
+  defp normalize_env(_env), do: %{}
+
+  defp env_string(value) when is_binary(value), do: value
+  defp env_string(value) when is_list(value), do: List.to_string(value)
+  defp env_string(_value), do: nil
+
   defp drop_minted_option(opts, option) do
     case Keyword.get(opts, option) do
       path when is_binary(path) ->
@@ -83,14 +181,16 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   end
 
   defp session_key(opts) do
-    case Keyword.get(opts, :cwd) do
-      cwd when is_binary(cwd) and cwd != "" -> Path.expand(cwd)
+    case Keyword.get(opts, :session_id) || Keyword.get(opts, :resume) do
+      id when is_binary(id) and id != "" -> id
       _ -> :connection
     end
   end
 
+  defp cache_key(opts, kind), do: {__MODULE__, kind, session_key(opts)}
+
   defp cached_or_create(opts, kind) do
-    key = {__MODULE__, kind, session_key(opts)}
+    key = cache_key(opts, kind)
 
     case Process.get(key) do
       path when is_binary(path) ->
@@ -133,10 +233,17 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   end
 
   defp prepare!(:codex, path) do
+    _ = File.rm(Path.join(path, "AGENTS.md"))
     config = Path.join(path, "config.toml")
 
     unless File.exists?(config) do
-      File.write!(config, "project_doc_max_bytes = 0\n")
+      File.write!(config, """
+      project_doc_max_bytes = 0
+
+      [features]
+      skills = false
+      """)
+
       _ = File.chmod(config, 0o600)
     end
 
@@ -144,6 +251,11 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   end
 
   defp prepare!(_kind, _path), do: :ok
+
+  defp remove_minted(path) do
+    if minted_path?(path), do: File.rm_rf(path)
+    :ok
+  end
 
   defp remove_when_down(owner, dir) do
     spawn(fn ->

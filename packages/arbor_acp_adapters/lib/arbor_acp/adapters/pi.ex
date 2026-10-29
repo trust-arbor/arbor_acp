@@ -8,9 +8,9 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   Workspace `.pi` settings, prompts, skills, packages and `AGENTS.md` are
   ignored unless `:trust_workspace_config` is set. By default the child also
-  gets a private per-session `PI_CODING_AGENT_DIR` and `--no-context-files`;
-  inherited `PI_CODING_AGENT_DIR` is ignored and a workspace `pi` executable
-  is refused. Pass `:agent_dir` to keep a specific directory.
+  gets a private per-session `PI_CODING_AGENT_DIR`, `--no-context-files` and
+  `--no-approve`; inherited `PI_CODING_AGENT_DIR` is ignored and a workspace
+  `pi` executable is refused. Pass `:agent_dir` to keep a specific directory.
 
   Managed output uses one frame of shared delivery credit. Startup banners
   retained for session metadata are limited by `:max_prelude_lines` (64) and
@@ -107,7 +107,11 @@ defmodule Arbor.ACP.Adapters.Pi do
   def environment_defaults(opts), do: Arbor.ACP.Adapters.Internal.Environment.pi(opts)
 
   @impl true
-  def env(opts), do: RuntimeHome.put(%{}, opts, :pi)
+  def env(opts) do
+    %{}
+    |> RuntimeHome.put(opts, :pi)
+    |> maybe_put_session_dir(opts)
+  end
 
   @impl true
   def init(opts) do
@@ -119,7 +123,7 @@ defmodule Arbor.ACP.Adapters.Pi do
        managed?: Keyword.get(opts, :managed, true),
        delete_session_files?: Keyword.get(opts, :delete_session_files, false),
        thinking_level: Keyword.get(opts, :thinking_level, Config.default_thinking_level()),
-       session_dir: Keyword.get(opts, :session_dir),
+       session_dir: session_dir(opts),
        session_map_path: Keyword.get(opts, :session_map_path, SessionStore.default_map_path()),
        cwd: Keyword.get(opts, :cwd),
        workspace_root: Keyword.get(opts, :cwd),
@@ -177,6 +181,13 @@ defmodule Arbor.ACP.Adapters.Pi do
       "delete" => %{}
     })
   end
+
+  @impl true
+  def auth_methods(opts, %{opts: state_opts}) when is_list(state_opts) do
+    auth_methods(Keyword.merge(opts, state_opts))
+  end
+
+  def auth_methods(opts, _state), do: auth_methods(opts)
 
   @impl true
   def auth_methods(opts) do
@@ -674,6 +685,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   # the session, so the operation in flight, and a running setup's group,
   # still get their replies.
   defp close_session(state) do
+    _ = RuntimeHome.release(state.opts, :pi)
     {messages, abort, state} = end_session(state)
     # The client closed the session, so nothing is published for it any more:
     # an operation still in flight finds its session gone.
@@ -3069,7 +3081,27 @@ defmodule Arbor.ACP.Adapters.Pi do
     if RuntimeHome.trust_workspace_config?(opts) do
       args
     else
-      args ++ ["--no-context-files"]
+      args ++ ["--no-context-files", "--no-approve"]
+    end
+  end
+
+  defp session_dir(opts) do
+    case Keyword.get(opts, :session_dir) do
+      dir when is_binary(dir) and dir != "" ->
+        Path.expand(dir)
+
+      _ ->
+        case RuntimeHome.env_value(opts, "PI_CODING_AGENT_SESSION_DIR") do
+          dir when is_binary(dir) and dir != "" -> Path.expand(dir)
+          _ -> nil
+        end
+    end
+  end
+
+  defp maybe_put_session_dir(env, opts) do
+    case session_dir(opts) do
+      nil -> env
+      dir -> Map.put(env, "PI_CODING_AGENT_SESSION_DIR", dir)
     end
   end
 

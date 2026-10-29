@@ -497,9 +497,9 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
         assert %{content: content} = argv
 
         assert [
-                 "--mode rpc --no-themes --no-context-files",
-                 "--mode rpc --no-themes --no-context-files --session <sandbox>/sessions/mapped.jsonl",
-                 "--mode rpc --no-themes --no-context-files --session <sandbox>/sessions/pi-session.jsonl"
+                 "--mode rpc --no-themes --no-context-files --no-approve",
+                 "--mode rpc --no-themes --no-context-files --no-approve --session <sandbox>/sessions/mapped.jsonl",
+                 "--mode rpc --no-themes --no-context-files --no-approve --session <sandbox>/sessions/pi-session.jsonl"
                ] = String.split(content, "\n", trim: true)
 
         assert %{port_writes: [%{"type" => "prompt"}]} = prompt
@@ -554,7 +554,7 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
                  port_writes: [%{"type" => "set_model", "modelId" => "gpt-5.1"}]
                } = ended
 
-        assert "--mode rpc --no-themes --no-context-files --session <sandbox>/sessions/pi-session.jsonl" =
+        assert "--mode rpc --no-themes --no-context-files --no-approve --session <sandbox>/sessions/pi-session.jsonl" =
                  argv.content |> String.split("\n", trim: true) |> List.last()
       end
     end
@@ -601,9 +601,9 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       assert %{messages: [%{"id" => 3, "error" => _}], port: :respawned} = failed
 
       assert [
-               "--mode rpc --no-themes --no-context-files",
-               "--mode rpc --no-themes --no-context-files --session <sandbox>/sessions/mapped.jsonl",
-               "--mode rpc --no-themes --no-context-files --session <sandbox>/sessions/pi-session.jsonl"
+               "--mode rpc --no-themes --no-context-files --no-approve",
+               "--mode rpc --no-themes --no-context-files --no-approve --session <sandbox>/sessions/mapped.jsonl",
+               "--mode rpc --no-themes --no-context-files --no-approve --session <sandbox>/sessions/pi-session.jsonl"
              ] = String.split(argv.content, "\n", trim: true)
     end
 
@@ -671,7 +671,7 @@ defmodule Arbor.ACP.Adapters.Pi.ControlGroupsGoldenTest do
       assert [
                _first,
                _second,
-               "--mode rpc --no-themes --no-context-files --session <sandbox>/sessions/pi-session.jsonl"
+               "--mode rpc --no-themes --no-context-files --no-approve --session <sandbox>/sessions/pi-session.jsonl"
              ] =
                String.split(argv.content, "\n", trim: true)
     end

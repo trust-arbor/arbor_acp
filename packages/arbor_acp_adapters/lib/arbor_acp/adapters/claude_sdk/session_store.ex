@@ -1057,6 +1057,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
     []
     |> maybe_keyword(:cwd, option(opts, :cwd, "cwd"))
     |> maybe_keyword(:claude_config_dir, option(opts, :claude_config_dir, "claudeConfigDir"))
+    |> maybe_keyword(:env, option(opts, :env, "env"))
+    |> maybe_keyword(:session_id, option(opts, :session_id, "sessionId"))
     |> maybe_keyword(
       :trust_workspace_config,
       option(opts, :trust_workspace_config, "trustWorkspaceConfig")

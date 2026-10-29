@@ -15,10 +15,11 @@ defmodule Arbor.ACP.Adapters.Codex do
   caller-controlled connection details.
 
   By default the adapter mints a private per-session `CODEX_HOME` (0700) so
-  the child does not inherit the host Codex home, and writes
-  `project_doc_max_bytes = 0` there so Codex 0.165 does not read workspace
-  `AGENTS.md`. Pass `:codex_home` or `:trust_workspace_config` to keep the
-  previous home.
+  the child does not inherit the host Codex home. The minted home has no
+  `AGENTS.md`, writes `project_doc_max_bytes = 0` and `[features] skills = false`,
+  and does not mark the project trusted, so Codex 0.165 does not load
+  workspace instructions, `.codex/config.toml`, or `.agents/skills`. Pass
+  `:codex_home` or `:trust_workspace_config` to keep the previous home.
   """
 
   @behaviour Arbor.ACP.Adapter
@@ -43,6 +44,7 @@ defmodule Arbor.ACP.Adapters.Codex do
   alias Arbor.RPC.JSONRPC, as: Envelope
   alias Arbor.RPC.LogSummary
   alias Arbor.ACP.Adapters.Internal.Maps
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
   alias Arbor.ACP.AdapterSupport.NameValue
   alias Arbor.ACP.AdapterSupport.WorkspacePath
 
@@ -77,7 +79,7 @@ defmodule Arbor.ACP.Adapters.Codex do
 
   @impl true
   def init(opts) do
-    opts = Arbor.ACP.Adapters.Internal.RuntimeHome.put_opt(opts, :codex)
+    opts = RuntimeHome.put_opt(opts, :codex)
 
     {:ok,
      %__MODULE__{
@@ -97,7 +99,7 @@ defmodule Arbor.ACP.Adapters.Codex do
 
   @impl true
   def env(opts) do
-    Arbor.ACP.Adapters.Internal.RuntimeHome.put(%{}, opts, :codex)
+    RuntimeHome.put(%{}, opts, :codex)
   end
 
   @impl true
@@ -778,9 +780,15 @@ defmodule Arbor.ACP.Adapters.Codex do
         })
       end)
 
+    remaining_sessions = Map.delete(state.sessions, session_id)
+
+    if remaining_sessions == %{} do
+      _ = RuntimeHome.release(Keyword.put(state.opts, :session_id, session_id), :codex)
+    end
+
     state = %{
       state
-      | sessions: Map.delete(state.sessions, session_id),
+      | sessions: remaining_sessions,
         pending_client_requests: Map.new(pending),
         closed_sessions: Map.put(state.closed_sessions, session_id, true),
         url_elicitations: Map.new(open_elicitations)
