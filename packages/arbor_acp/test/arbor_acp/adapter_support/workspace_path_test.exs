@@ -99,4 +99,43 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
     refute WorkspacePath.within?(escaped, root)
     assert WorkspacePath.contained(escaped, root) == :error
   end
+
+  test "rm_within does not delete an outside file swapped in after containment",
+       %{root: root, outside: outside} do
+    inside = Path.join(root, "inside.txt")
+    secret = Path.join(outside, "secret.txt")
+    File.write!(inside, "session")
+    File.write!(secret, "secret")
+
+    :ok =
+      WorkspacePath.rm_within(inside, root,
+        after_contain: fn ->
+          File.rm!(inside)
+          File.ln_s!(secret, inside)
+        end
+      )
+
+    assert File.exists?(secret)
+  end
+
+  test "rm_within does not follow an ancestor directory swapped for a symlink",
+       %{root: root, outside: outside} do
+    sub = Path.join(root, "sub")
+    File.mkdir_p!(sub)
+    inside = Path.join(sub, "secret.txt")
+    secret = Path.join(outside, "secret.txt")
+    File.write!(inside, "session")
+    File.write!(secret, "secret")
+
+    :ok =
+      WorkspacePath.rm_within(inside, root,
+        after_contain: fn ->
+          File.rm!(inside)
+          File.rmdir!(sub)
+          File.ln_s!(outside, sub)
+        end
+      )
+
+    assert File.exists?(secret)
+  end
 end

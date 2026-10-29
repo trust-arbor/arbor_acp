@@ -2953,11 +2953,7 @@ defmodule Arbor.ACP.Adapters.Pi do
 
     # Resolve symlinks before comparing so a sessions-root link that points
     # outside cannot pass a lexical prefix check and delete the target.
-    if WorkspacePath.within?(session_file, root) do
-      File.rm(WorkspacePath.canonical(session_file))
-    else
-      :ok
-    end
+    WorkspacePath.rm_within(session_file, root)
   end
 
   # `seq` records creation order. Never order groups by `group_id`: map order

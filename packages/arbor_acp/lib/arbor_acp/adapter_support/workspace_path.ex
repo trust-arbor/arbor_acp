@@ -35,6 +35,23 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
 
   def contained(_path, _root), do: :error
 
+  @doc """
+  Deletes `path` when it resolves inside `root`.
+
+  `opts[:after_contain]` runs after the containment check and before the
+  delete, so tests can swap the path in the check-then-use window.
+  """
+  @spec rm_within(String.t(), String.t(), keyword()) :: :ok
+  def rm_within(path, root, opts \\ []) when is_binary(path) and is_binary(root) do
+    if within?(path, root) do
+      if hook = Keyword.get(opts, :after_contain), do: hook.()
+      File.rm(canonical(path))
+      :ok
+    else
+      :ok
+    end
+  end
+
   # Walk the components left to right against the physically resolved prefix,
   # the way the kernel does, so `..` steps out of the directory a symlink
   # points at rather than cancelling the symlink component lexically.
