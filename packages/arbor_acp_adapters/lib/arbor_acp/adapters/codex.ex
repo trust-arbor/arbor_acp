@@ -392,97 +392,14 @@ defmodule Arbor.ACP.Adapters.Codex do
          %{"method" => "session/load", "id" => acp_id, "params" => params},
          state
        ) do
-    case Sessions.fetch_id(params) do
-      {:ok, session_id} ->
-        mode_id =
-          Config.normalize_mode_id(params["modeId"] || params["approvalPolicy"] || state.mode_id)
-
-        cwd = params["cwd"] || Keyword.get(state.opts, :cwd)
-
-        case session_config(params, cwd, state) do
-          {:ok, config, additional_directories} ->
-            wire_params =
-              %{
-                "threadId" => session_id,
-                "initialTurnsPage" => %{
-                  "limit" => 100,
-                  "sortDirection" => "desc",
-                  "itemsView" => "full"
-                }
-              }
-              |> maybe_put("model", params["model"] || state.model)
-              |> maybe_put("modelProvider", resume_model_provider(state))
-              |> maybe_put("cwd", cwd)
-              |> maybe_put("config", config)
-              |> Config.merge_thread_mode_wire_params(mode_id)
-
-            {id, state} = next_request_id(state)
-            wire_params = NativeProtocol.overrides(wire_params, params)
-            request = Protocol.encode_request(id, Protocol.method(:thread_resume), wire_params)
-
-            state =
-              track_request(state, id, :thread_resume, acp_id, %{
-                session_id: session_id,
-                mode_id: mode_id,
-                additional_directories: additional_directories,
-                page_history: true,
-                resume_overrides: resume_overrides(wire_params)
-              })
-
-            {:ok, request, state}
-
-          {:error, reason} ->
-            {:error, reason, state}
-        end
-
-      {:error, reason} ->
-        {:error, reason, state}
-    end
+    resume_session(acp_id, params, state, page_history: true)
   end
 
   defp do_translate_outbound(
          %{"method" => "session/resume", "id" => acp_id, "params" => params},
          state
        ) do
-    case Sessions.fetch_id(params) do
-      {:ok, session_id} ->
-        mode_id =
-          Config.normalize_mode_id(params["modeId"] || params["approvalPolicy"] || state.mode_id)
-
-        cwd = params["cwd"] || Keyword.get(state.opts, :cwd)
-
-        case session_config(params, cwd, state) do
-          {:ok, config, additional_directories} ->
-            wire_params =
-              %{"threadId" => session_id, "excludeTurns" => true}
-              |> maybe_put("model", params["model"] || state.model)
-              |> maybe_put("modelProvider", resume_model_provider(state))
-              |> maybe_put("cwd", cwd)
-              |> maybe_put("config", config)
-              |> Config.merge_thread_mode_wire_params(mode_id)
-
-            {id, state} = next_request_id(state)
-            wire_params = NativeProtocol.overrides(wire_params, params)
-            request = Protocol.encode_request(id, Protocol.method(:thread_resume), wire_params)
-
-            state =
-              track_request(state, id, :thread_resume, acp_id, %{
-                session_id: session_id,
-                mode_id: mode_id,
-                additional_directories: additional_directories,
-                page_history: false,
-                resume_overrides: resume_overrides(wire_params)
-              })
-
-            {:ok, request, state}
-
-          {:error, reason} ->
-            {:error, reason, state}
-        end
-
-      {:error, reason} ->
-        {:error, reason, state}
-    end
+    resume_session(acp_id, params, state, page_history: false)
   end
 
   defp do_translate_outbound(
@@ -732,6 +649,82 @@ defmodule Arbor.ACP.Adapters.Codex do
   end
 
   defp do_translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+  defp resume_session(acp_id, params, state, opts) do
+    page_history? = Keyword.fetch!(opts, :page_history)
+
+    case Sessions.fetch_id(params) do
+      {:ok, session_id} ->
+        mode_id =
+          Config.normalize_mode_id(params["modeId"] || params["approvalPolicy"] || state.mode_id)
+
+        cwd = params["cwd"] || Keyword.get(state.opts, :cwd)
+
+        with {:ok, config, additional_directories} <- session_config(params, cwd, state),
+             :ok <- authorize_bound_thread(session_id, cwd, state) do
+          wire_params =
+            if page_history? do
+              %{
+                "threadId" => session_id,
+                "initialTurnsPage" => %{
+                  "limit" => 100,
+                  "sortDirection" => "desc",
+                  "itemsView" => "full"
+                }
+              }
+            else
+              %{"threadId" => session_id, "excludeTurns" => true}
+            end
+            |> maybe_put("model", params["model"] || state.model)
+            |> maybe_put("modelProvider", resume_model_provider(state))
+            |> maybe_put("cwd", cwd)
+            |> maybe_put("config", config)
+            |> Config.merge_thread_mode_wire_params(mode_id)
+
+          {id, state} = next_request_id(state)
+          wire_params = NativeProtocol.overrides(wire_params, params)
+          request = Protocol.encode_request(id, Protocol.method(:thread_resume), wire_params)
+
+          state =
+            track_request(state, id, :thread_resume, acp_id, %{
+              session_id: session_id,
+              mode_id: mode_id,
+              additional_directories: additional_directories,
+              page_history: page_history?,
+              resume_overrides: resume_overrides(wire_params)
+            })
+
+          {:ok, request, state}
+        else
+          {:error, reason} -> {:error, reason, state}
+        end
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  defp authorize_bound_thread(session_id, cwd, state) do
+    case Map.get(state.sessions, session_id) do
+      %{cwd: bound_cwd} when is_binary(bound_cwd) and is_binary(cwd) ->
+        if same_workspace?(bound_cwd, cwd, state.opts) do
+          :ok
+        else
+          {:error, "Codex thread is not bound to this session or workspace"}
+        end
+
+      _unknown ->
+        :ok
+    end
+  end
+
+  defp same_workspace?(bound_cwd, cwd, opts) do
+    WorkspacePath.canonical(bound_cwd) == WorkspacePath.canonical(cwd) or
+      Enum.any?(workspace_root_list(opts), fn root ->
+        is_binary(root) and root != "" and Path.type(root) == :absolute and
+          WorkspacePath.within?(bound_cwd, root) and WorkspacePath.within?(cwd, root)
+      end)
+  end
 
   defp close_session_state(session_id, session, state) do
     prompt_messages =
@@ -3444,20 +3437,21 @@ defmodule Arbor.ACP.Adapters.Codex do
   end
 
   defp within_workspace_roots?(path, opts) do
-    roots =
-      case Keyword.get(opts, :workspace_roots) do
-        roots when is_list(roots) -> roots
-        nil -> [Keyword.get(opts, :cwd, File.cwd!())]
-        root -> [root]
-      end
-
-    Enum.any?(roots, fn
+    Enum.any?(workspace_root_list(opts), fn
       root when is_binary(root) and root != "" ->
         Path.type(root) == :absolute and WorkspacePath.within?(path, root)
 
       _invalid ->
         false
     end)
+  end
+
+  defp workspace_root_list(opts) do
+    case Keyword.get(opts, :workspace_roots) do
+      roots when is_list(roots) -> roots
+      nil -> [Keyword.get(opts, :cwd, File.cwd!())]
+      root -> [root]
+    end
   end
 
   defp authorize_mcp_server(server, cwd, state) do

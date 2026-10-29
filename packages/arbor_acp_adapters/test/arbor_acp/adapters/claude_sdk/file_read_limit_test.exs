@@ -4,7 +4,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.FileReadLimitTest do
   alias Arbor.ACP.Adapters.ClaudeSDK
 
   setup do
-    {:ok, state} = ClaudeSDK.init(session_id: "session", cwd: "/workspace")
+    {:ok, state} = ClaudeSDK.init(session_id: "session", cwd: "/workspace", managed: false)
     %{state: state}
   end
 

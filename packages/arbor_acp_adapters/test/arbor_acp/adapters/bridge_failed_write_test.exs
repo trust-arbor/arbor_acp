@@ -429,7 +429,7 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
   # -- scenarios ----------------------------------------------------------------
 
   defp scenario(ctx, "session/prompt" = route) when ctx.adapter == :claude do
-    base(ctx, ClaudeSDK, cli_path: ctx.native, cwd: ctx.dir)
+    base(ctx, ClaudeSDK, cli_path: ctx.native, cwd: ctx.dir, managed: false)
     |> Map.merge(%{
       setup:
         &open_session(&1, "session/new", %{"cwd" => ctx.dir, "sessionId" => "claude-session"}, []),
@@ -442,7 +442,7 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
   end
 
   defp scenario(ctx, "session/set_config_option" = route) when ctx.adapter == :claude do
-    base(ctx, ClaudeSDK, cli_path: ctx.native, cwd: ctx.dir)
+    base(ctx, ClaudeSDK, cli_path: ctx.native, cwd: ctx.dir, managed: false)
     |> Map.merge(%{
       setup:
         &open_session(&1, "session/new", %{"cwd" => ctx.dir, "sessionId" => "claude-session"}, []),

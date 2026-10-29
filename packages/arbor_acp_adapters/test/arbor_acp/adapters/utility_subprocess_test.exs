@@ -25,7 +25,12 @@ defmodule Arbor.ACP.Adapters.UtilitySubprocessTest do
       """)
 
     {:ok, state} =
-      ClaudeSDK.init(cli_path: cli, cwd: directory, env: %{"UTILITY_VALUE" => "literal"})
+      ClaudeSDK.init(
+        cli_path: cli,
+        cwd: directory,
+        env: %{"UTILITY_VALUE" => "literal"},
+        managed: false
+      )
 
     state = %{state | gateway_auth: %{"methodId" => "gateway"}}
     assert {:reply, %{}, state} = ClaudeSDK.translate_outbound(logout(), state)
@@ -39,12 +44,15 @@ defmodule Arbor.ACP.Adapters.UtilitySubprocessTest do
     directory: directory
   } do
     cli = script(directory, "claude", "printf denied >&2; exit 7")
-    {:ok, state} = ClaudeSDK.init(cli_path: cli, cwd: directory)
+    {:ok, state} = ClaudeSDK.init(cli_path: cli, cwd: directory, managed: false)
     assert {:error, message, _state} = ClaudeSDK.translate_outbound(logout(), state)
     assert message == "claude auth logout failed with status 7: denied"
 
     cli = script(directory, "claude", "printf 123456")
-    {:ok, state} = ClaudeSDK.init(cli_path: cli, cwd: directory, max_output_bytes: 5)
+
+    {:ok, state} =
+      ClaudeSDK.init(cli_path: cli, cwd: directory, max_output_bytes: 5, managed: false)
+
     assert {:error, message, _state} = ClaudeSDK.translate_outbound(logout(), state)
     assert message =~ ":output_too_large"
   end
@@ -60,7 +68,8 @@ defmodule Arbor.ACP.Adapters.UtilitySubprocessTest do
         cwd: directory,
         timeout: 500,
         cleanup_timeout: 200,
-        term_grace: 50
+        term_grace: 50,
+        managed: false
       )
 
     assert {:error, message, _state} = ClaudeSDK.translate_outbound(logout(), state)

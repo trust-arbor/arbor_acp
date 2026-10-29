@@ -13,13 +13,13 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
   alias Arbor.ACP.Adapters.Internal.PromptQueue
 
   setup do
-    {:ok, state} = ClaudeSDK.init(cwd: "/tmp/project", model: "sonnet")
+    {:ok, state} = ClaudeSDK.init(cwd: "/tmp/project", model: "sonnet", managed: false)
     %{state: state}
   end
 
   describe "command/1 and env/1" do
     test "uses SDK-compatible Claude Code flags by default" do
-      {cmd, args} = ClaudeSDK.command([])
+      {cmd, args} = ClaudeSDK.command(managed: false)
 
       assert cmd == "claude"
       assert ["--output-format", "stream-json"] = Enum.slice(args, 0, 2)
@@ -42,6 +42,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
     test "passes session and mcp options through to Claude Code" do
       {_cmd, args} =
         ClaudeSDK.command(
+          managed: false,
           model: "opus",
           additional_directories: ["/tmp/shared"],
           mcp_servers: %{"docs" => %{"command" => "docs-mcp"}},
@@ -59,7 +60,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
     end
 
     test "bypass permission mode requires the explicit dangerous opt-in flag" do
-      {_cmd, args} = ClaudeSDK.command(permission_mode: :bypass)
+      {_cmd, args} = ClaudeSDK.command(managed: false, permission_mode: :bypass)
 
       assert "--permission-mode" in args
       assert "bypassPermissions" in args
@@ -120,6 +121,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
     test "writes :mcp_servers to a private file, keeping it off the command line" do
       {_cmd, args} =
         ClaudeSDK.command(
+          managed: false,
           mcp_servers: %{
             "api" => %{
               "type" => "http",
@@ -146,7 +148,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
 
       {owner, owner_ref} =
         spawn_monitor(fn ->
-          {_cmd, args} = ClaudeSDK.command(mcp_servers: %{"docs" => %{"command" => "docs-mcp"}})
+          {_cmd, args} =
+            ClaudeSDK.command(
+              managed: false,
+              mcp_servers: %{"docs" => %{"command" => "docs-mcp"}}
+            )
+
           send(test_pid, {:config, hd(mcp_config_values(args))})
 
           receive do
@@ -184,10 +191,19 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
           adapter_opts: [
             cli_path: cli,
             cwd: tmp_dir,
+            workspace_roots: [tmp_dir],
             mcp_servers: %{"docs" => %{"command" => "docs-mcp"}}
           ]
         )
 
+      message = %{
+        "jsonrpc" => "2.0",
+        "id" => 1,
+        "method" => "session/new",
+        "params" => %{"cwd" => tmp_dir, "sessionId" => "claude-session"}
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(message))
       wait_until(fn -> File.exists?(argv_file) end)
 
       assert [path] =
@@ -203,11 +219,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
       config = Path.join(tmp_dir, "mcp.json")
       File.write!(config, ~s({"mcpServers": {}}))
 
-      {_cmd, args} = ClaudeSDK.command(mcp_config_path: config)
+      {_cmd, args} = ClaudeSDK.command(managed: false, mcp_config_path: config)
       assert mcp_config_values(args) == [config]
 
       # A relative path is resolved against the directory Claude Code runs in.
-      {_cmd, args} = ClaudeSDK.command(mcp_config_path: "mcp.json", cwd: tmp_dir)
+      {_cmd, args} = ClaudeSDK.command(managed: false, mcp_config_path: "mcp.json", cwd: tmp_dir)
       assert mcp_config_values(args) == [config]
     end
 
@@ -218,6 +234,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
 
       {_cmd, args} =
         ClaudeSDK.command(
+          managed: false,
           mcp_config_path: [first, second],
           mcp_servers: %{"docs" => %{"command" => "docs-mcp"}}
         )
@@ -237,7 +254,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
       ]
 
       assert {:error, {:invalid_option, :mcp_servers, message}} =
-               ClaudeSDK.command(mcp_servers: acp_servers)
+               ClaudeSDK.command(managed: false, mcp_servers: acp_servers)
 
       assert message =~ "got a list"
       assert message =~ "ACP-style"
@@ -252,7 +269,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
             %{:api => %{"url" => "x"}, "api" => %{"url" => "secret-token"}}
           ] do
         assert {:error, {:invalid_option, :mcp_servers, message}} =
-                 ClaudeSDK.command(mcp_servers: servers)
+                 ClaudeSDK.command(managed: false, mcp_servers: servers)
 
         refute message =~ "secret-token"
       end
@@ -262,15 +279,15 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
       missing = Path.join(tmp_dir, "missing.json")
 
       assert {:error, {:invalid_option, :mcp_config_path, message}} =
-               ClaudeSDK.command(mcp_config_path: missing)
+               ClaudeSDK.command(managed: false, mcp_config_path: missing)
 
       assert message =~ "missing.json"
 
       assert {:error, {:invalid_option, :mcp_config_path, _}} =
-               ClaudeSDK.command(mcp_config_path: tmp_dir)
+               ClaudeSDK.command(managed: false, mcp_config_path: tmp_dir)
 
       assert {:error, {:invalid_option, :mcp_config_path, _}} =
-               ClaudeSDK.command(mcp_config_path: 42)
+               ClaudeSDK.command(managed: false, mcp_config_path: 42)
     end
 
     test "the bridge refuses to start on invalid MCP options" do
@@ -288,7 +305,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
     @describetag :tmp_dir
 
     setup %{tmp_dir: tmp_dir} do
-      %{opts: [cwd: tmp_dir, claude_config_dir: Path.join(tmp_dir, "claude")]}
+      %{opts: [cwd: tmp_dir, claude_config_dir: Path.join(tmp_dir, "claude"), managed: false]}
     end
 
     test "session/new warns that servers the launch did not configure are not attached", %{
@@ -433,7 +450,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
         ClaudeSDK.init(
           cwd: "/tmp/project",
           model: "sonnet",
-          allow_dangerously_skip_permissions: true
+          allow_dangerously_skip_permissions: true,
+          managed: false
         )
 
       opted_out = %{
@@ -545,7 +563,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
 
     test "session/list reads Claude SDK sessions from disk" do
       {config_dir, cwd, session_id} = write_store_fixture("list me")
-      {:ok, state} = ClaudeSDK.init(cwd: cwd, claude_config_dir: config_dir)
+      {:ok, state} = ClaudeSDK.init(cwd: cwd, claude_config_dir: config_dir, managed: false)
 
       assert {:ok, [session], _state} = ClaudeSDK.list_sessions(%{"cwd" => cwd}, state)
       assert session["sessionId"] == session_id
@@ -557,7 +575,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
       {config_dir, cwd, session_id} = write_store_fixture("delete me")
 
       {:ok, state} =
-        ClaudeSDK.init(cwd: cwd, claude_config_dir: config_dir, session_id: session_id)
+        ClaudeSDK.init(
+          cwd: cwd,
+          claude_config_dir: config_dir,
+          session_id: session_id,
+          managed: false
+        )
 
       msg = %{
         "id" => 11,
@@ -591,7 +614,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
           }
         ])
 
-      {:ok, state} = ClaudeSDK.init(cwd: cwd, claude_config_dir: config_dir)
+      {:ok, state} = ClaudeSDK.init(cwd: cwd, claude_config_dir: config_dir, managed: false)
 
       msg = %{
         "id" => 12,
@@ -612,7 +635,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
 
     test "session/fork copies persisted transcript and returns a new session id" do
       {config_dir, cwd, session_id} = write_store_fixture("fork me")
-      {:ok, state} = ClaudeSDK.init(cwd: cwd, claude_config_dir: config_dir)
+      {:ok, state} = ClaudeSDK.init(cwd: cwd, claude_config_dir: config_dir, managed: false)
 
       assert {:ok, result, state} =
                ClaudeSDK.fork_session(%{"sessionId" => session_id, "cwd" => cwd}, state)
