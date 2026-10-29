@@ -2951,13 +2951,10 @@ defmodule Arbor.ACP.Adapters.Pi do
       state.session_dir ||
         Path.join(Settings.agent_dir(state.opts), "sessions")
 
-    expanded_root = Path.expand(root)
-    expanded_file = Path.expand(session_file)
-
-    root_prefix = String.trim_trailing(expanded_root, "/") <> "/"
-
-    if String.starts_with?(expanded_file, root_prefix) do
-      File.rm(expanded_file)
+    # Resolve symlinks before comparing so a sessions-root link that points
+    # outside cannot pass a lexical prefix check and delete the target.
+    if WorkspacePath.within?(session_file, root) do
+      File.rm(WorkspacePath.canonical(session_file))
     else
       :ok
     end
