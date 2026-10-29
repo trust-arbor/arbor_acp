@@ -913,7 +913,7 @@ defmodule Arbor.ACP.Adapters.PiTest do
       last = Path.join(session_dir, "link41")
       File.ln_s!(outside, last)
 
-      Enum.each(40..1, fn n ->
+      Enum.each(40..1//-1, fn n ->
         File.ln_s!(Path.join(session_dir, "link#{n + 1}"), Path.join(session_dir, "link#{n}"))
       end)
 
