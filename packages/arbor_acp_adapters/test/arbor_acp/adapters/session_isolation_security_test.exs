@@ -525,6 +525,243 @@ defmodule Arbor.ACP.Adapters.SessionIsolationSecurityTest do
     end
   end
 
+  describe "Claude worktree containment" do
+    test "session-store calls do not reach a git worktree outside the roots", %{root: root} do
+      workspace = Path.join(root, "ws")
+      outside = Path.join(root, "outside-worktree")
+      File.mkdir_p!(workspace)
+      init_git_worktree!(workspace, outside)
+
+      config_dir = Path.join(root, "claude")
+      session_id = "123e4567-e89b-12d3-a456-426614174000"
+      write_transcript!(config_dir, outside, session_id, "secret worktree")
+
+      {:ok, state} =
+        ClaudeSDK.init(
+          cwd: workspace,
+          workspace_roots: [workspace],
+          claude_config_dir: config_dir,
+          managed: false
+        )
+
+      assert {:ok, sessions, _state} = ClaudeSDK.list_sessions(%{"cwd" => workspace}, state)
+
+      refute Enum.any?(sessions, &(&1["sessionId"] == session_id)),
+             "list_sessions found an outside worktree transcript: #{inspect(sessions)}"
+
+      delete = %{
+        "id" => 1,
+        "method" => "session/delete",
+        "params" => %{"sessionId" => session_id, "cwd" => workspace}
+      }
+
+      _ = ClaudeSDK.translate_outbound(delete, state)
+
+      assert File.exists?(transcript_path(config_dir, outside, session_id)),
+             "session/delete removed an outside worktree transcript"
+    end
+  end
+
+  describe "Claude session-scoped methods" do
+    test "a forged sessionId is rejected for set_mode and cancel", %{root: root} do
+      workspace = Path.join(root, "ws")
+      File.mkdir_p!(workspace)
+      {cli, _argv_log, stdin_log} = write_logging_cli(root, stdin: true)
+
+      {:ok, state} =
+        ClaudeSDK.init(
+          cli_path: cli,
+          cwd: workspace,
+          workspace_roots: [workspace],
+          claude_config_dir: Path.join(root, "claude")
+        )
+
+      {:reply, _, state} =
+        ClaudeSDK.translate_outbound(
+          %{
+            "id" => 1,
+            "method" => "session/new",
+            "params" => %{"cwd" => workspace, "sessionId" => "session-a"}
+          },
+          state
+        )
+
+      set_mode = %{
+        "id" => 2,
+        "method" => "session/set_mode",
+        "params" => %{"sessionId" => "forged-session", "modeId" => "acceptEdits"}
+      }
+
+      assert {:error, reason, _state} = ClaudeSDK.translate_outbound(set_mode, state)
+      assert reason =~ ~r/unknown|not bound|session/i
+
+      cancel = %{
+        "method" => "session/cancel",
+        "params" => %{"sessionId" => "forged-session"}
+      }
+
+      assert {:error, cancel_reason, _state} = ClaudeSDK.translate_outbound(cancel, state)
+      assert cancel_reason =~ ~r/unknown|not bound|session/i
+
+      stdin = (File.exists?(stdin_log) && File.read!(stdin_log)) || ""
+      refute stdin =~ "set_permission_mode"
+      refute stdin =~ "interrupt"
+    end
+  end
+
+  describe "Claude fork parent policy" do
+    test "a fork inherits the parent session's permission policy, not the current one",
+         %{root: root} do
+      workspace = Path.join(root, "ws")
+      File.mkdir_p!(workspace)
+      {cli, argv_log} = write_logging_cli(root)
+      config_dir = Path.join(root, "claude")
+      parent_id = "123e4567-e89b-12d3-a456-426614174000"
+      write_transcript!(config_dir, workspace, parent_id, "fork me")
+
+      {:ok, state} =
+        ClaudeSDK.init(
+          cli_path: cli,
+          cwd: workspace,
+          workspace_roots: [workspace],
+          permission_mode: :bypass,
+          allow_dangerously_skip_permissions: true,
+          claude_config_dir: config_dir
+        )
+
+      {:messages_and_reply, _, _, state} =
+        ClaudeSDK.translate_outbound(
+          %{
+            "id" => 1,
+            "method" => "session/load",
+            "params" => %{
+              "sessionId" => parent_id,
+              "cwd" => workspace,
+              "_meta" => %{
+                "claudeCode" => %{"options" => %{"allowDangerouslySkipPermissions" => false}}
+              }
+            }
+          },
+          state
+        )
+
+      {:reply, _, state} =
+        ClaudeSDK.translate_outbound(
+          %{
+            "id" => 2,
+            "method" => "session/new",
+            "params" => %{"cwd" => workspace, "sessionId" => "session-bypass"}
+          },
+          state
+        )
+
+      assert state.bypass_allowed? == true
+
+      File.rm(argv_log)
+
+      assert {:ok, result, _state} =
+               ClaudeSDK.fork_session(%{"sessionId" => parent_id, "cwd" => workspace}, state)
+
+      forked_id = result["sessionId"]
+      wait_until(fn -> File.exists?(argv_log) end)
+      argv = File.read!(argv_log)
+
+      refute argv =~ "bypassPermissions",
+             "fork of an opted-out parent inherited the current session's bypass: #{argv}"
+
+      refute argv =~ "allow-dangerously-skip-permissions"
+      assert argv =~ "--resume"
+      assert argv =~ forked_id
+    end
+  end
+
+  describe "Claude child resume isolation" do
+    test "init resume is not copied onto an independent session/new child", %{root: root} do
+      workspace = Path.join(root, "ws")
+      File.mkdir_p!(workspace)
+      {cli, argv_log} = write_logging_cli(root)
+      resume_id = "123e4567-e89b-12d3-a456-426614174099"
+
+      {:ok, state} =
+        ClaudeSDK.init(
+          cli_path: cli,
+          cwd: workspace,
+          workspace_roots: [workspace],
+          resume: resume_id,
+          claude_config_dir: Path.join(root, "claude")
+        )
+
+      {:reply, _, _state} =
+        ClaudeSDK.translate_outbound(
+          %{
+            "id" => 1,
+            "method" => "session/new",
+            "params" => %{"cwd" => workspace, "sessionId" => "session-independent"}
+          },
+          state
+        )
+
+      wait_until(fn -> File.exists?(argv_log) end)
+      argv = File.read!(argv_log)
+
+      refute argv =~ resume_id,
+             "session/new inherited init resume #{resume_id}: #{argv}"
+    end
+  end
+
+  describe "Codex unknown and closed thread ownership" do
+    test "a custom authorizer cannot move a closed thread to another workspace", %{root: root} do
+      ws_a = Path.join(root, "ws-a")
+      ws_b = Path.join(root, "ws-b")
+      File.mkdir_p!(ws_a)
+      File.mkdir_p!(ws_b)
+
+      {:ok, state} =
+        Codex.init(
+          workspace_roots: [ws_a, ws_b],
+          cwd: ws_a,
+          authorize_workspace: fn _path, _ctx -> true end
+        )
+
+      state = start_live_thread(state, "thread-a", ws_a)
+
+      assert {:messages_and_write, _, _, state} =
+               Codex.translate_outbound(
+                 %{"method" => "session/close", "params" => %{"sessionId" => "thread-a"}},
+                 state
+               )
+
+      steal = %{
+        "method" => "session/load",
+        "id" => "acp-steal",
+        "params" => %{"sessionId" => "thread-a", "cwd" => ws_b}
+      }
+
+      assert {:error, reason, _state} = Codex.translate_outbound(steal, state)
+      assert reason =~ ~r/not bound|workspace|session|thread/i
+    end
+
+    test "an unknown persisted thread id is rejected", %{root: root} do
+      workspace = Path.join(root, "ws")
+      File.mkdir_p!(workspace)
+
+      {:ok, state} = Codex.init(workspace_roots: [workspace], cwd: workspace)
+
+      for {method, id} <- [{"session/load", "acp-load"}, {"session/resume", "acp-resume"}] do
+        msg = %{
+          "method" => method,
+          "id" => id,
+          "params" => %{"sessionId" => "thread-unknown", "cwd" => workspace}
+        }
+
+        assert {:error, reason, _state} = Codex.translate_outbound(msg, state)
+
+        assert reason =~ ~r/not bound|workspace|session|thread|unknown/i,
+               "#{method} of an unknown id should be denied, got: #{inspect(reason)}"
+      end
+    end
+  end
+
   defp start_live_thread(state, thread_id, cwd) do
     msg = %{"method" => "session/new", "id" => 90, "params" => %{"cwd" => cwd}}
     assert {:ok, data, state} = Codex.translate_outbound(msg, state)
@@ -590,6 +827,28 @@ defmodule Arbor.ACP.Adapters.SessionIsolationSecurityTest do
 
   defp paths_equivalent?(left, right) do
     WorkspacePath.canonical(left) == WorkspacePath.canonical(right)
+  end
+
+  defp init_git_worktree!(workspace, outside) do
+    git = fn args ->
+      {output, status} =
+        System.cmd("git", args,
+          cd: workspace,
+          env: [
+            {"GIT_AUTHOR_NAME", "test"},
+            {"GIT_AUTHOR_EMAIL", "test@example.test"},
+            {"GIT_COMMITTER_NAME", "test"},
+            {"GIT_COMMITTER_EMAIL", "test@example.test"}
+          ],
+          stderr_to_stdout: true
+        )
+
+      assert status == 0, "git #{Enum.join(args, " ")} failed: #{output}"
+    end
+
+    git.(["init"])
+    git.(["commit", "--allow-empty", "-m", "init"])
+    git.(["worktree", "add", outside])
   end
 
   defp write_logging_cli(root, opts \\ []) do
