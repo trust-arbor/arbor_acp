@@ -209,7 +209,12 @@ defmodule Arbor.ACP.CompatTest do
       {_target_pid, target_port} =
         start_http_stub(fn request ->
           send(parent, {:target_request, request.headers})
-          http_response(200, [{"content-type", "application/json"}], Jason.encode!(%{"sha" => @sha_a}))
+
+          http_response(
+            200,
+            [{"content-type", "application/json"}],
+            Jason.encode!(%{"sha" => @sha_a})
+          )
         end)
 
       location = "http://127.0.0.1:#{target_port}/leaked.json"

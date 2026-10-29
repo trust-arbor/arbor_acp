@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Security:** `Arbor.ACP.Compat` no longer lets `:httpc` autoredirect when fetching GitHub adapter heads (or any other compat HTTP request). A 3xx hop is not followed, so a `GITHUB_TOKEN` Authorization header is not replayed onto another origin.
 - Fix: the AdapterBridge no longer crashes when `translate_outbound/2` answers `session/new`, `session/load` or `session/resume` with `:messages`, `:messages_and_write`, `:pending_and_write` or `:one_shot`. These forms leave the response to the adapter, which answers once the agent has set the session up; `{:ok, :skip, _}` is still answered with the synthesized session. The Pi adapter returns the first two when a setup cancels a running prompt.
 - Fix: the AdapterBridge accepts every `translate_outbound/2` result form on the other routes the Pi adapter uses: `session/set_config_option` takes `:messages`, `:one_shot` and a bare `{:error, reason}`; `authenticate` takes `:pending_and_write`, `:messages_and_reply_and_write` and `:one_shot`; and `session/close`, `session/delete`, `session/set_mode`, `session/set_model` and `logout` take `:one_shot`. A contract test drives every form through every such route, with its write accepted and rejected.
 - Fix: when the write accompanying a translation fails, the responses among its messages are still delivered: they answer other requests the adapter has already settled, such as prompts it cancelled. The notifications are still dropped with the write, and the request is answered with the write's error.
