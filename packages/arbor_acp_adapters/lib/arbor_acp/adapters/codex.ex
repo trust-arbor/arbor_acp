@@ -54,6 +54,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     pending_client_requests: %{},
     client_capabilities: %{},
     closed_sessions: %{},
+    thread_bindings: %{},
     url_elicitations: %{},
     pending_auth: nil,
     sessions: %{},
@@ -662,6 +663,8 @@ defmodule Arbor.ACP.Adapters.Codex do
 
         with {:ok, config, additional_directories} <- session_config(params, cwd, state),
              :ok <- authorize_bound_thread(session_id, cwd, state) do
+          state = bind_thread(session_id, cwd, state)
+
           wire_params =
             if page_history? do
               %{
@@ -704,19 +707,55 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
+  # Bindings survive session/close. A closed or not-yet-materialized thread
+  # can still be loaded from the workspace that first claimed it; the same
+  # id from another workspace is rejected. Unknown ids are allowed on the
+  # first authorized load or resume, then bound.
   defp authorize_bound_thread(session_id, cwd, state) do
-    case Map.get(state.sessions, session_id) do
-      %{cwd: bound_cwd} when is_binary(bound_cwd) and is_binary(cwd) ->
-        if same_workspace?(bound_cwd, cwd, state.opts) do
-          :ok
-        else
-          {:error, "Codex thread is not bound to this session or workspace"}
+    case thread_binding(session_id, state) do
+      bound_cwd when is_binary(bound_cwd) and is_binary(cwd) ->
+        cond do
+          same_workspace?(bound_cwd, cwd, state.opts) ->
+            :ok
+
+          # A host authorize_workspace callback already approved this cwd
+          # (session_config ran first). Live threads still cannot move: the
+          # session map is the owner. An unbound or closed id may follow the
+          # callback so load-then-resume with different authorized cwds works.
+          custom_workspace_authorizer?(state) and not Map.has_key?(state.sessions, session_id) ->
+            :ok
+
+          true ->
+            {:error, "Codex thread is not bound to this session or workspace"}
         end
 
-      _unknown ->
+      _unbound ->
         :ok
     end
   end
+
+  defp custom_workspace_authorizer?(state) do
+    callback = Keyword.get(state.opts, :authorize_workspace)
+    is_function(callback, 1) or is_function(callback, 2)
+  end
+
+  defp thread_binding(session_id, state) do
+    Map.get(state.thread_bindings, session_id) ||
+      case Map.get(state.sessions, session_id) do
+        %{cwd: cwd} when is_binary(cwd) -> cwd
+        _other -> nil
+      end
+  end
+
+  defp bind_thread(session_id, cwd, state)
+       when is_binary(session_id) and session_id != "" and is_binary(cwd) do
+    case Map.get(state.thread_bindings, session_id) do
+      nil -> %{state | thread_bindings: Map.put(state.thread_bindings, session_id, cwd)}
+      _existing -> state
+    end
+  end
+
+  defp bind_thread(_session_id, _cwd, state), do: state
 
   defp same_workspace?(bound_cwd, cwd, opts) do
     WorkspacePath.canonical(bound_cwd) == WorkspacePath.canonical(cwd) or
@@ -1135,6 +1174,7 @@ defmodule Arbor.ACP.Adapters.Codex do
       |> Map.put(:additional_directories, meta[:additional_directories] || [])
 
     state = Sessions.put(state, session_id, session)
+    state = bind_thread(session_id, session[:cwd], state)
     state = %{state | closed_sessions: Map.delete(state.closed_sessions, session_id)}
 
     cursor = older_turns_cursor(result)

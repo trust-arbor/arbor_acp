@@ -112,6 +112,9 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     :permission_mode,
     :effort,
     :cwd,
+    # Snapshot of the adapter `:cwd` at init; implicit workspace-root checks
+    # use this (or `:workspace_roots`) rather than the current session cwd.
+    :workspace_root,
     :client_capabilities,
     :gateway_auth,
     :fast_mode_enabled,
@@ -176,6 +179,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
      %__MODULE__{
        opts: opts,
        cwd: Keyword.get(opts, :cwd),
+       workspace_root: Keyword.get(opts, :cwd),
        session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
        claude_session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
        model: Keyword.get(opts, :model),
@@ -314,14 +318,27 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       |> then(&SessionStore.fork_session(session_id, &1))
       |> case do
         {:ok, forked_session_id} ->
+          parent_bypass? = state.bypass_allowed?
+          parent_mode = state.permission_mode
+          state = persist_current_session(state)
+          state = reset_session_fields(state)
+
           state = %{
             state
             | session_id: forked_session_id,
               claude_session_id: forked_session_id,
-              cwd: cwd
+              cwd: cwd,
+              bypass_allowed?: parent_bypass?,
+              permission_mode: parent_mode
           }
 
-          {:ok, Mapper.session_result(state, forked_session_id), state}
+          case start_session_process(forked_session_id, cwd, params, :new, state) do
+            {:ok, state} ->
+              {:ok, Mapper.session_result(state, forked_session_id), state}
+
+            {:error, reason, state} ->
+              {:error, reason, state}
+          end
 
         {:error, reason} ->
           {:error, reason, state}
@@ -365,7 +382,6 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           inbound_to_adapter_message(translate_inbound(line, acc_state), handle)
           |> then(fn
             {:messages, extra, acc_state} -> {:messages, acc ++ extra, acc_state}
-            {:partial, acc_state} -> {:messages, acc, acc_state}
             {:skip, acc_state} -> {:messages, acc, acc_state}
           end)
         end)
@@ -507,10 +523,15 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   end
 
   defp route_outbound(%{"id" => _id} = msg, state) do
+    state =
+      state
+      |> persist_current_session()
+      |> then(&switch_to_client_request_session(msg["id"], &1))
+
     case Mapper.client_response(msg, state) do
-      {:ok, data, state} -> {:ok, data, state}
-      {:ok, messages, data, state} -> {:messages_and_write, messages, data, state}
-      :unknown -> {:ok, :skip, state}
+      {:ok, data, state} -> {:ok, data, persist_current_session(state)}
+      {:ok, messages, data, state} -> {:messages_and_write, messages, data, persist_current_session(state)}
+      :unknown -> {:ok, :skip, persist_current_session(state)}
     end
   end
 
@@ -527,19 +548,20 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       end
 
     with {:ok, cwd} <- session_cwd(params, state),
-         :ok <- authorize_workspace(cwd, :session_new, state),
-         {:ok, state} <-
-           start_session_process(session_id, cwd, params, :new, state) do
-      state = %{
-        state
-        | session_id: session_id,
-          claude_session_id: nil,
-          cwd: cwd
-      }
+         :ok <- authorize_workspace(cwd, :session_new, state) do
+      state = prepare_session_state(session_id, cwd, params, state)
 
-      reply_with_bypass_policy(params, state, fn state ->
-        Mapper.session_result(state, session_id)
-      end)
+      case start_session_process(session_id, cwd, params, :new, state) do
+        {:ok, state} ->
+          state = %{state | session_id: session_id, claude_session_id: nil, cwd: cwd}
+
+          reply_with_bypass_policy(params, state, fn state ->
+            Mapper.session_result(state, session_id)
+          end)
+
+        {:error, reason, state} ->
+          {:error, reason, state}
+      end
     else
       {:error, reason, state} -> {:error, reason, state}
       {:error, reason} -> {:error, reason, state}
@@ -603,36 +625,14 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     session_id = params["sessionId"] || state.session_id || generated_session_id()
 
     with {:ok, cwd} <- session_cwd(params, state),
-         :ok <- authorize_workspace(cwd, :session_load, state),
-         {:ok, state} <-
-           start_session_process(session_id, cwd, params, :load, state) do
-      state = %{
-        state
-        | session_id: session_id,
-          claude_session_id: session_id,
-          cwd: cwd
-      }
+         :ok <- authorize_workspace(cwd, :session_load, state) do
+      state = prepare_session_state(session_id, cwd, params, state)
 
-      case SessionStore.read_session_messages(
-             session_id,
-             params |> session_store_opts(state) |> Map.put(:cwd, cwd)
-           ) do
-        {:ok, events} ->
-          {messages, state} = Mapper.replay_messages(events, state)
+      case start_session_process(session_id, cwd, params, :load, state) do
+        {:ok, state} ->
+          load_persisted_session(session_id, cwd, params, state)
 
-          # Same policy pair as session/new and session/resume: a loaded session
-          # can inherit a bypass or Auto mode the model cannot support, so both
-          # have to be clamped here too.
-          {state, bypass_write} = apply_bypass_policy(params, state)
-          {state, auto_write} = apply_auto_mode_policy(state)
-          result = Mapper.session_result(state, session_id)
-
-          case Enum.reject([bypass_write, auto_write], &is_nil/1) do
-            [] -> {:messages_and_reply, messages, result, state}
-            writes -> {:messages_and_reply_and_write, messages, result, writes, state}
-          end
-
-        {:error, reason} ->
+        {:error, reason, state} ->
           {:error, reason, state}
       end
     else
@@ -646,19 +646,25 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     session_id = params["sessionId"] || state.session_id || generated_session_id()
 
     with {:ok, cwd} <- session_cwd(params, state),
-         :ok <- authorize_workspace(cwd, :session_resume, state),
-         {:ok, state} <-
-           start_session_process(session_id, cwd, params, :resume, state) do
-      state = %{
-        state
-        | session_id: session_id,
-          claude_session_id: session_id,
-          cwd: cwd
-      }
+         :ok <- authorize_workspace(cwd, :session_resume, state) do
+      state = prepare_session_state(session_id, cwd, params, state)
 
-      reply_with_bypass_policy(params, state, fn state ->
-        Mapper.session_result(state, session_id)
-      end)
+      case start_session_process(session_id, cwd, params, :resume, state) do
+        {:ok, state} ->
+          state = %{
+            state
+            | session_id: session_id,
+              claude_session_id: session_id,
+              cwd: cwd
+          }
+
+          reply_with_bypass_policy(params, state, fn state ->
+            Mapper.session_result(state, session_id)
+          end)
+
+        {:error, reason, state} ->
+          {:error, reason, state}
+      end
     else
       {:error, reason, state} -> {:error, reason, state}
       {:error, reason} -> {:error, reason, state}
@@ -728,16 +734,22 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
          %{"id" => id, "params" => %{"sessionId" => session_id, "prompt" => prompt}},
          state
        ) do
-    with_pending_auto_notice(state, fn state ->
-      if state.pending_prompt_id do
-        case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
-          {:ok, message} -> {:ok, :skip, enqueue_prompt(state, id, session_id, message)}
-          {:error, reason} -> {:error, reason, state}
-        end
-      else
-        start_prompt(id, session_id, prompt, state)
-      end
-    end)
+    case require_known_session(session_id, state) do
+      {:ok, state} ->
+        with_pending_auto_notice(state, fn state ->
+          if state.pending_prompt_id do
+            case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
+              {:ok, message} -> {:ok, :skip, enqueue_prompt(state, id, session_id, message)}
+              {:error, reason} -> {:error, reason, state}
+            end
+          else
+            start_prompt(id, session_id, prompt, state)
+          end
+        end)
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
   end
 
   defp handle_request("session/set_mode", %{"params" => %{"modeId" => mode_id}}, state) do
@@ -940,6 +952,38 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp handle_request(_method, _msg, state), do: {:ok, :skip, state}
 
+  defp load_persisted_session(session_id, cwd, params, state) do
+    state = %{
+      state
+      | session_id: session_id,
+        claude_session_id: session_id,
+        cwd: cwd
+    }
+
+    case SessionStore.read_session_messages(
+           session_id,
+           params |> session_store_opts(state) |> Map.put(:cwd, cwd)
+         ) do
+      {:ok, events} ->
+        {messages, state} = Mapper.replay_messages(events, state)
+
+        # Same policy pair as session/new and session/resume: a loaded session
+        # can inherit a bypass or Auto mode the model cannot support, so both
+        # have to be clamped here too.
+        {state, bypass_write} = apply_bypass_policy(params, state)
+        {state, auto_write} = apply_auto_mode_policy(state)
+        result = Mapper.session_result(state, session_id)
+
+        case Enum.reject([bypass_write, auto_write], &is_nil/1) do
+          [] -> {:messages_and_reply, messages, result, state}
+          writes -> {:messages_and_reply_and_write, messages, result, writes, state}
+        end
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
   # Mirrors claude-agent-acp#1129: a host that never uses bypassPermissions may
   # opt a session out by sending `_meta.claudeCode.options.allowDangerouslySkipPermissions:
   # false` on session/new, and again on session/load or session/resume. It removes
@@ -1122,7 +1166,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     cwd = (params || %{})["cwd"] || state.cwd || Keyword.get(state.opts, :cwd)
 
     if is_binary(cwd) and cwd != "" and Path.type(cwd) == :absolute do
-      {:ok, cwd}
+      {:ok, WorkspacePath.canonical(cwd)}
     else
       {:error, "Workspace paths must be absolute"}
     end
@@ -1133,14 +1177,14 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
     case Keyword.get(state.opts, :authorize_workspace) do
       callback when is_function(callback, 2) ->
-        if safe_authorize(callback, path, context),
-          do: :ok,
-          else: {:error, "Workspace path is not authorized"}
+        callback
+        |> safe_authorize(path, context)
+        |> authorization_result("Workspace path is not authorized")
 
       callback when is_function(callback, 1) ->
-        if safe_authorize(callback, path),
-          do: :ok,
-          else: {:error, "Workspace path is not authorized"}
+        callback
+        |> safe_authorize(path)
+        |> authorization_result("Workspace path is not authorized")
 
       nil ->
         if within_workspace_roots?(path, state),
@@ -1152,11 +1196,15 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     end
   end
 
+  defp authorization_result(result, _message) when result in [:ok, true], do: :ok
+  defp authorization_result({:ok, _value}, _message), do: :ok
+  defp authorization_result(_result, message), do: {:error, message}
+
   defp within_workspace_roots?(path, state) do
     roots =
       case Keyword.get(state.opts, :workspace_roots) do
         roots when is_list(roots) -> roots
-        nil -> [state.cwd || Keyword.get(state.opts, :cwd)]
+        nil -> [Keyword.get(state.opts, :cwd) || state.workspace_root]
         root -> [root]
       end
 
@@ -1193,6 +1241,51 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   end
 
   defp maybe_switch_session(_msg, state), do: state
+
+  defp require_known_session(_session_id, %{managed?: false} = state), do: {:ok, state}
+
+  defp require_known_session(session_id, state)
+       when is_binary(session_id) and session_id != "" do
+    if Map.has_key?(state.session_processes, session_id) do
+      {:ok, switch_session(state, session_id)}
+    else
+      {:error, "Unknown Claude session"}
+    end
+  end
+
+  defp require_known_session(_session_id, _state), do: {:error, "Unknown Claude session"}
+
+  defp switch_to_client_request_session(id, state) do
+    case find_session_for_client_request(id, state) do
+      nil -> state
+      session_id -> switch_session(state, session_id)
+    end
+  end
+
+  defp find_session_for_client_request(id, state) do
+    Enum.find_value(state.session_processes, fn {session_id, entry} ->
+      pending = Map.get(entry.fields, :pending_client_requests) || %{}
+      if Map.has_key?(pending, id), do: session_id
+    end)
+  end
+
+  defp prepare_session_state(session_id, cwd, _params, %{managed?: false} = state) do
+    %{state | session_id: session_id, cwd: cwd}
+  end
+
+  defp prepare_session_state(session_id, cwd, params, state) do
+    state = persist_current_session(state)
+
+    state =
+      if Map.has_key?(state.session_processes, session_id) do
+        switch_session(state, session_id)
+      else
+        reset_session_fields(state)
+      end
+
+    {state, _write} = apply_bypass_policy(params, %{state | session_id: session_id, cwd: cwd})
+    state
+  end
 
   defp switch_session(state, session_id) do
     if state.session_id == session_id do
@@ -1241,15 +1334,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp start_session_process(session_id, cwd, _params, kind, state) do
     state = persist_current_session(state)
-
-    state =
-      if Map.has_key?(state.session_processes, session_id) do
-        state
-      else
-        reset_session_fields(state)
-      end
-
-    opts = session_process_opts(state.opts, cwd, session_id, kind)
+    opts = session_process_opts(state, cwd, session_id, kind)
 
     case cli_command(opts) do
       {:error, reason} ->
@@ -1260,8 +1345,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     end
   end
 
-  defp session_process_opts(opts, cwd, session_id, kind) do
-    opts = Keyword.put(opts, :cwd, cwd)
+  defp session_process_opts(state, cwd, session_id, kind) do
+    opts =
+      state.opts
+      |> Keyword.put(:cwd, cwd)
+      |> constrain_child_permissions(state)
 
     if kind in [:load, :resume] and SessionStore.valid_session_id?(session_id) do
       Keyword.put(opts, :resume, session_id)
@@ -1269,6 +1357,17 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       opts
     end
   end
+
+  defp constrain_child_permissions(opts, %{bypass_allowed?: false} = state) do
+    mode = state.permission_mode || "default"
+    mode = if mode == "bypassPermissions", do: "default", else: mode
+
+    opts
+    |> Keyword.put(:permission_mode, mode)
+    |> Keyword.put(:allow_dangerously_skip_permissions, false)
+  end
+
+  defp constrain_child_permissions(opts, _state), do: opts
 
   defp open_session_process(session_id, cmd, args, opts, state) do
     state = close_session_process(state, session_id)
@@ -1382,9 +1481,6 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     _ = PortRunner.command(handle, data)
     {:skip, persist_current_session(state)}
   end
-
-  defp inbound_to_adapter_message({:partial, state}, _handle),
-    do: {:partial, persist_current_session(state)}
 
   defp inbound_to_adapter_message({:skip, state}, _handle),
     do: {:skip, persist_current_session(state)}
