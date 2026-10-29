@@ -145,4 +145,26 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
 
     assert File.exists?(secret)
   end
+
+  test "rm_within does not follow a grandparent swapped after the ancestor walk",
+       %{root: root, outside: outside} do
+    grand = Path.join(root, "grand")
+    parent = Path.join(grand, "parent")
+    File.mkdir_p!(parent)
+    File.mkdir_p!(Path.join(outside, "parent"))
+    inside = Path.join(parent, "secret.txt")
+    secret = Path.join(outside, "parent/secret.txt")
+    File.write!(inside, "session")
+    File.write!(secret, "secret")
+
+    :ok =
+      WorkspacePath.rm_within(inside, root,
+        after_ancestors: fn ->
+          File.rm_rf!(grand)
+          File.ln_s!(outside, grand)
+        end
+      )
+
+    assert File.exists?(secret)
+  end
 end

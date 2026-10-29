@@ -45,24 +45,28 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
 
   `opts[:after_contain]` runs after the containment check and before the
   delete, so tests can swap the path in the check-then-use window.
+
+  `opts[:after_ancestors]` runs after the ancestor walk and before the
+  parent lstat, so tests can swap a grandparent in that window.
   """
   @spec rm_within(String.t(), String.t(), keyword()) :: :ok
   def rm_within(path, root, opts \\ []) when is_binary(path) and is_binary(root) do
     case contained(path, root) do
       {:ok, resolved} ->
         if hook = Keyword.get(opts, :after_contain), do: hook.()
-        rm_contained(resolved, root)
+        rm_contained(resolved, root, opts)
 
       :error ->
         :ok
     end
   end
 
-  defp rm_contained(resolved, root) do
+  defp rm_contained(resolved, root, opts) do
     case resolve(root) do
       {:ok, resolved_root} ->
         if contained_resolved?(resolved, resolved_root) and
              directory_ancestors?(resolved, resolved_root) do
+          if hook = Keyword.get(opts, :after_ancestors), do: hook.()
           unlink_last_component(resolved)
         else
           :ok
