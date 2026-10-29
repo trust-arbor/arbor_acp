@@ -102,6 +102,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   # versioned object under `_meta.jetbrains.air.fork`.
   @fork_meta_path ["_meta", "jetbrains", "air", "fork"]
   @fork_meta_version 1
+  @session_scoped_methods ~w(
+    session/prompt
+    session/set_mode
+    session/set_config_option
+    session/cancel
+  )
 
   defstruct [
     :session_id,
@@ -167,7 +173,10 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     # tests set `managed: false` and keep the single-process translation path.
     managed?: true,
     port: nil,
-    session_processes: %{}
+    session_processes: %{},
+    # Per-session launch overrides (e.g. a minted CLAUDE_CONFIG_DIR). Merged
+    # into the child command so each process can have its own home.
+    session_homes: %{}
   ]
 
   @impl true
@@ -318,9 +327,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       |> then(&SessionStore.fork_session(session_id, &1))
       |> case do
         {:ok, forked_session_id} ->
-          parent_bypass? = state.bypass_allowed?
-          parent_mode = state.permission_mode
           state = persist_current_session(state)
+          parent_fields = parent_session_fields(session_id, state)
           state = reset_session_fields(state)
 
           state = %{
@@ -328,11 +336,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
             | session_id: forked_session_id,
               claude_session_id: forked_session_id,
               cwd: cwd,
-              bypass_allowed?: parent_bypass?,
-              permission_mode: parent_mode
+              bypass_allowed?: Map.get(parent_fields, :bypass_allowed?, true),
+              permission_mode: Map.get(parent_fields, :permission_mode)
           }
 
-          case start_session_process(forked_session_id, cwd, params, :new, state) do
+          case start_session_process(forked_session_id, cwd, params, :fork, state) do
             {:ok, state} ->
               {:ok, Mapper.session_result(state, forked_session_id), state}
 
@@ -515,11 +523,15 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp route_outbound(%{"id" => _id, "method" => method} = msg, state)
        when is_binary(method) do
-    handle_request(method, msg, state)
+    with_session_scope(method, msg, state, fn state ->
+      handle_request(method, msg, state)
+    end)
   end
 
   defp route_outbound(%{"method" => method} = msg, state) when is_binary(method) do
-    handle_notification(method, msg, state)
+    with_session_scope(method, msg, state, fn state ->
+      handle_notification(method, msg, state)
+    end)
   end
 
   defp route_outbound(%{"id" => _id} = msg, state) do
@@ -1158,7 +1170,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       limit: params["limit"] || params[:limit],
       offset: params["offset"] || params[:offset],
       claude_config_dir: Keyword.get(state.opts, :claude_config_dir),
-      env: Keyword.get(state.opts, :env, [])
+      env: Keyword.get(state.opts, :env, []),
+      include_worktrees: false
     }
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
@@ -1257,6 +1270,30 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp require_known_session(_session_id, _state), do: {:error, "Unknown Claude session"}
 
+  defp with_session_scope(method, msg, state, fun) when method in @session_scoped_methods do
+    case get_in(msg, ["params", "sessionId"]) do
+      session_id when is_binary(session_id) and session_id != "" ->
+        case require_known_session(session_id, state) do
+          {:ok, state} -> fun.(state)
+          {:error, reason} -> {:error, reason, state}
+        end
+
+      _missing ->
+        fun.(state)
+    end
+  end
+
+  defp with_session_scope(_method, _msg, state, fun), do: fun.(state)
+
+  defp parent_session_fields(session_id, state) when is_binary(session_id) do
+    case Map.get(state.session_processes, session_id) do
+      %{fields: fields} when is_map(fields) -> fields
+      _missing -> Map.take(state, @session_fields)
+    end
+  end
+
+  defp parent_session_fields(_session_id, state), do: Map.take(state, @session_fields)
+
   defp switch_to_client_request_session(id, state) do
     case find_session_for_client_request(id, state) do
       nil -> state
@@ -1351,12 +1388,21 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     opts =
       state.opts
       |> Keyword.put(:cwd, cwd)
+      |> Keyword.delete(:resume)
+      |> Keyword.merge(session_home_opts(state, session_id))
       |> constrain_child_permissions(state)
 
-    if kind in [:load, :resume] and SessionStore.valid_session_id?(session_id) do
+    if kind in [:load, :resume, :fork] and SessionStore.valid_session_id?(session_id) do
       Keyword.put(opts, :resume, session_id)
     else
       opts
+    end
+  end
+
+  defp session_home_opts(state, session_id) do
+    case Map.get(state.session_homes, session_id) do
+      opts when is_list(opts) -> opts
+      _missing -> []
     end
   end
 

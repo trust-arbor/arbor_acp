@@ -180,6 +180,7 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
   import ExUnit.Assertions, only: [assert: 1, flunk: 1]
 
   alias Arbor.ACP.Adapters.ClaudeSDK
+  alias Arbor.ACP.AdapterSupport.WorkspacePath
 
   defmodule Entry do
     @moduledoc "One transcript entry: the step as executed and the adapter's normalized result."
@@ -443,7 +444,10 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
 
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf(sandbox) end)
 
-    aliases = [sandbox, realpath(sandbox)] |> Enum.uniq() |> longest_first()
+    aliases =
+      [sandbox, realpath(sandbox), WorkspacePath.canonical(sandbox)]
+      |> Enum.uniq()
+      |> longest_first()
 
     %{
       sandbox: sandbox,

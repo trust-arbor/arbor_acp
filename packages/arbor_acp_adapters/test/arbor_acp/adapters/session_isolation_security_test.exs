@@ -448,14 +448,7 @@ defmodule Arbor.ACP.Adapters.SessionIsolationSecurityTest do
       File.mkdir_p!(ws_b)
 
       {:ok, state} = Codex.init(workspace_roots: [ws_a, ws_b], cwd: ws_a)
-
-      claim = %{
-        "method" => "session/load",
-        "id" => "acp-claim",
-        "params" => %{"sessionId" => "thread-forged", "cwd" => ws_a}
-      }
-
-      assert {:ok, _data, state} = Codex.translate_outbound(claim, state)
+      state = start_live_thread(state, "thread-forged", ws_a)
 
       steal = %{
         "method" => "session/resume",
@@ -663,15 +656,21 @@ defmodule Arbor.ACP.Adapters.SessionIsolationSecurityTest do
                ClaudeSDK.fork_session(%{"sessionId" => parent_id, "cwd" => workspace}, state)
 
       forked_id = result["sessionId"]
-      wait_until(fn -> File.exists?(argv_log) end)
-      argv = File.read!(argv_log)
+      wait_until(fn -> File.exists?(argv_log) and File.read!(argv_log) =~ forked_id end)
+
+      argv =
+        argv_log
+        |> File.read!()
+        |> String.split("\n", trim: true)
+        |> Enum.find(&String.contains?(&1, forked_id))
+
+      refute is_nil(argv), "fork child argv was not logged"
 
       refute argv =~ "bypassPermissions",
              "fork of an opted-out parent inherited the current session's bypass: #{argv}"
 
       refute argv =~ "allow-dangerously-skip-permissions"
       assert argv =~ "--resume"
-      assert argv =~ forked_id
     end
   end
 

@@ -673,7 +673,8 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
     |> Map.put(:setup, & &1)
   end
 
-  defp codex(ctx), do: base(ctx, Codex, codex_path: ctx.native, cwd: ctx.dir)
+  defp codex(ctx),
+    do: base(ctx, Codex, codex_path: ctx.native, cwd: ctx.dir, allow_unbound_threads: true)
 
   defp zcode(ctx, limit \\ @limit),
     do: base(ctx, ZCode, [cli_path: ctx.native, cwd: ctx.dir], limit)

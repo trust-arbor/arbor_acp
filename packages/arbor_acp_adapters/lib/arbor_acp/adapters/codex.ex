@@ -707,36 +707,26 @@ defmodule Arbor.ACP.Adapters.Codex do
     end
   end
 
-  # Bindings survive session/close. A closed or not-yet-materialized thread
-  # can still be loaded from the workspace that first claimed it; the same
-  # id from another workspace is rejected. Unknown ids are allowed on the
-  # first authorized load or resume, then bound.
+  # Bindings survive session/close. A closed thread can still be loaded from
+  # the workspace that claimed it; the same id from another workspace is
+  # rejected even when a custom authorize_workspace callback would allow the
+  # cwd. Unknown ids have no owner and are denied.
   defp authorize_bound_thread(session_id, cwd, state) do
     case thread_binding(session_id, state) do
       bound_cwd when is_binary(bound_cwd) and is_binary(cwd) ->
-        cond do
-          same_workspace?(bound_cwd, cwd, state.opts) ->
-            :ok
-
-          # A host authorize_workspace callback already approved this cwd
-          # (session_config ran first). Live threads still cannot move: the
-          # session map is the owner. An unbound or closed id may follow the
-          # callback so load-then-resume with different authorized cwds works.
-          custom_workspace_authorizer?(state) and not Map.has_key?(state.sessions, session_id) ->
-            :ok
-
-          true ->
-            {:error, "Codex thread is not bound to this session or workspace"}
+        if same_workspace?(bound_cwd, cwd, state.opts) do
+          :ok
+        else
+          {:error, "Codex thread is not bound to this session or workspace"}
         end
 
       _unbound ->
-        :ok
+        if Keyword.get(state.opts, :allow_unbound_threads, false) do
+          :ok
+        else
+          {:error, "Codex thread is not bound to this session or workspace"}
+        end
     end
-  end
-
-  defp custom_workspace_authorizer?(state) do
-    callback = Keyword.get(state.opts, :authorize_workspace)
-    is_function(callback, 1) or is_function(callback, 2)
   end
 
   defp thread_binding(session_id, state) do

@@ -1060,7 +1060,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
   defp option(opts, atom_key, string_key, default \\ nil)
 
   defp option(opts, atom_key, string_key, default) when is_map(opts) do
-    Map.get(opts, atom_key) || Map.get(opts, string_key) || default
+    cond do
+      Map.has_key?(opts, atom_key) -> Map.get(opts, atom_key)
+      Map.has_key?(opts, string_key) -> Map.get(opts, string_key)
+      true -> default
+    end
   end
 
   defp option(opts, atom_key, _string_key, default) when is_list(opts) do
