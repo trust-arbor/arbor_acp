@@ -74,6 +74,30 @@ defmodule Arbor.ACP.Adapters.WorkspaceConfigIsolationEnvTest do
     assert Path.expand(explicit) == Path.expand(workspace_pi)
   end
 
+  test "an inherited PI_CODING_AGENT_SESSION_DIR is the session dir the child sees", %{cwd: cwd} do
+    session_dir =
+      Path.join(Path.dirname(cwd), "inherited-pi-sessions-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(session_dir)
+
+    previous = System.get_env("PI_CODING_AGENT_SESSION_DIR")
+    System.put_env("PI_CODING_AGENT_SESSION_DIR", session_dir)
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("PI_CODING_AGENT_SESSION_DIR", previous),
+        else: System.delete_env("PI_CODING_AGENT_SESSION_DIR")
+    end)
+
+    opts = [cwd: cwd, environment_policy: :inherit]
+    {:ok, state} = Pi.init(opts)
+
+    assert Path.expand(state.session_dir) == Path.expand(session_dir)
+
+    assert env_string(child_env(opts, Pi)["PI_CODING_AGENT_SESSION_DIR"]) ==
+             Path.expand(session_dir)
+  end
+
   defp child_env(opts, adapter) do
     opts
     |> Subprocess.safe_env(adapter)
