@@ -14,9 +14,11 @@ defmodule Arbor.ACP.Adapters.Codex do
   an explicit unsafe compatibility escape hatch. Names alone never authorize
   caller-controlled connection details.
 
-  By default the adapter mints a private `CODEX_HOME` (0700) so the child does
-  not inherit the host Codex home. Pass `:codex_home` or
-  `:trust_workspace_config` to keep the previous home.
+  By default the adapter mints a private per-session `CODEX_HOME` (0700) so
+  the child does not inherit the host Codex home, and writes
+  `project_doc_max_bytes = 0` there so Codex 0.165 does not read workspace
+  `AGENTS.md`. Pass `:codex_home` or `:trust_workspace_config` to keep the
+  previous home.
   """
 
   @behaviour Arbor.ACP.Adapter
@@ -75,6 +77,8 @@ defmodule Arbor.ACP.Adapters.Codex do
 
   @impl true
   def init(opts) do
+    opts = Arbor.ACP.Adapters.Internal.RuntimeHome.put_opt(opts, :codex)
+
     {:ok,
      %__MODULE__{
        opts: NativeProtocol.init!(opts),

@@ -36,7 +36,10 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     * `:trust_workspace_config` - opt back into loading workspace Claude
       settings, `.mcp.json`, and the host Claude config directory.
     * `:claude_config_dir` - Claude config directory. When omitted, the
-      adapter mints a private 0700 directory and sets `CLAUDE_CONFIG_DIR`.
+      adapter mints a private 0700 directory per ACP session, stores it on
+      adapter and session-store state, and sets `CLAUDE_CONFIG_DIR` for the
+      child and for terminal login. Existing `~/.claude` logins and settings
+      are invisible unless this option or `:trust_workspace_config` is set.
 
   The `mcpServers` of `session/new`, `session/load`, `session/resume` and
   `session/fork` are not attached: the Claude Code process is already running.
@@ -60,6 +63,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
   alias Arbor.RPC.JSONRPC, as: Envelope
   alias Arbor.ACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
 
   # `session/fork` fork point, as claude-agent-acp reads it: an explicitly
   # versioned object under `_meta.jetbrains.air.fork`.
@@ -129,6 +133,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   @impl true
   def init(opts) do
+    opts = RuntimeHome.put_opt(opts, :claude)
+
     {:ok,
      %__MODULE__{
        opts: opts,
@@ -1159,7 +1165,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           cli_path,
           [],
           "Claude Login",
-          include_meta?
+          include_meta?,
+          opts
         )
       ]
     else
@@ -1171,7 +1178,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           cli_path,
           ["auth", "login", "--claudeai"],
           "Claude Login",
-          include_meta?
+          include_meta?,
+          opts
         ),
         terminal_auth_method(
           "console-login",
@@ -1180,19 +1188,23 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           cli_path,
           ["auth", "login", "--console"],
           "Anthropic Console Login",
-          include_meta?
+          include_meta?,
+          opts
         )
       ]
     end
   end
 
-  defp terminal_auth_method(id, name, description, command, args, label, include_meta?) do
+  defp terminal_auth_method(id, name, description, command, args, label, include_meta?, opts) do
+    env = terminal_home_env(opts)
+
     method = %{
       "id" => id,
       "name" => name,
       "description" => description,
       "type" => "terminal",
-      "args" => args
+      "args" => args,
+      "env" => env
     }
 
     if include_meta? do
@@ -1200,11 +1212,19 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
         "terminal-auth" => %{
           "command" => command,
           "args" => args,
-          "label" => label
+          "label" => label,
+          "env" => env
         }
       })
     else
       method
+    end
+  end
+
+  defp terminal_home_env(opts) do
+    case RuntimeHome.path(opts, :claude) do
+      nil -> %{}
+      path -> %{"CLAUDE_CONFIG_DIR" => path}
     end
   end
 

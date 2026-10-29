@@ -11,6 +11,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
 
   import Bitwise
 
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
   alias Arbor.ACP.Types
 
   @read_window 65_536
@@ -256,16 +257,18 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
         normalize_config_path(path)
 
       _ ->
-        opts
-        |> env_config_dir()
-        |> case do
-          path when is_binary(path) and path != "" ->
-            normalize_config_path(path)
+        keyword_opts = runtime_home_opts(opts)
 
-          _ ->
-            System.user_home!()
-            |> Path.join(".claude")
-            |> normalize_config_path()
+        if RuntimeHome.trust_workspace_config?(keyword_opts) do
+          inherited_or_default_config_dir(opts)
+        else
+          case RuntimeHome.path(keyword_opts, :claude) do
+            path when is_binary(path) and path != "" ->
+              normalize_config_path(path)
+
+            _ ->
+              inherited_or_default_config_dir(opts)
+          end
         end
     end
   end
@@ -1033,6 +1036,37 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
     child = Path.expand(child)
     String.starts_with?(child, parent)
   end
+
+  defp inherited_or_default_config_dir(opts) do
+    opts
+    |> env_config_dir()
+    |> case do
+      path when is_binary(path) and path != "" ->
+        normalize_config_path(path)
+
+      _ ->
+        System.user_home!()
+        |> Path.join(".claude")
+        |> normalize_config_path()
+    end
+  end
+
+  defp runtime_home_opts(opts) when is_list(opts), do: opts
+
+  defp runtime_home_opts(opts) when is_map(opts) do
+    []
+    |> maybe_keyword(:cwd, option(opts, :cwd, "cwd"))
+    |> maybe_keyword(:claude_config_dir, option(opts, :claude_config_dir, "claudeConfigDir"))
+    |> maybe_keyword(
+      :trust_workspace_config,
+      option(opts, :trust_workspace_config, "trustWorkspaceConfig")
+    )
+  end
+
+  defp runtime_home_opts(_opts), do: []
+
+  defp maybe_keyword(opts, _key, nil), do: opts
+  defp maybe_keyword(opts, key, value), do: Keyword.put(opts, key, value)
 
   defp env_config_dir(opts) do
     opts

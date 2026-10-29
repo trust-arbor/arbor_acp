@@ -5,6 +5,7 @@ defmodule Arbor.ACP.Adapters.Pi.Settings do
 
   @spec load(String.t() | nil, keyword()) :: map()
   def load(cwd, opts \\ []) do
+    opts = put_cwd(opts, cwd)
     agent_dir = agent_dir(opts)
     global = read_json(Path.join(agent_dir, "settings.json"))
 
@@ -29,10 +30,16 @@ defmodule Arbor.ACP.Adapters.Pi.Settings do
 
   @spec agent_dir(keyword()) :: String.t()
   def agent_dir(opts \\ []) do
-    case Keyword.get(opts, :agent_dir) || System.get_env("PI_CODING_AGENT_DIR") do
-      nil -> Path.join(System.user_home!(), ".pi/agent")
-      "" -> Path.join(System.user_home!(), ".pi/agent")
-      dir -> Path.expand(dir)
+    case Keyword.get(opts, :agent_dir) do
+      dir when is_binary(dir) and dir != "" ->
+        Path.expand(dir)
+
+      _ ->
+        if RuntimeHome.trust_workspace_config?(opts) do
+          inherited_or_default_agent_dir()
+        else
+          RuntimeHome.path(opts, :pi) || inherited_or_default_agent_dir()
+        end
     end
   end
 
@@ -75,6 +82,17 @@ defmodule Arbor.ACP.Adapters.Pi.Settings do
       System.get_env("PI_ACP_PI_COMMAND") ||
       settings["piCommand"] ||
       "pi"
+  end
+
+  defp put_cwd(opts, cwd) when is_binary(cwd) and cwd != "", do: Keyword.put_new(opts, :cwd, cwd)
+  defp put_cwd(opts, _cwd), do: opts
+
+  defp inherited_or_default_agent_dir do
+    case System.get_env("PI_CODING_AGENT_DIR") do
+      nil -> Path.join(System.user_home!(), ".pi/agent")
+      "" -> Path.join(System.user_home!(), ".pi/agent")
+      dir -> Path.expand(dir)
+    end
   end
 
   defp project_settings_path(cwd) when is_binary(cwd) and cwd != "",

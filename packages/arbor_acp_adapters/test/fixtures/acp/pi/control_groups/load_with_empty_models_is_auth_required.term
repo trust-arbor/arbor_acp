@@ -155,12 +155,13 @@
                     "terminal-auth" => %{
                       "args" => [],
                       "command" => "<sandbox>/bin/pi",
+                      "env" => %{"PI_CODING_AGENT_DIR" => "<sandbox>/agent"},
                       "label" => "Launch pi"
                     }
                   },
                   "args" => [],
                   "description" => "Start pi interactively to configure API keys or login",
-                  "env" => %{},
+                  "env" => %{"PI_CODING_AGENT_DIR" => "<sandbox>/agent"},
                   "id" => "pi_terminal_login",
                   "name" => "Launch pi in the terminal",
                   "type" => "terminal"

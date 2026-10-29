@@ -18,7 +18,7 @@ defmodule Arbor.ACP.Adapters.Pi.Startup do
           version_section(cwd, settings),
           update_notice(cwd, settings),
           prelude_section(prelude_lines),
-          context_section(cwd),
+          context_section(cwd, settings["_opts"] || []),
           inventory_section("Skills", skill_dirs(cwd, settings["_opts"] || [])),
           inventory_section("Prompts", prompt_dirs(cwd, settings["_opts"] || [])),
           inventory_section("Extensions", extension_dirs(cwd, settings["_opts"] || []))
@@ -97,11 +97,13 @@ defmodule Arbor.ACP.Adapters.Pi.Startup do
     if text == "", do: nil, else: "Startup output\n#{text}"
   end
 
-  defp context_section(cwd) do
-    path = Path.join(cwd, "AGENTS.md")
+  defp context_section(cwd, opts) do
+    if RuntimeHome.trust_workspace_config?(opts) do
+      path = Path.join(cwd, "AGENTS.md")
 
-    if File.exists?(path) do
-      "Context\nAGENTS.md"
+      if File.exists?(path) do
+        "Context\nAGENTS.md"
+      end
     end
   end
 

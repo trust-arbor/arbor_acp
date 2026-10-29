@@ -311,7 +311,7 @@
   %Arbor.ACP.Test.PiGolden.Entry{
     step: %{kind: :read_file, path: "<sandbox>/bin/argv.log"},
     result: %{
-      content: "--mode rpc --no-themes\n--mode rpc --no-themes\n--mode rpc --no-themes --session <sandbox>/sessions/pi-session.jsonl\n",
+      content: "--mode rpc --no-themes --no-context-files\n--mode rpc --no-themes --no-context-files\n--mode rpc --no-themes --no-context-files --session <sandbox>/sessions/pi-session.jsonl\n",
       exists: true
     }
   }

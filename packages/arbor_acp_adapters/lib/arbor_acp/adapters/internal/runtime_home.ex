@@ -3,7 +3,8 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
 
   # Private per-session config directories for vendor CLIs. Created 0700 under
   # System.tmp_dir/0 and removed when the process that requested them exits
-  # (the AdapterBridge for a managed launch).
+  # (the AdapterBridge for a managed launch). Cached per vendor and workspace
+  # so a later session with a different cwd does not reuse the previous home.
 
   @dir_prefix "arbor_acp_runtime_home_"
 
@@ -34,7 +35,7 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
         if trust_workspace_config?(opts) do
           nil
         else
-          cached_or_create(kind)
+          cached_or_create(opts, kind)
         end
     end
   end
@@ -49,6 +50,31 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
     end
   end
 
+  @spec put_opt(keyword(), atom()) :: keyword()
+  def put_opt(opts, kind) when is_list(opts) do
+    spec = spec!(kind)
+    opts = drop_minted_option(opts, spec.option)
+
+    case path(opts, kind) do
+      nil -> opts
+      path -> Keyword.put(opts, spec.option, path)
+    end
+  end
+
+  defp drop_minted_option(opts, option) do
+    case Keyword.get(opts, option) do
+      path when is_binary(path) ->
+        if minted_path?(path), do: Keyword.delete(opts, option), else: opts
+
+      _ ->
+        opts
+    end
+  end
+
+  defp minted_path?(path) do
+    String.starts_with?(Path.basename(path), @dir_prefix)
+  end
+
   defp spec!(kind) do
     case Map.fetch(@kinds, kind) do
       {:ok, spec} -> spec
@@ -56,15 +82,24 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
     end
   end
 
-  defp cached_or_create(kind) do
-    key = {__MODULE__, kind}
+  defp session_key(opts) do
+    case Keyword.get(opts, :cwd) do
+      cwd when is_binary(cwd) and cwd != "" -> Path.expand(cwd)
+      _ -> :connection
+    end
+  end
+
+  defp cached_or_create(opts, kind) do
+    key = {__MODULE__, kind, session_key(opts)}
 
     case Process.get(key) do
       path when is_binary(path) ->
+        prepare!(kind, path)
         path
 
       nil ->
         path = create!(kind)
+        prepare!(kind, path)
         Process.put(key, path)
         path
     end
@@ -96,6 +131,19 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
         end
     end
   end
+
+  defp prepare!(:codex, path) do
+    config = Path.join(path, "config.toml")
+
+    unless File.exists?(config) do
+      File.write!(config, "project_doc_max_bytes = 0\n")
+      _ = File.chmod(config, 0o600)
+    end
+
+    :ok
+  end
+
+  defp prepare!(_kind, _path), do: :ok
 
   defp remove_when_down(owner, dir) do
     spawn(fn ->
