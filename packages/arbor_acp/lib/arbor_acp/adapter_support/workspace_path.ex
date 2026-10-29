@@ -39,15 +39,17 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
   Deletes `path` when it resolves inside `root`.
 
   Containment is resolved once; the delete uses that path and does not
-  resolve again. Ancestor directories are lstat'd and the last component
-  is unlinked from the parent inode, so a swap of the file or of a parent
-  directory cannot redirect the delete outside `root`.
+  resolve again. One process then walks from the resolved root: each
+  ancestor is entered with `cd -P` only when an lstat of that component
+  is a directory whose inode matches the directory landed in. The last
+  component is unlinked relative to that cwd. A swap of the file or of
+  an ancestor for a symlink is not followed.
 
   `opts[:after_contain]` runs after the containment check and before the
-  delete, so tests can swap the path in the check-then-use window.
+  ancestor walk, so tests can swap the path in the check-then-use window.
 
   `opts[:after_ancestors]` runs after the ancestor walk and before the
-  parent lstat, so tests can swap a grandparent in that window.
+  anchored unlink, so tests can swap a grandparent in that window.
   """
   @spec rm_within(String.t(), String.t(), keyword()) :: :ok
   def rm_within(path, root, opts \\ []) when is_binary(path) and is_binary(root) do
@@ -67,7 +69,7 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
         if contained_resolved?(resolved, resolved_root) and
              directory_ancestors?(resolved, resolved_root) do
           if hook = Keyword.get(opts, :after_ancestors), do: hook.()
-          unlink_last_component(resolved)
+          anchored_unlink(resolved_root, resolved)
         else
           :ok
         end
@@ -91,41 +93,63 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
     end)
   end
 
-  defp unlink_last_component(resolved) do
-    parent = Path.dirname(resolved)
-    name = Path.basename(resolved)
+  defp anchored_unlink(resolved_root, resolved) do
+    relative = Path.relative_to(resolved, resolved_root)
 
-    with true <- safe_basename?(name),
-         {:ok, info} <- File.lstat(parent),
-         :directory <- info.type do
-      case :os.type() do
-        {:unix, os} -> unix_unlink_at(parent, name, info, os)
-        _other -> File.rm(resolved)
-      end
-    else
-      _ -> :ok
+    case Path.split(relative) do
+      [] ->
+        :ok
+
+      ["."] ->
+        :ok
+
+      components ->
+        {dirs, [name]} = Enum.split(components, -1)
+
+        with true <- Enum.all?([name | dirs], &safe_basename?/1),
+             {:ok, root_info} <- File.lstat(resolved_root),
+             :directory <- root_info.type do
+          case :os.type() do
+            {:unix, os} -> unix_anchored_unlink(resolved_root, root_info, dirs, name, os)
+            _other -> File.rm(resolved)
+          end
+        else
+          _ -> :ok
+        end
     end
   end
 
   defp safe_basename?(name),
     do: name not in ["", ".", ".."] and not String.contains?(name, "/")
 
-  defp unix_unlink_at(parent, name, info, os) do
+  defp unix_anchored_unlink(root, root_info, dirs, name, os) do
     {stat_flag, stat_fmt} =
       case os do
         :darwin -> {"-f", "%d:%i"}
         _ -> {"-c", "%d:%i"}
       end
 
-    expected = "#{info.major_device}:#{info.inode}"
+    expected_root = "#{root_info.major_device}:#{root_info.inode}"
 
     script =
-      "actual=$(stat #{stat_flag} '#{stat_fmt}' .) || exit 1\n" <>
-        "test \"$actual\" = \"$1\" || exit 2\n" <>
-        "exec rm -- \"$2\""
+      "cd -P -- \"$1\" || exit 1\n" <>
+        "actual=$(stat #{stat_flag} '#{stat_fmt}' .) || exit 1\n" <>
+        "test \"$actual\" = \"$2\" || exit 2\n" <>
+        "name=$3\n" <>
+        "shift 3\n" <>
+        "for comp do\n" <>
+        "  case \"$comp\" in \"\"|\".\"|\"..\"|*/*) exit 3 ;; esac\n" <>
+        "  [ -L \"$comp\" ] && exit 4\n" <>
+        "  [ -d \"$comp\" ] || exit 5\n" <>
+        "  expected=$(stat #{stat_flag} '#{stat_fmt}' \"$comp\") || exit 1\n" <>
+        "  cd -P -- \"$comp\" || exit 1\n" <>
+        "  actual=$(stat #{stat_flag} '#{stat_fmt}' .) || exit 1\n" <>
+        "  test \"$actual\" = \"$expected\" || exit 2\n" <>
+        "done\n" <>
+        "case \"$name\" in \"\"|\".\"|\"..\"|*/*) exit 3 ;; esac\n" <>
+        "exec rm -- \"$name\""
 
-    case System.cmd("sh", ["-ec", script, "rm_within", expected, name],
-           cd: parent,
+    case System.cmd("sh", ["-ec", script, "rm_within", root, expected_root, name | dirs],
            stderr_to_stdout: true
          ) do
       {_out, 0} -> :ok

@@ -107,6 +107,15 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
     refute File.exists?(inside)
   end
 
+  test "rm_within deletes a nested regular file inside the root", %{root: root} do
+    parent = Path.join(root, "grand/parent")
+    File.mkdir_p!(parent)
+    inside = Path.join(parent, "inside.txt")
+    File.write!(inside, "session")
+    assert :ok = WorkspacePath.rm_within(inside, root)
+    refute File.exists?(inside)
+  end
+
   test "rm_within does not delete an outside file swapped in after containment",
        %{root: root, outside: outside} do
     inside = Path.join(root, "inside.txt")
@@ -125,7 +134,7 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
     assert File.exists?(secret)
   end
 
-  test "rm_within does not follow an ancestor directory swapped for a symlink",
+  test "rm_within does not follow a parent swapped for a symlink after containment",
        %{root: root, outside: outside} do
     sub = Path.join(root, "sub")
     File.mkdir_p!(sub)
