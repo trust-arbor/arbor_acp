@@ -314,7 +314,7 @@ defmodule Arbor.ACP.Adapters.SessionIsolationSecurityTest do
       assert {:error, reason, _state} = ClaudeSDK.translate_outbound(forged, state)
       assert reason =~ ~r/unknown|not bound|session/i
 
-      stdin = File.exists?(stdin_log) && File.read!(stdin_log) || ""
+      stdin = (File.exists?(stdin_log) && File.read!(stdin_log)) || ""
       refute stdin =~ "cross-session"
     end
   end
@@ -661,7 +661,8 @@ defmodule Arbor.ACP.Adapters.SessionIsolationSecurityTest do
 
         %{
           state
-          | session_processes: Map.put(state.session_processes, session_id, %{entry | fields: fields})
+          | session_processes:
+              Map.put(state.session_processes, session_id, %{entry | fields: fields})
         }
     end
   end

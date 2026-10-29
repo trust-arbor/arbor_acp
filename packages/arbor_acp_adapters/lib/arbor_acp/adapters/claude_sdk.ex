@@ -529,9 +529,14 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       |> then(&switch_to_client_request_session(msg["id"], &1))
 
     case Mapper.client_response(msg, state) do
-      {:ok, data, state} -> {:ok, data, persist_current_session(state)}
-      {:ok, messages, data, state} -> {:messages_and_write, messages, data, persist_current_session(state)}
-      :unknown -> {:ok, :skip, persist_current_session(state)}
+      {:ok, data, state} ->
+        {:ok, data, persist_current_session(state)}
+
+      {:ok, messages, data, state} ->
+        {:messages_and_write, messages, data, persist_current_session(state)}
+
+      :unknown ->
+        {:ok, :skip, persist_current_session(state)}
     end
   end
 
@@ -563,7 +568,6 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           {:error, reason, state}
       end
     else
-      {:error, reason, state} -> {:error, reason, state}
       {:error, reason} -> {:error, reason, state}
     end
   end
@@ -636,7 +640,6 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           {:error, reason, state}
       end
     else
-      {:error, reason, state} -> {:error, reason, state}
       {:error, reason} -> {:error, reason, state}
     end
   end
@@ -666,7 +669,6 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           {:error, reason, state}
       end
     else
-      {:error, reason, state} -> {:error, reason, state}
       {:error, reason} -> {:error, reason, state}
     end
   end
