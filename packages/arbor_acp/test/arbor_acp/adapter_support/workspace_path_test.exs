@@ -100,6 +100,13 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
     assert WorkspacePath.contained(escaped, root) == :error
   end
 
+  test "rm_within deletes a regular file inside the root", %{root: root} do
+    inside = Path.join(root, "inside.txt")
+    File.write!(inside, "session")
+    assert :ok = WorkspacePath.rm_within(inside, root)
+    refute File.exists?(inside)
+  end
+
   test "rm_within does not delete an outside file swapped in after containment",
        %{root: root, outside: outside} do
     inside = Path.join(root, "inside.txt")

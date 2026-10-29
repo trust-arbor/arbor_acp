@@ -38,17 +38,94 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
   @doc """
   Deletes `path` when it resolves inside `root`.
 
+  Containment is resolved once; the delete uses that path and does not
+  resolve again. Ancestor directories are lstat'd and the last component
+  is unlinked from the parent inode, so a swap of the file or of a parent
+  directory cannot redirect the delete outside `root`.
+
   `opts[:after_contain]` runs after the containment check and before the
   delete, so tests can swap the path in the check-then-use window.
   """
   @spec rm_within(String.t(), String.t(), keyword()) :: :ok
   def rm_within(path, root, opts \\ []) when is_binary(path) and is_binary(root) do
-    if within?(path, root) do
-      if hook = Keyword.get(opts, :after_contain), do: hook.()
-      File.rm(canonical(path))
-      :ok
+    case contained(path, root) do
+      {:ok, resolved} ->
+        if hook = Keyword.get(opts, :after_contain), do: hook.()
+        rm_contained(resolved, root)
+
+      :error ->
+        :ok
+    end
+  end
+
+  defp rm_contained(resolved, root) do
+    case resolve(root) do
+      {:ok, resolved_root} ->
+        if contained_resolved?(resolved, resolved_root) and
+             directory_ancestors?(resolved, resolved_root) do
+          unlink_last_component(resolved)
+        else
+          :ok
+        end
+
+      {:error, :incomplete} ->
+        :ok
+    end
+  end
+
+  defp directory_ancestors?(resolved, resolved_root) do
+    relative = Path.relative_to(resolved, resolved_root)
+
+    dirs =
+      relative
+      |> Path.split()
+      |> Enum.drop(-1)
+      |> Enum.scan(resolved_root, &Path.join(&2, &1))
+
+    Enum.all?([resolved_root | dirs], fn dir ->
+      match?({:ok, %File.Stat{type: :directory}}, File.lstat(dir))
+    end)
+  end
+
+  defp unlink_last_component(resolved) do
+    parent = Path.dirname(resolved)
+    name = Path.basename(resolved)
+
+    with true <- safe_basename?(name),
+         {:ok, info} <- File.lstat(parent),
+         :directory <- info.type do
+      case :os.type() do
+        {:unix, os} -> unix_unlink_at(parent, name, info, os)
+        _other -> File.rm(resolved)
+      end
     else
-      :ok
+      _ -> :ok
+    end
+  end
+
+  defp safe_basename?(name),
+    do: name not in ["", ".", ".."] and not String.contains?(name, "/")
+
+  defp unix_unlink_at(parent, name, info, os) do
+    {stat_flag, stat_fmt} =
+      case os do
+        :darwin -> {"-f", "%d:%i"}
+        _ -> {"-c", "%d:%i"}
+      end
+
+    expected = "#{info.major_device}:#{info.inode}"
+
+    script =
+      "actual=$(stat #{stat_flag} '#{stat_fmt}' .) || exit 1\n" <>
+        "test \"$actual\" = \"$1\" || exit 2\n" <>
+        "exec rm -- \"$2\""
+
+    case System.cmd("sh", ["-ec", script, "rm_within", expected, name],
+           cd: parent,
+           stderr_to_stdout: true
+         ) do
+      {_out, 0} -> :ok
+      _other -> :ok
     end
   end
 
