@@ -13,6 +13,10 @@ defmodule Arbor.ACP.Adapters.Codex do
   project setting. `:trusted_mcp_servers` accepts exact server maps; `:all` is
   an explicit unsafe compatibility escape hatch. Names alone never authorize
   caller-controlled connection details.
+
+  By default the adapter mints a private `CODEX_HOME` (0700) so the child does
+  not inherit the host Codex home. Pass `:codex_home` or
+  `:trust_workspace_config` to keep the previous home.
   """
 
   @behaviour Arbor.ACP.Adapter
@@ -85,6 +89,11 @@ defmodule Arbor.ACP.Adapters.Codex do
   @impl true
   def command(opts) do
     {Keyword.get(opts, :codex_path) || System.get_env("CODEX_PATH") || "codex", ["app-server"]}
+  end
+
+  @impl true
+  def env(opts) do
+    Arbor.ACP.Adapters.Internal.RuntimeHome.put(%{}, opts, :codex)
   end
 
   @impl true

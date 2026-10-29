@@ -19,7 +19,8 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--permission-mode", "default",
-         "--include-partial-messages", "--debug", "verbose", "7"],
+         "--include-partial-messages", "--setting-sources", "user", "--strict-mcp-config",
+         "--debug", "verbose", "7"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok

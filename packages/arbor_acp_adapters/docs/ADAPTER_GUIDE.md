@@ -55,7 +55,17 @@ of `false` unsets a variable.
 Built-in adapter defaults clear inherited provider keys and nested Claude session
 markers. Explicitly pass the credentials/configuration needed by the child;
 putting a key in the parent shell alone does not guarantee it reaches the agent.
-HOME remains available, so existing vendor login state may still be used.
+HOME remains available, so existing vendor login state may still be used
+when the adapter is not minting a private vendor config dir.
+
+Claude, Codex and Pi isolate workspace agent configuration by default:
+Claude is launched with `--setting-sources user` and `--strict-mcp-config`,
+and each of those adapters mints a private `CLAUDE_CONFIG_DIR` /
+`CODEX_HOME` / `PI_CODING_AGENT_DIR`. Pi also ignores the workspace `.pi`
+tree. Pass `trust_workspace_config: true` to load project settings again,
+or set `:claude_config_dir`, `:codex_home` or `:agent_dir` to use a host
+directory instead of a minted one. A project's `piCommand` stays ignored
+even with the opt-in.
 
 ```elixir
 adapter_opts = [
@@ -109,7 +119,6 @@ Claude's subprocess must receive MCP configuration when it starts:
 ```elixir
 adapter_opts = [
   cwd: File.cwd!(),
-  strict_mcp_config: true,
   mcp_servers: %{
     "local-tools" => %{"type" => "http", "url" => "http://localhost:4000/mcp"}
   }
@@ -120,7 +129,9 @@ This is a map of names to Claude configuration, not an ACP `mcpServers` list.
 The adapter writes it to a 0600 file in a fresh 0700 directory and removes that
 file when the owning bridge exits. `mcp_config_path` instead accepts existing
 configuration file paths managed by the host, relative to `cwd` or absolute.
-`strict_mcp_config: true` asks Claude to use only the supplied configuration.
+`--strict-mcp-config` is the default, so Claude uses only the supplied
+configuration. Set `strict_mcp_config: false` or `trust_workspace_config: true`
+to allow Claude's own MCP files again.
 
 Session `mcp_servers` do not attach new servers to an already running Claude
 process. The adapter advertises no session MCP transport and reports

@@ -9,7 +9,8 @@
         session_map_path: "<sandbox>/session-map.json",
         cli_path: "<sandbox>/bin/pi",
         update_notice: false,
-        managed: false
+        managed: false,
+        trust_workspace_config: true
       ]
     },
     result: %{tag: :ok}

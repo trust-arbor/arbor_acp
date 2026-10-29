@@ -1,6 +1,8 @@
 defmodule Arbor.ACP.Adapters.Pi.Settings do
   @moduledoc false
 
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
+
   @spec load(String.t() | nil, keyword()) :: map()
   def load(cwd, opts \\ []) do
     agent_dir = agent_dir(opts)
@@ -9,8 +11,14 @@ defmodule Arbor.ACP.Adapters.Pi.Settings do
     # The project directory is the untrusted workspace a session opens on, so
     # it must never choose which executable the adapter spawns. `piCommand`
     # comes from adapter options, the environment, or the global agent
-    # settings only.
-    project = cwd |> project_settings_path() |> read_json() |> Map.delete("piCommand")
+    # settings only. Other project settings are also ignored unless the host
+    # opts in with `:trust_workspace_config`.
+    project =
+      if RuntimeHome.trust_workspace_config?(opts) do
+        cwd |> project_settings_path() |> read_json() |> Map.delete("piCommand")
+      else
+        %{}
+      end
 
     global
     |> deep_merge(project)

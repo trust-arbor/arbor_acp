@@ -203,9 +203,8 @@ defmodule Arbor.ACP.Adapters.WorkspaceConfigIsolationTest do
       assert env_string(child_env([cwd: cwd, codex_home: codex_dir], Codex)["CODEX_HOME"]) ==
                codex_dir
 
-      assert env_string(
-               child_env([cwd: cwd, agent_dir: pi_dir], Pi)["PI_CODING_AGENT_DIR"]
-             ) == pi_dir
+      assert env_string(child_env([cwd: cwd, agent_dir: pi_dir], Pi)["PI_CODING_AGENT_DIR"]) ==
+               pi_dir
     end
   end
 

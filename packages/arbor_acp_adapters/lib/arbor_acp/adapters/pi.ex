@@ -6,6 +6,10 @@ defmodule Arbor.ACP.Adapters.Pi do
   mode it owns a shared subprocess handle so a fresh Pi process can be
   attached to each loaded or resumed ACP session.
 
+  Workspace `.pi` settings, prompts, skills and packages are ignored unless
+  `:trust_workspace_config` is set. By default the child also gets a private
+  `PI_CODING_AGENT_DIR`; pass `:agent_dir` to keep a specific directory.
+
   Managed output uses one frame of shared delivery credit. Startup banners
   retained for session metadata are limited by `:max_prelude_lines` (64) and
   `:max_prelude_bytes` (65,536); exceeding either limit fails pending work.
@@ -37,6 +41,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   alias Arbor.ACP.AdapterEvents
   alias Arbor.RPC.JSONRPC, as: Envelope
   alias Arbor.ACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
   alias Arbor.ACP.Types
 
   @auth_method_id "pi_terminal_login"
@@ -98,6 +103,9 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   @impl true
   def environment_defaults(opts), do: Arbor.ACP.Adapters.Internal.Environment.pi(opts)
+
+  @impl true
+  def env(opts), do: RuntimeHome.put(%{}, opts, :pi)
 
   @impl true
   def init(opts) do

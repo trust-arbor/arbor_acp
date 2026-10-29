@@ -15,7 +15,8 @@
     result: %{
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
-         "--permission-mode", "default", "--include-partial-messages"],
+         "--permission-mode", "default", "--include-partial-messages", "--setting-sources",
+         "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok

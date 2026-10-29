@@ -22,7 +22,8 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--mcp-config", "<generated-mcp-config>",
-         "--permission-mode", "default", "--include-partial-messages"],
+         "--permission-mode", "default", "--include-partial-messages", "--setting-sources",
+         "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude",
         generated_mcp_config: %{
           contents: %{

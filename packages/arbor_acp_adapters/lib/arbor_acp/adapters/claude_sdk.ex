@@ -26,7 +26,17 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       path is resolved against `:cwd`. A path that is not an existing file is
       an `{:invalid_option, :mcp_config_path, message}` error.
     * `:strict_mcp_config` - when true, Claude Code uses only the servers given
-      through the options above and ignores the user's own MCP configuration.
+      through the options above and ignores user and project MCP configuration
+      (including a workspace `.mcp.json`). Defaults to true unless the host
+      sets `:trust_workspace_config`.
+    * `:setting_sources` - Claude Code `--setting-sources` value (default
+      `"user"`). Project and local sources are omitted so a workspace
+      `.claude/settings*.json` cannot install hooks. Pass an explicit list or
+      `:trust_workspace_config` to restore the previous sources.
+    * `:trust_workspace_config` - opt back into loading workspace Claude
+      settings, `.mcp.json`, and the host Claude config directory.
+    * `:claude_config_dir` - Claude config directory. When omitted, the
+      adapter mints a private 0700 directory and sets `CLAUDE_CONFIG_DIR`.
 
   The `mcpServers` of `session/new`, `session/load`, `session/resume` and
   `session/fork` are not attached: the Claude Code process is already running.

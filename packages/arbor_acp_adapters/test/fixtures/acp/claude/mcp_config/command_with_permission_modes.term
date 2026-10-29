@@ -16,7 +16,7 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--permission-mode", "default",
-         "--include-partial-messages"],
+         "--include-partial-messages", "--setting-sources", "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok
@@ -31,7 +31,7 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--permission-mode", "acceptEdits",
-         "--include-partial-messages"],
+         "--include-partial-messages", "--setting-sources", "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok
@@ -43,7 +43,7 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--permission-mode", "plan",
-         "--include-partial-messages"],
+         "--include-partial-messages", "--setting-sources", "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok
@@ -55,7 +55,7 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--permission-mode", "auto",
-         "--include-partial-messages"],
+         "--include-partial-messages", "--setting-sources", "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok
@@ -67,7 +67,7 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--permission-mode", "dontAsk",
-         "--include-partial-messages"],
+         "--include-partial-messages", "--setting-sources", "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok
@@ -79,7 +79,7 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--permission-mode", "custom",
-         "--include-partial-messages"],
+         "--include-partial-messages", "--setting-sources", "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok
