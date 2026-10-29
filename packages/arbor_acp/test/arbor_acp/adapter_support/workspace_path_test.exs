@@ -80,17 +80,23 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
   test "symlink loops terminate", %{root: root} do
     File.ln_s!(Path.join(root, "loop_b"), Path.join(root, "loop_a"))
     File.ln_s!(Path.join(root, "loop_a"), Path.join(root, "loop_b"))
-    assert is_binary(WorkspacePath.canonical(Path.join(root, "loop_a/file")))
+    looped = Path.join(root, "loop_a/file")
+    assert is_binary(WorkspacePath.canonical(looped))
+    assert {:error, :incomplete} = WorkspacePath.resolve(looped)
+    refute WorkspacePath.within?(looped, root)
   end
 
   test "a 41-symlink chain that leaves the root is rejected", %{root: root, outside: outside} do
     last = Path.join(root, "link41")
     File.ln_s!(outside, last)
 
-    Enum.each(40..1, fn n ->
+    Enum.each(40..1//-1, fn n ->
       File.ln_s!(Path.join(root, "link#{n + 1}"), Path.join(root, "link#{n}"))
     end)
 
-    refute WorkspacePath.within?(Path.join(root, "link1/secret.txt"), root)
+    escaped = Path.join(root, "link1/secret.txt")
+    assert {:error, :incomplete} = WorkspacePath.resolve(escaped)
+    refute WorkspacePath.within?(escaped, root)
+    assert WorkspacePath.contained(escaped, root) == :error
   end
 end
