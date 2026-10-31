@@ -38,8 +38,8 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
   @doc """
   Deletes `path` when it resolves inside `root`.
 
-  Containment is resolved once; the delete uses that path and does not
-  resolve again. One process then walks from the filesystem root through the resolved root: each
+  The parent is resolved once; the final name is unlinked without following
+  a leaf symlink. The root identity is captured before containment hooks. One process then walks from the filesystem root through the resolved root: each
   ancestor is entered with `cd -P` only when an lstat of that component
   is a directory whose inode matches the directory landed in. The last
   component is unlinked relative to that cwd. A swap of the file or of
@@ -53,29 +53,27 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
   """
   @spec rm_within(String.t(), String.t(), keyword()) :: :ok
   def rm_within(path, root, opts \\ []) when is_binary(path) and is_binary(root) do
-    case contained(path, root) do
-      {:ok, resolved} ->
-        if hook = Keyword.get(opts, :after_contain), do: hook.()
-        rm_contained(resolved, root, opts)
-
-      :error ->
-        :ok
+    with false <- String.ends_with?(path, "/"),
+         {:ok, resolved_root} <- resolve(root),
+         {:ok, %File.Stat{type: :directory} = root_info} <- File.lstat(resolved_root),
+         name = Path.basename(path),
+         true <- safe_basename?(name),
+         {:ok, parent} <- resolve(Path.dirname(absolute(path))),
+         resolved = Path.join(parent, name),
+         true <- contained_resolved?(resolved, resolved_root) do
+      if hook = Keyword.get(opts, :after_contain), do: hook.()
+      rm_contained(resolved, resolved_root, root_info, opts)
+    else
+      _outside_or_unresolved -> :ok
     end
   end
 
-  defp rm_contained(resolved, root, opts) do
-    case resolve(root) do
-      {:ok, resolved_root} ->
-        if contained_resolved?(resolved, resolved_root) and
-             directory_ancestors?(resolved, resolved_root) do
-          if hook = Keyword.get(opts, :after_ancestors), do: hook.()
-          anchored_unlink(resolved_root, resolved)
-        else
-          :ok
-        end
-
-      {:error, :incomplete} ->
-        :ok
+  defp rm_contained(resolved, resolved_root, root_info, opts) do
+    if directory_ancestors?(resolved, resolved_root) do
+      if hook = Keyword.get(opts, :after_ancestors), do: hook.()
+      anchored_unlink(resolved_root, resolved, root_info)
+    else
+      :ok
     end
   end
 
@@ -93,7 +91,7 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
     end)
   end
 
-  defp anchored_unlink(resolved_root, resolved) do
+  defp anchored_unlink(resolved_root, resolved, root_info) do
     relative = Path.relative_to(resolved, resolved_root)
 
     case Path.split(relative) do
@@ -106,9 +104,7 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
       components ->
         {dirs, [name]} = Enum.split(components, -1)
 
-        with true <- Enum.all?([name | dirs], &safe_basename?/1),
-             {:ok, root_info} <- File.lstat(resolved_root),
-             :directory <- root_info.type do
+        with true <- Enum.all?([name | dirs], &safe_basename?/1) do
           case :os.type() do
             {:unix, os} -> unix_anchored_unlink(resolved_root, root_info, dirs, name, os)
             _other -> :ok
