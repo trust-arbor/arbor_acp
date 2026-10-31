@@ -58,10 +58,14 @@ options.
   callbacks when accepting additional workspaces or caller-provided MCP servers.
   Claude, Codex and Pi ignore workspace agent config (`.claude/settings*.json`,
   `.mcp.json`, `.pi/`, `AGENTS.md`) unless `trust_workspace_config: true`, and
-  they mint a private per-session vendor config dir unless `:claude_config_dir`,
+  they mint private vendor config dirs unless `:claude_config_dir`,
   `:codex_home`, `:agent_dir`, or the matching `:env` variable is set. That empty home hides existing logins,
   global settings, models, skills and prompts; cleanup deletes transcripts and
-  credentials written into it. Pass `trust_workspace_config: true` or an
+  credentials written into it. Managed Claude/Pi homes follow child sessions;
+  Codex uses one home per connection, shared across its threads and retained
+  after thread close. Private Claude/Pi terminal login homes seed only auth
+  files into generated child homes. Caller-owned directories are retained.
+  Pass `trust_workspace_config: true` or an
   explicit directory to keep today's behavior.
 - `trusted_mcp_servers` contains exact descriptor maps. A server name alone does
   not authorize an arbitrary URL, command or environment. Codex trusted-project
