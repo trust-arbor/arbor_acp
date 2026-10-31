@@ -381,23 +381,20 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
       {session_id, handle, {:closed, _reason, remainder}} ->
         state = switch_session(state, session_id)
-        {messages, state} = cleanup_session(state, session_id)
-        state = forget_session_process(state, session_id, handle)
 
-        remainder
-        |> String.split("\n", trim: true)
-        |> Enum.reduce({:messages, messages, state}, fn line, {_tag, acc, acc_state} ->
-          inbound_to_adapter_message(translate_inbound(line, acc_state), handle)
-          |> then(fn
-            {:messages, extra, acc_state} -> {:messages, acc ++ extra, acc_state}
-            {:skip, acc_state} -> {:messages, acc, acc_state}
+        {messages, state} =
+          remainder
+          |> String.split("\n", trim: true)
+          |> Enum.reduce({[], state}, fn line, {acc, acc_state} ->
+            case inbound_to_adapter_message(translate_inbound(line, acc_state), handle) do
+              {:messages, extra, acc_state} -> {acc ++ extra, acc_state}
+              {:skip, acc_state} -> {acc, acc_state}
+            end
           end)
-        end)
-        |> then(fn
-          {:messages, [], state} -> {:skip, persist_current_session(state)}
-          {:messages, messages, state} -> {:messages, messages, persist_current_session(state)}
-          other -> other
-        end)
+
+        {cancelled, state} = cleanup_session(state, session_id)
+        state = forget_session_process(state, session_id, handle)
+        adapter_messages(messages ++ cancelled, state)
 
       _other ->
         {:skip, state}
@@ -408,8 +405,9 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       when is_reference(monitor) do
     case find_session_by_monitor(state, monitor) do
       {session_id, handle} ->
-        {_messages, state} = cleanup_session(state, session_id)
-        {:skip, forget_session_process(state, session_id, handle)}
+        state = switch_session(state, session_id)
+        {messages, state} = cleanup_session(state, session_id)
+        adapter_messages(messages, forget_session_process(state, session_id, handle))
 
       nil ->
         {:skip, state}
@@ -417,6 +415,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   end
 
   def handle_adapter_message(_message, state), do: {:skip, state}
+
+  defp adapter_messages([], state), do: {:skip, persist_current_session(state)}
+
+  defp adapter_messages(messages, state),
+    do: {:messages, messages, persist_current_session(state)}
 
   @impl true
   def shutdown(state) do
@@ -641,12 +644,23 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     session_id = params["sessionId"] || state.session_id || generated_session_id()
 
     with {:ok, cwd} <- session_cwd(params, state),
-         :ok <- authorize_workspace(cwd, :session_load, state) do
+         :ok <- authorize_workspace(cwd, :session_load, state),
+         {:ok, _events} <-
+           SessionStore.read_session_messages(
+             session_id,
+             params |> session_store_opts(state) |> Map.put(:cwd, cwd)
+           ) do
       state = prepare_session_state(session_id, cwd, params, state)
 
       case start_session_process(session_id, cwd, params, :load, state) do
         {:ok, state} ->
-          load_persisted_session(session_id, cwd, params, state)
+          case load_persisted_session(session_id, cwd, params, state) do
+            {:error, reason, failed} ->
+              {:error, reason, close_session_process(failed, session_id)}
+
+            result ->
+              result
+          end
 
         {:error, reason, state} ->
           {:error, reason, state}
@@ -1387,13 +1401,40 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   defp session_process_opts(state, cwd, session_id, kind) do
     opts =
       state.opts
+      |> absolute_mcp_paths()
       |> Keyword.put(:cwd, cwd)
       |> Keyword.delete(:resume)
+      |> Keyword.delete(:session_id)
       |> Keyword.merge(session_home_opts(state, session_id))
       |> constrain_child_permissions(state)
 
-    if kind in [:load, :resume, :fork] and SessionStore.valid_session_id?(session_id) do
-      Keyword.put(opts, :resume, session_id)
+    cond do
+      kind in [:load, :resume, :fork] and SessionStore.valid_session_id?(session_id) ->
+        Keyword.put(opts, :resume, session_id)
+
+      kind == :new ->
+        native_id =
+          if SessionStore.valid_session_id?(session_id),
+            do: session_id,
+            else: SessionStore.new_session_id()
+
+        Keyword.put(opts, :session_id, native_id)
+
+      true ->
+        opts
+    end
+  end
+
+  defp absolute_mcp_paths(opts) do
+    base = Keyword.get(opts, :cwd) || File.cwd!()
+
+    if Keyword.has_key?(opts, :mcp_config_path) do
+      Keyword.update!(opts, :mcp_config_path, fn paths ->
+        Enum.map(List.wrap(paths), fn
+          path when is_binary(path) -> Path.expand(path, base)
+          other -> other
+        end)
+      end)
     else
       opts
     end

@@ -747,12 +747,8 @@ defmodule Arbor.ACP.Adapters.Codex do
 
   defp bind_thread(_session_id, _cwd, state), do: state
 
-  defp same_workspace?(bound_cwd, cwd, opts) do
-    WorkspacePath.canonical(bound_cwd) == WorkspacePath.canonical(cwd) or
-      Enum.any?(workspace_root_list(opts), fn root ->
-        is_binary(root) and root != "" and Path.type(root) == :absolute and
-          WorkspacePath.within?(bound_cwd, root) and WorkspacePath.within?(cwd, root)
-      end)
+  defp same_workspace?(bound_cwd, cwd, _opts) do
+    WorkspacePath.canonical(bound_cwd) == WorkspacePath.canonical(cwd)
   end
 
   defp close_session_state(session_id, session, state) do
@@ -1315,6 +1311,19 @@ defmodule Arbor.ACP.Adapters.Codex do
   end
 
   defp handle_typed_response(:session_list, %{acp_id: acp_id}, {:ok, result}, state) do
+    state =
+      Enum.reduce(result["data"] || [], state, fn thread, acc ->
+        id = thread["id"]
+        cwd = thread["cwd"]
+
+        if is_binary(id) and is_binary(cwd) and Path.type(cwd) == :absolute and
+             authorize_optional_workspace(cwd, :session_list, acc) == :ok do
+          bind_thread(id, WorkspacePath.canonical(cwd), acc)
+        else
+          acc
+        end
+      end)
+
     response =
       Envelope.response(acp_id, %{
         "sessions" => Enum.map(result["data"] || [], &session_info/1)

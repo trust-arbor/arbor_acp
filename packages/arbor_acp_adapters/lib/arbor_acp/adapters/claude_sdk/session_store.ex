@@ -499,7 +499,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.SessionStore do
 
   defp rewrite_session_ids(value, _new_session_id), do: value
 
-  defp new_session_id do
+  @doc false
+  def new_session_id do
     <<u0::32, u1::16, u2::16, u3::16, u4::48>> = :crypto.strong_rand_bytes(16)
     u2 = bor(band(u2, 0x0FFF), 0x4000)
     u3 = bor(band(u3, 0x3FFF), 0x8000)
