@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Codex `session/prompt` requires a caller-supplied `cwd` to resolve inside the session's bound workspace or one of its `additionalDirectories`. The resolved real path is forwarded to `turn/start`. A path outside those roots or that cannot be resolved is rejected without sending `turn/start`.
+- Codex `session/prompt` requires a caller-supplied `cwd` to resolve inside the session's bound workspace or an `additionalDirectory` stored as its creation-time real path. Each stored directory is re-checked against `workspace_roots` on every prompt and dropped if it no longer resolves to that path or is no longer contained. `thread/started` cannot widen or replace those approved directories. The resolved real path is forwarded to `turn/start`. A path outside those roots or that cannot be resolved is rejected without sending `turn/start`.
 
 - Report every dropped session update through telemetry. Listeners can opt into coalesced drop notices with `notify_update_drops: true`; handlers can implement `handle_session_updates_dropped/3`. Notices respect queue bounds and recover without another update.
 

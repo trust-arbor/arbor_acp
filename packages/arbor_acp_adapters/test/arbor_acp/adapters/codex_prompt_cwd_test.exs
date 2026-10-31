@@ -1,7 +1,7 @@
 defmodule Arbor.ACP.Adapters.CodexPromptCwdTest do
   @moduledoc """
   session/prompt cwd values must stay inside the session's bound workspace
-  or one of its additionalDirectories.
+  or an additionalDirectory approved at session creation.
   """
 
   use ExUnit.Case, async: true
@@ -164,6 +164,68 @@ defmodule Arbor.ACP.Adapters.CodexPromptCwdTest do
       pending_before = state.pending_requests
 
       assert {:error, reason, state_after} = prompt(state, extra_prefix)
+      assert reason =~ ~r/not authorized|workspace|cwd/i
+      refute_turn_start(pending_before, state_after)
+    end
+
+    test "rejects a missing additionalDirectory later replaced by a symlink outside", %{
+      workspace: workspace,
+      outside: outside
+    } do
+      missing = Path.join(Path.dirname(workspace), "missing-extra")
+      refute File.exists?(missing)
+
+      {:ok, state} = Codex.init(workspace_roots: [workspace, missing], cwd: workspace)
+      state = start_live_thread(state, "thread-1", workspace, [missing])
+      File.ln_s!(outside, missing)
+
+      pending_before = state.pending_requests
+      assert {:error, reason, state_after} = prompt(state, outside)
+      assert reason =~ ~r/not authorized|workspace|cwd/i
+      refute_turn_start(pending_before, state_after)
+    end
+
+    test "rejects an additionalDirectory symlink later repointed outside", %{
+      workspace: workspace,
+      inside: inside,
+      outside: outside
+    } do
+      linked = Path.join(Path.dirname(workspace), "linked-extra")
+      File.ln_s!(inside, linked)
+
+      {:ok, state} = Codex.init(workspace_roots: [workspace, linked], cwd: workspace)
+      state = start_live_thread(state, "thread-1", workspace, [linked])
+      File.rm!(linked)
+      File.ln_s!(outside, linked)
+
+      pending_before = state.pending_requests
+      assert {:error, reason, state_after} = prompt(state, outside)
+      assert reason =~ ~r/not authorized|workspace|cwd/i
+      refute_turn_start(pending_before, state_after)
+    end
+
+    test "rejects a thread/started additionalDirectory that was not approved at session creation",
+         %{
+           state: state,
+           extra: extra,
+           outside: outside
+         } do
+      assert extra != outside
+
+      assert {:skip, state} =
+               Codex.translate_inbound(
+                 Jason.encode!(%{
+                   "method" => "thread/started",
+                   "params" => %{
+                     "thread" => %{"id" => "thread-1", "cwd" => extra},
+                     "additionalDirectories" => [outside]
+                   }
+                 }),
+                 state
+               )
+
+      pending_before = state.pending_requests
+      assert {:error, reason, state_after} = prompt(state, outside)
       assert reason =~ ~r/not authorized|workspace|cwd/i
       refute_turn_start(pending_before, state_after)
     end

@@ -885,7 +885,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     roots =
       [
         thread_binding(session_id, state) || session[:cwd]
-        | session[:additional_directories] || []
+        | approved_additional_directories(session, state)
       ]
       |> Enum.filter(&(is_binary(&1) and &1 != ""))
 
@@ -896,6 +896,27 @@ defmodule Arbor.ACP.Adapters.Codex do
       end
     end)
   end
+
+  # Creation-time real paths only. A later symlink swap is dropped if the
+  # stored path no longer resolves to itself or leaves workspace_roots.
+  defp approved_additional_directories(session, state) do
+    session
+    |> Map.get(:additional_directories, [])
+    |> Enum.filter(&still_authorized_additional_directory?(&1, state))
+  end
+
+  defp still_authorized_additional_directory?(directory, state)
+       when is_binary(directory) and directory != "" do
+    case WorkspacePath.resolve(directory) do
+      {:ok, resolved} ->
+        resolved == directory and within_workspace_roots?(resolved, state.opts)
+
+      {:error, _} ->
+        false
+    end
+  end
+
+  defp still_authorized_additional_directory?(_directory, _state), do: false
 
   defp translate_slash_command({:compact, _rest}, acp_id, session_id, session, _params, state) do
     track_prompt_command(
@@ -1446,6 +1467,14 @@ defmodule Arbor.ACP.Adapters.Codex do
     thread = params["thread"] || %{}
     session_id = Sessions.thread_id(thread, params)
     session = session_from_result(session_id, params, state)
+
+    approved =
+      case Map.fetch(state.sessions, session_id) do
+        {:ok, existing} -> existing[:additional_directories] || []
+        :error -> []
+      end
+
+    session = Map.put(session, :additional_directories, approved)
     {:skip, Sessions.put(state, session_id, session)}
   end
 
@@ -3372,6 +3401,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     with :ok <- authorize_workspace(cwd, :cwd, state),
          {:ok, additional_directories} <- additional_directories(params, cwd),
          :ok <- authorize_additional_directories(additional_directories, cwd, state),
+         {:ok, stored_directories} <- resolve_additional_directories(additional_directories),
          {:ok, mcp_config} <- mcp_config(params["mcpServers"], cwd, state) do
       config =
         MCP.native_config(codex_config(state.opts), mcp_config, %{
@@ -3382,8 +3412,17 @@ defmodule Arbor.ACP.Adapters.Codex do
             Keyword.get(state.opts, :trust_authorized_workspaces, false)
         })
 
-      {:ok, config, additional_directories}
+      {:ok, config, stored_directories}
     end
+  end
+
+  defp resolve_additional_directories(directories) do
+    Enum.reduce_while(directories, {:ok, []}, fn directory, {:ok, acc} ->
+      case WorkspacePath.resolve(directory) do
+        {:ok, resolved} -> {:cont, {:ok, acc ++ [resolved]}}
+        {:error, :incomplete} -> {:halt, {:error, "Workspace path is not authorized"}}
+      end
+    end)
   end
 
   defp codex_config(opts) do
