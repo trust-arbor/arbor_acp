@@ -384,4 +384,28 @@ defmodule Arbor.ACP.Internal.McpTest do
       ref: ref
     }
   end
+
+  test "closed session ids do not accumulate history after lifecycle settlement" do
+    table =
+      Enum.reduce(1..500, Mcp.new(), fn n, table ->
+        id = "session-#{n}"
+        ids = if rem(n, 2) == 0, do: ["server"], else: []
+        table = Mcp.commit_new(table, "new-#{n}", id, ids)
+        {table, []} = Mcp.release_session(table, id)
+        table
+      end)
+
+    assert table == Mcp.new()
+  end
+
+  test "closed epoch is retained until every older lifecycle token settles" do
+    table = Mcp.commit_new(Mcp.new(), "open", "s", ["server"])
+    {:ok, table} = Mcp.begin_existing(table, "s", "old", [])
+    {table, []} = Mcp.release_session(table, "s")
+    assert Mcp.token_closed?(table, "s", "old")
+    {table, []} = Mcp.abort(table, "old")
+    assert table == Mcp.new()
+    {:ok, table} = Mcp.begin_existing(table, "s", "new", [])
+    refute Mcp.token_closed?(table, "s", "new")
+  end
 end

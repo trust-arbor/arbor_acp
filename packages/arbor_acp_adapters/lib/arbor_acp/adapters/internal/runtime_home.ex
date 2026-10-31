@@ -86,6 +86,59 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   # Drop only the launch override we minted, while ownership can still be
   # checked. A later launch must allocate a live home rather than reuse a
   # deleted path that now looks like a caller override.
+  # Only auth material from our private login home is carried into another
+  # generated home. Caller homes, workspace config, transcripts and settings
+  # are never copied. New children can use the login advertised at initialize.
+  def seed_auth(source_opts, target_opts, kind) do
+    source = configured_path(source_opts, spec!(kind))
+    target = configured_path(target_opts, spec!(kind))
+
+    if is_binary(source) and is_binary(target) and source != target and
+         owned_path?(source, kind) and owned_path?(target, kind) do
+      Enum.reduce_while(auth_files(kind), :ok, fn name, :ok ->
+        case copy_auth_file(Path.join(source, name), Path.join(target, name)) do
+          :ok -> {:cont, :ok}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+    else
+      :ok
+    end
+  end
+
+  defp auth_files(:claude), do: [".credentials.json"]
+  defp auth_files(:pi), do: ["auth.json"]
+  defp auth_files(_kind), do: []
+
+  defp copy_auth_file(source, target) do
+    case File.lstat(source) do
+      {:ok, %File.Stat{type: :regular}} ->
+        with {:ok, data} <- File.read(source) do
+          case File.open(target, [:write, :binary, :exclusive]) do
+            {:ok, io} ->
+              result = with :ok <- File.chmod(target, 0o600), do: IO.binwrite(io, data)
+              closed = File.close(io)
+              if result == :ok, do: closed, else: result
+
+            {:error, :eexist} ->
+              :ok
+
+            {:error, _} = error ->
+              error
+          end
+        end
+
+      {:error, :enoent} ->
+        :ok
+
+      {:ok, _not_regular} ->
+        {:error, :invalid_auth_file}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
   @spec release_opt(keyword(), atom()) :: keyword()
   def release_opt(opts, kind) do
     option = spec!(kind).option

@@ -62,6 +62,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     :subprocess_error,
     cleanup_result: :ok,
     opts: [],
+    auth_home_opts: [],
     managed?: true,
     delete_session_files?: false,
     available_models: [],
@@ -120,6 +121,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     {:ok,
      %__MODULE__{
        opts: opts,
+       auth_home_opts: opts,
        managed?: Keyword.get(opts, :managed, true),
        delete_session_files?: Keyword.get(opts, :delete_session_files, false),
        thinking_level: Keyword.get(opts, :thinking_level, Config.default_thinking_level()),
@@ -183,7 +185,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   @impl true
-  def auth_methods(opts, %{opts: state_opts}) when is_list(state_opts) do
+  def auth_methods(opts, %{auth_home_opts: state_opts}) when is_list(state_opts) do
     auth_methods(Keyword.merge(opts, state_opts))
   end
 
@@ -584,6 +586,7 @@ defmodule Arbor.ACP.Adapters.Pi do
     }
 
     state = %{clear_pending_runtime_state(state) | op_queue: [], desynced: nil}
+    state = release_stopped_home(state)
 
     if messages == [], do: {:skip, state}, else: {:messages, messages, state}
   end
@@ -611,6 +614,9 @@ defmodule Arbor.ACP.Adapters.Pi do
   def shutdown(state) do
     state = state |> close_active_session() |> release_stopped_home()
 
+    if state.managed? and state.cleanup_result == :ok,
+      do: RuntimeHome.release(state.auth_home_opts, :pi)
+
     case state.cleanup_result do
       {:error, reason} -> {:error, reason, state}
       :ok -> state
@@ -636,7 +642,14 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp prepare_session_process(cwd, session_file, state) do
     state = close_active_session(state)
-    opts = session_runtime_opts(state.opts, cwd)
+    session_key = "pi-child-#{System.unique_integer([:positive, :monotonic])}"
+
+    opts =
+      session_runtime_opts(
+        Keyword.put(state.auth_home_opts, :_runtime_home_session, session_key),
+        cwd
+      )
+
     settings = Settings.load(cwd, opts)
 
     state =
@@ -655,12 +668,11 @@ defmodule Arbor.ACP.Adapters.Pi do
       :ok ->
         launch_opts = maybe_keyword_put(opts, :session_path, session_file)
 
-        case cli_command(launch_opts) do
-          {:error, reason} ->
-            {:error, inspect(reason), state}
-
-          {cmd, args} ->
-            open_session_process(cmd, args, launch_opts, state)
+        with :ok <- RuntimeHome.seed_auth(state.auth_home_opts, launch_opts, :pi),
+             {cmd, args} when is_binary(cmd) <- cli_command(launch_opts) do
+          open_session_process(cmd, args, launch_opts, state)
+        else
+          {:error, reason} -> {:error, inspect(reason), state}
         end
 
       {:error, reason} ->

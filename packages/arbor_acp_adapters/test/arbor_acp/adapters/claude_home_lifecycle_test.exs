@@ -29,6 +29,9 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     log: log
   } do
     {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli)
+    bootstrap = state.opts[:claude_config_dir]
+    File.write!(Path.join(bootstrap, ".credentials.json"), "temporary login")
+    File.write!(Path.join(bootstrap, "settings.json"), "{}")
     {a, state} = new_session(state, root, 1)
     {b, state} = new_session(state, root, 2)
     assert SessionStore.valid_session_id?(a)
@@ -36,6 +39,13 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     home_a = state.session_homes[a][:claude_config_dir]
     home_b = state.session_homes[b][:claude_config_dir]
     assert home_a != home_b
+
+    for home <- [home_a, home_b] do
+      assert File.read!(Path.join(home, ".credentials.json")) == "temporary login"
+      refute File.exists?(Path.join(home, "settings.json"))
+      assert Bitwise.band(File.stat!(Path.join(home, ".credentials.json")).mode, 0o777) == 0o600
+    end
+
     assert :ok = wait_until(fn -> length(lines(log)) == 2 end)
     assert MapSet.new(lines(log)) == MapSet.new([home_a, home_b])
 
@@ -104,6 +114,46 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     {_b, state} = new_session(state, root, 2)
     assert {:ok, _} = ClaudeSDK.shutdown(state)
     assert File.read!(Path.join(home, "credentials")) == "host owned"
+  end
+
+  test "terminal authentication seeds a session created before login", %{root: root, cli: cli} do
+    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli)
+    {_id, state} = new_session(state, root, 1)
+    File.write!(Path.join(state.opts[:claude_config_dir], ".credentials.json"), "new login")
+
+    assert {:reply, %{}, state} =
+             ClaudeSDK.translate_outbound(
+               request(2, "authenticate", %{"methodId" => "claude-login"}),
+               state
+             )
+
+    for {_id, opts} <- state.session_homes do
+      assert File.read!(Path.join(opts[:claude_config_dir], ".credentials.json")) == "new login"
+    end
+
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
+  test "failed fork launch rolls back its transcript and home", %{root: root, cli: cli} do
+    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli)
+    {parent, state} = new_session(state, root, 1)
+    home = state.session_homes[parent][:claude_config_dir]
+    write_transcript(home, root, parent, "keep parent")
+    state = %{state | opts: Keyword.put(state.opts, :cli_path, Path.join(root, "missing-cli"))}
+    original_homes = state.session_homes
+
+    assert {:error, _reason, failed} =
+             ClaudeSDK.fork_session(%{"sessionId" => parent, "cwd" => root}, state)
+
+    assert failed.session_homes == original_homes
+
+    assert {:ok, [%{"sessionId" => ^parent}], _} =
+             ClaudeSDK.list_sessions(%{"cwd" => root}, failed)
+
+    assert {:ok, [%{"sessionId" => ^parent}]} =
+             SessionStore.read_session_messages(parent, claude_config_dir: home, cwd: root)
+
+    assert {:ok, _} = ClaudeSDK.shutdown(failed)
   end
 
   defp new_session(state, cwd, id) do
