@@ -187,23 +187,22 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
   end
 
   test "separate connection owners receive different private homes" do
-    parent = self()
-
     owners =
       for _ <- 1..2 do
-        spawn(fn ->
-          {:ok, state} = ClaudeSDK.init([])
-          send(parent, {:home, self(), state.opts[:claude_config_dir]})
+        {:ok, owner} =
+          Agent.start_link(fn ->
+            {:ok, state} = ClaudeSDK.init([])
+            state
+          end)
 
-          receive do
-            :close -> assert {:ok, _} = ClaudeSDK.shutdown(state)
-          end
-        end)
+        on_exit(fn -> if Process.alive?(owner), do: Agent.stop(owner) end)
+        owner
       end
 
+    # Agent.start_link acknowledges only after init has created the home.
     homes =
       for owner <- owners do
-        assert_receive {:home, ^owner, home}
+        home = Agent.get(owner, fn state -> state.opts[:claude_config_dir] end)
         assert File.dir?(home)
         home
       end
@@ -211,9 +210,8 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     assert length(Enum.uniq(homes)) == 2
 
     for owner <- owners do
-      ref = Process.monitor(owner)
-      send(owner, :close)
-      assert_receive {:DOWN, ^ref, :process, ^owner, :normal}
+      assert {:ok, _} = Agent.get(owner, &ClaudeSDK.shutdown/1)
+      Agent.stop(owner)
     end
 
     for home <- homes, do: refute(File.exists?(home))
