@@ -233,6 +233,48 @@ defmodule Arbor.ACP.Adapters.PrivateKeychainTest do
     assert {:ok, _} = ClaudeSDK.shutdown(state)
   end
 
+  test "inherited caller-owned relative profiles stay anchored across workspace changes" do
+    alias Arbor.ACP.Adapters.ClaudeSDK
+    alias Arbor.ACP.AdapterSupport.Subprocess
+    previous = System.get_env("ANTHROPIC_CONFIG_DIR")
+    System.put_env("ANTHROPIC_CONFIG_DIR", "profiles")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("ANTHROPIC_CONFIG_DIR", previous),
+        else: System.delete_env("ANTHROPIC_CONFIG_DIR")
+    end)
+
+    root =
+      Path.join(System.tmp_dir!(), "acp_inherited_profile_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(Path.join(root, "home"))
+    File.mkdir_p!(Path.join(root, "workspace"))
+    on_exit(fn -> File.rm_rf!(root) end)
+    opts = [cwd: root, claude_config_dir: Path.join(root, "home"), environment_policy: :inherit]
+    {:ok, state} = ClaudeSDK.init(opts)
+    state = %{state | client_capabilities: %{"auth" => %{"terminal" => true}}}
+
+    [method | _] =
+      PrivateKeychain.with_runner(fn _ -> {:ok, "", 44} end, fn ->
+        ClaudeSDK.auth_methods(opts, state)
+      end)
+
+    profile = Path.join(root, "profiles")
+    assert method["env"]["ANTHROPIC_CONFIG_DIR"] == profile
+    child = Keyword.put(state.opts, :cwd, Path.join(root, "workspace"))
+
+    assert {:ok, ^profile, 0} =
+             Subprocess.capture(
+               "/bin/sh",
+               ["-c", ~s(printf '%s' "$ANTHROPIC_CONFIG_DIR")],
+               child,
+               ClaudeSDK
+             )
+
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
   test "generated Claude homes also isolate implicit Anthropic profiles" do
     opts = RuntimeHome.put_opt([], :claude)
     env = RuntimeHome.put(%{}, opts, :claude)
