@@ -143,7 +143,19 @@ defmodule Arbor.ACP.Test.CodexNative do
     File.mkdir_p!(root)
     File.mkdir_p!(Path.join(root, "codex-state"))
     proof = "native-proof-#{System.unique_integer([:positive])}"
-    env = if authenticated?, do: [], else: [{"CODEX_HOME", Path.join(root, "codex-state")}]
+    # Authenticated qualification explicitly selects the caller-owned login home.
+    # Private generated homes intentionally cannot see that login by default.
+    home =
+      if authenticated? do
+        case System.get_env("CODEX_HOME") do
+          value when value in [nil, ""] -> Path.join(System.user_home!(), ".codex")
+          value -> Path.expand(value)
+        end
+      else
+        Path.join(root, "codex-state")
+      end
+
+    env = [{"CODEX_HOME", home}]
     launch = if authenticated?, do: isolated_launcher(root, executable), else: executable
 
     {:ok, client} =
@@ -200,7 +212,8 @@ defmodule Arbor.ACP.Test.CodexNative do
               cli_version: @version,
               elixir: System.version(),
               otp: to_string(:erlang.system_info(:otp_release)),
-              cleanup_verified: true
+              cleanup_verified: true,
+              requested_model: System.get_env("ARBOR_CODEX_QUALIFICATION_MODEL")
             },
             details || %{}
           )
@@ -240,23 +253,64 @@ defmodule Arbor.ACP.Test.CodexNative do
     end
   end
 
+  # An explicit, available model makes live qualification reproducible without
+  # changing the user's global CLI configuration or the adapter's defaults.
+  def qualification_model_params do
+    case System.get_env("ARBOR_CODEX_QUALIFICATION_MODEL") do
+      value when value in [nil, ""] -> %{}
+      value -> %{"model" => value}
+    end
+  end
+
   def start_thread!(client, root, extra \\ %{}) do
-    request!(
-      client,
-      "thread/start",
-      Map.merge(
-        %{
-          "cwd" => root,
-          "approvalPolicy" => "on-request",
-          "approvalsReviewer" => "user",
-          "sandbox" => "read-only",
-          "ephemeral" => true,
-          "baseInstructions" =>
-            "You are a protocol qualification agent. Follow the user's exact test. Use tools only when explicitly requested. Do not inspect unrelated files or access the network."
-        },
-        extra
+    result =
+      request!(
+        client,
+        "thread/start",
+        Map.merge(
+          %{
+            "cwd" => root,
+            "approvalPolicy" => "on-request",
+            "approvalsReviewer" => "user",
+            "sandbox" => "read-only",
+            "ephemeral" => true,
+            "baseInstructions" =>
+              "You are a protocol qualification agent. Follow the user's exact test. Use tools only when explicitly requested. Do not inspect unrelated files or access the network."
+          },
+          Map.merge(qualification_model_params(), extra)
+        )
       )
-    )
+
+    assert_selected_model!(result["model"])
+    result
+  end
+
+  def await_thread_model!(consumer, thread_id) do
+    {event, _events} =
+      await_event(
+        consumer,
+        fn
+          %{"result" => %{"thread" => %{"id" => ^thread_id}, "model" => model}}
+          when is_binary(model) ->
+            true
+
+          _other ->
+            false
+        end,
+        5_000
+      )
+
+    assert_selected_model!(event["result"]["model"])
+  end
+
+  defp assert_selected_model!(actual) do
+    assert is_binary(actual), "Native thread response omitted its model"
+
+    if requested = qualification_model_params()["model"] do
+      assert actual == requested, "Native thread did not select the requested qualification model"
+    end
+
+    actual
   end
 
   def turn!(client, thread, prompt, extra \\ %{}) do

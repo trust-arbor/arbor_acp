@@ -14,7 +14,7 @@ defmodule Arbor.ACP.Adapters.Codex do
   an explicit unsafe compatibility escape hatch. Names alone never authorize
   caller-controlled connection details.
 
-  By default the adapter mints a private per-session `CODEX_HOME` (0700) so
+  By default the adapter mints a private per-connection `CODEX_HOME` (0700) so
   the child does not inherit the host Codex home. The minted home has no
   `AGENTS.md`, writes `project_doc_max_bytes = 0` and `[features] skills = false`,
   and does not mark the project trusted, so Codex 0.165 does not load

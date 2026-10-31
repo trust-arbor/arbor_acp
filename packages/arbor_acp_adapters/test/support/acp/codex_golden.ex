@@ -62,7 +62,9 @@ defmodule Arbor.ACP.Test.CodexGolden do
   `result`, and inside a map the (sorted) keys are walked as well as the
   values, so placeholders are assigned in a deterministic order and a
   generated id used as a key cannot leak. Anonymous functions in recorded
-  init options are replaced by `:__fun__` so fixtures stay evaluable.
+  init options are replaced by `:__fun__` so fixtures stay evaluable. The
+  platform real-path alias of `/tmp` is normalized to `/tmp`; actual canonical
+  workspace forwarding is checked separately by CodexPromptCwdTest.
 
   ## Environment
 
@@ -83,6 +85,9 @@ defmodule Arbor.ACP.Test.CodexGolden do
   import ExUnit.Assertions, only: [assert: 1, flunk: 1]
 
   alias Arbor.ACP.Adapters.Codex
+  alias Arbor.ACP.AdapterSupport.WorkspacePath
+
+  @canonical_fixture_tmp WorkspacePath.canonical("/tmp")
 
   defmodule Entry do
     @moduledoc "One transcript entry: the step as executed and the adapter's normalized result."
@@ -344,6 +349,8 @@ defmodule Arbor.ACP.Test.CodexGolden do
   end
 
   defp walk(binary, acc) when is_binary(binary) do
+    binary = normalize_fixture_tmp(binary)
+
     acc =
       @generated_id_pattern
       |> Regex.scan(binary)
@@ -380,6 +387,26 @@ defmodule Arbor.ACP.Test.CodexGolden do
 
   defp walk(fun, acc) when is_function(fun), do: {:__fun__, acc}
   defp walk(other, acc), do: {other, acc}
+
+  # Fixtures use /tmp. Fold only that directory's platform real-path alias,
+  # at a complete component boundary; preserve every other path distinction.
+  defp normalize_fixture_tmp(binary) do
+    root = @canonical_fixture_tmp
+
+    cond do
+      root == "/tmp" ->
+        binary
+
+      binary == root ->
+        "/tmp"
+
+      String.starts_with?(binary, root <> "/") ->
+        "/tmp" <> String.replace_prefix(binary, root, "")
+
+      true ->
+        binary
+    end
+  end
 
   defp register_id(%{ids: ids} = acc, id, _kind) when is_map_key(ids, id), do: acc
 

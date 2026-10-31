@@ -1,9 +1,13 @@
 # ArborACP adapters
 
+Versioned installation examples and source links apply after the matching Hex
+release and Git tag are published. During release preparation, use the current
+published candidate or a local source checkout.
+
 Optional Claude Code, Codex, Pi and ZCode adapters, under
 `Arbor.ACP.Adapters.*`. This package depends on core ACP and RPC.
 
-Version `1.0.0-rc.4` is published for downstream migration testing. The original
+Version `1.0.0-rc.5` is the candidate for downstream migration testing. The original
 `2.0.0-rc.1` candidate is retired, with its archive and tag preserved. Stable
 qualification and the continuous 48-hour soak remain incomplete. See the
 [ExMCP migration guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/guides/MIGRATING_V1_TO_V2.md).
@@ -27,11 +31,11 @@ the [RPC source-build policy](https://github.com/trust-arbor/arbor_rpc#source-bu
 ## Installation
 
 ```elixir
-{:arbor_acp_adapters, "== 1.0.0-rc.4"}
+{:arbor_acp_adapters, "== 1.0.0-rc.5"}
 ```
 
 Run `mix deps.get`. The declared core/RPC dependencies resolve normally from Hex.
-An explicit prerelease range such as `~> 1.0.0-rc.4` also selects this candidate;
+An explicit prerelease range such as `~> 1.0.0-rc.5` also selects this candidate;
 exact pins and a committed lockfile make downstream reports reproducible.
 
 ## First adapted session

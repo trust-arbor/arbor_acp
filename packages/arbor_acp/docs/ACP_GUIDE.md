@@ -1,5 +1,9 @@
 # ArborACP guide
 
+Versioned installation examples and source links apply after the matching Hex
+release and Git tag are published. During release preparation, use the current
+published candidate or a local source checkout.
+
 ArborACP implements the Agent Client Protocol between a controller (an editor,
 UI, or automation host) and an agent. The controller creates sessions and sends
 prompts; the agent streams updates and can request permission, filesystem,
@@ -7,7 +11,7 @@ terminal, or user-input operations from the host. ACP uses a stateful initialize
 handshake and protocol version `1`. MCP protocol revision settings do not apply.
 
 Start with the [installation and local echo quickstart](../README.md). These
-guides describe the published `1.0.0-rc.4` candidate. The original
+guides target the `1.0.0-rc.5` candidate. The original
 `2.0.0-rc.1` candidate is retired with its tag and archive preserved.
 
 ## Connect to a native ACP agent
@@ -330,7 +334,7 @@ memory or the operating system's Port buffers.
 
 | Symptom | Check |
 | --- | --- |
-| Hex cannot resolve the RC | Use the explicit `1.0.0-rc.4` prerelease requirement and normal Hex resolution; check the lockfile and registry connectivity |
+| Hex cannot resolve the RC | Use the explicit `1.0.0-rc.5` prerelease requirement and normal Hex resolution; check the lockfile and registry connectivity |
 | Native helper does not compile | Confirm a C17 compiler, target toolchain and `CC`; see the ArborRPC source-build policy |
 | Starting an agent fails with `:native_helper_unavailable` | RPC was built without a compiler. Install one, run `mix deps.compile arbor_rpc --force`, and set `config :arbor_rpc, native_helper: :required` so the build fails next time |
 | Agent exits or initialization fails | Verify executable/arguments, child working directory/environment and that the command speaks ACP |

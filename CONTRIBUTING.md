@@ -6,8 +6,9 @@ ArborRPC is a separate repository with its package at the checkout root.
 
 ## Prepare a source checkout
 
-Clone the default `main` branch for current source. Normal dependency
-resolution uses the published ACP `1.0.0-rc.4` and RPC `1.0.0-rc.3` graph. When changing shared
+Clone the default `main` branch for current source. The prepared dependency
+graph is ACP `1.0.0-rc.5` and RPC `1.0.0-rc.4`; normal Hex resolution uses it
+after publication. During preparation use the source overrides below. When changing shared
 mechanics, optionally clone [ArborRPC](https://github.com/trust-arbor/arbor_rpc)
 separately and select it with `ARBOR_RPC_PATH`. Package CI pins its RPC revision
 in `.github/workflows/ci.yml`; use that commit to reproduce a specific CI result.
