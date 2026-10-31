@@ -263,22 +263,54 @@ defmodule Arbor.ACP.Test.CodexNative do
   end
 
   def start_thread!(client, root, extra \\ %{}) do
-    request!(
-      client,
-      "thread/start",
-      Map.merge(
-        %{
-          "cwd" => root,
-          "approvalPolicy" => "on-request",
-          "approvalsReviewer" => "user",
-          "sandbox" => "read-only",
-          "ephemeral" => true,
-          "baseInstructions" =>
-            "You are a protocol qualification agent. Follow the user's exact test. Use tools only when explicitly requested. Do not inspect unrelated files or access the network."
-        },
-        Map.merge(qualification_model_params(), extra)
+    result =
+      request!(
+        client,
+        "thread/start",
+        Map.merge(
+          %{
+            "cwd" => root,
+            "approvalPolicy" => "on-request",
+            "approvalsReviewer" => "user",
+            "sandbox" => "read-only",
+            "ephemeral" => true,
+            "baseInstructions" =>
+              "You are a protocol qualification agent. Follow the user's exact test. Use tools only when explicitly requested. Do not inspect unrelated files or access the network."
+          },
+          Map.merge(qualification_model_params(), extra)
+        )
       )
-    )
+
+    assert_selected_model!(result["model"])
+    result
+  end
+
+  def await_thread_model!(consumer, thread_id) do
+    {event, _events} =
+      await_event(
+        consumer,
+        fn
+          %{"result" => %{"thread" => %{"id" => ^thread_id}, "model" => model}}
+          when is_binary(model) ->
+            true
+
+          _other ->
+            false
+        end,
+        5_000
+      )
+
+    assert_selected_model!(event["result"]["model"])
+  end
+
+  defp assert_selected_model!(actual) do
+    assert is_binary(actual), "Native thread response omitted its model"
+
+    if requested = qualification_model_params()["model"] do
+      assert actual == requested, "Native thread did not select the requested qualification model"
+    end
+
+    actual
   end
 
   def turn!(client, thread, prompt, extra \\ %{}) do

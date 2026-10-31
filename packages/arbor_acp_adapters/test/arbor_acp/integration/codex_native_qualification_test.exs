@@ -35,6 +35,8 @@ defmodule Arbor.ACP.Integration.CodexNativeQualificationTest do
                      Map.merge(%{"ephemeral" => true}, Harness.qualification_model_params())
                  )
 
+        selected_model = Harness.await_thread_model!(consumer, id)
+
         schema = %{
           "type" => "object",
           "properties" => %{
@@ -60,7 +62,7 @@ defmodule Arbor.ACP.Integration.CodexNativeQualificationTest do
         assert_receive {:qualification_acp_update, %{"sessionUpdate" => "agent_message_chunk"}},
                        5_000
 
-        %{output_schema_verified: true, acp_streaming_verified: true}
+        %{model: selected_model, output_schema_verified: true, acp_streaming_verified: true}
       end
     )
   end
