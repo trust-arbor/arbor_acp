@@ -219,7 +219,7 @@ defmodule Arbor.ACP.Compat do
   defp fetch_upstream(upstream, http_client, timeout, token) do
     with {:ok, {owner, repo}} <- github_repository(upstream["repository"]),
          url = "#{@github_api}/repos/#{owner}/#{repo}/commits/#{upstream["branch"]}",
-         {:ok, body} <- http_client.(url, github_headers(token), timeout, autoredirect: true),
+         {:ok, body} <- http_client.(url, github_headers(token), timeout, autoredirect: false),
          {:ok, %{"sha" => sha}} when is_binary(sha) <- Jason.decode(body) do
       {:ok, upstream["id"], sha}
     else
@@ -447,8 +447,11 @@ defmodule Arbor.ACP.Compat do
       ]
     ]
 
+    # Never let :httpc follow 3xx hops: it replays Authorization and other
+    # request headers onto the Location, including a different origin.
     http_options =
-      [timeout: timeout, connect_timeout: timeout, ssl: ssl_options] ++ options
+      [timeout: timeout, connect_timeout: timeout, ssl: ssl_options, autoredirect: false] ++
+        Keyword.delete(List.wrap(options), :autoredirect)
 
     case :httpc.request(:get, request, http_options, body_format: :binary) do
       {:ok, {{_, status, _}, _response_headers, body}}

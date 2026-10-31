@@ -175,14 +175,22 @@ defmodule Arbor.ACP.Client.ConnectionScopeTest do
              Client.with_connection(opts(), fn client ->
                state = :sys.get_state(client)
                {guardian, _token, _deadline} = state.connection_scope
-               send(owner, {:resources, resources(client)})
+               resources = resources(client)
+               refs = for pid <- resources.pids, do: {Process.monitor(pid), pid}
+               send(owner, {:resources, resources, refs})
                monitor = Process.monitor(client)
                Process.exit(guardian, :kill)
                assert_receive {:DOWN, ^monitor, :process, ^client, _}, 2_000
                :retained
              end)
 
-    assert_receive {:resources, resources}
+    assert_receive {:resources, resources, refs}
+    # Guardian death closes through the client; linked children observe its
+    # exit independently, so the client's DOWN is not their settlement barrier.
+    for {ref, pid} <- refs do
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 2_000
+    end
+
     assert_closed(resources)
   end
 

@@ -1645,60 +1645,11 @@ defmodule Arbor.ACP.Adapters.Codex do
     session = Map.get(state.sessions, session_id, Sessions.empty(session_id, state))
     turn = params["turn"] || %{}
 
-    text =
-      session
-      |> Map.get(:accumulated_text, [])
-      |> Enum.reverse()
-      |> IO.iodata_to_binary()
-
-    messages = [
-      AdapterEvents.session_info_update(session_id, %{
-        "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "status" => "completed"}}
-      })
-    ]
-
-    messages =
-      if session[:active_prompt_acp_id] do
-        response =
-          case turn_failure(turn, params, session) || capacity_failure(session, text) do
-            {:error, error} ->
-              Envelope.error(session[:active_prompt_acp_id], error)
-
-            :ok ->
-              result =
-                %{
-                  "stopReason" => normalize_stop_reason(turn["status"] || params["status"]),
-                  "_meta" => %{
-                    "ex_mcp" => %{
-                      "text" => text,
-                      "sessionId" => session_id,
-                      "turnId" => session[:turn_id]
-                    }
-                  }
-                }
-                |> maybe_put("usage", session[:accumulated_usage])
-
-              Envelope.response(session[:active_prompt_acp_id], result)
-          end
-
-        [response | messages]
-      else
-        messages
-      end
-
-    state =
-      Sessions.update(state, session_id, fn session ->
-        session
-        |> Map.put(:accumulated_text, [])
-        |> Map.put(:streamed_items, %{})
-        |> Map.put(:accumulated_thinking, [])
-        |> Map.put(:accumulated_usage, nil)
-        |> Map.put(:turn_id, nil)
-        |> Map.put(:active_prompt_acp_id, nil)
-        |> Map.put(:last_error, nil)
-      end)
-
-    {:messages, Enum.reverse(messages), state}
+    if stale_completion?(session_id, session, turn["id"] || params["turnId"], state) do
+      {:skip, state}
+    else
+      complete_prompt_turn(session_id, session, turn, params, state)
+    end
   end
 
   defp handle_notification("thread/tokenUsage/updated", params, state) do
@@ -3583,5 +3534,89 @@ defmodule Arbor.ACP.Adapters.Codex do
 
   defp reject_nil_values(map) do
     Map.reject(map, fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp stale_completion?(session_id, session, turn_id, state) do
+    session[:active_prompt_acp_id] != nil and
+      ((session[:turn_id] != nil and turn_id != nil and session[:turn_id] != turn_id) or
+         (session[:turn_id] == nil and
+            pending_turn_start?(state, session_id, session[:active_prompt_acp_id])))
+  end
+
+  defp pending_turn_start?(state, session_id, acp_id) do
+    Enum.any?(state.pending_requests, fn
+      {_id, %{type: :turn_start, acp_id: ^acp_id, meta: %{session_id: ^session_id}}} -> true
+      _other -> false
+    end)
+  end
+
+  defp complete_prompt_turn(session_id, session, turn, params, state) do
+    # A turn can finish after turn/started but before the turn/start reply.
+    # Retire its pending start so that late reply cannot reactivate the prompt.
+    pending =
+      Map.reject(state.pending_requests, fn
+        {_id, %{type: :turn_start, acp_id: acp_id, meta: %{session_id: ^session_id}}} ->
+          acp_id == session[:active_prompt_acp_id]
+
+        _other ->
+          false
+      end)
+
+    state = %{state | pending_requests: pending}
+
+    text =
+      session
+      |> Map.get(:accumulated_text, [])
+      |> Enum.reverse()
+      |> IO.iodata_to_binary()
+
+    messages = [
+      AdapterEvents.session_info_update(session_id, %{
+        "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "status" => "completed"}}
+      })
+    ]
+
+    messages =
+      if session[:active_prompt_acp_id] do
+        response =
+          case turn_failure(turn, params, session) || capacity_failure(session, text) do
+            {:error, error} ->
+              Envelope.error(session[:active_prompt_acp_id], error)
+
+            :ok ->
+              result =
+                %{
+                  "stopReason" => normalize_stop_reason(turn["status"] || params["status"]),
+                  "_meta" => %{
+                    "ex_mcp" => %{
+                      "text" => text,
+                      "sessionId" => session_id,
+                      "turnId" => session[:turn_id]
+                    }
+                  }
+                }
+                |> maybe_put("usage", session[:accumulated_usage])
+
+              Envelope.response(session[:active_prompt_acp_id], result)
+          end
+
+        [response | messages]
+      else
+        messages
+      end
+
+    state =
+      Sessions.update(state, session_id, fn session ->
+        session
+        |> Map.put(:accumulated_text, [])
+        |> Map.put(:streamed_items, %{})
+        |> Map.put(:accumulated_thinking, [])
+        |> Map.put(:accumulated_usage, nil)
+        |> Map.put(:turn_id, nil)
+        |> Map.put(:active_prompt_acp_id, nil)
+        |> Map.put(:last_error, nil)
+      end)
+
+    {:messages, Enum.reverse(messages), state}
   end
 end

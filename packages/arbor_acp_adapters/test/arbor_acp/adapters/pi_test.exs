@@ -848,6 +848,107 @@ defmodule Arbor.ACP.Adapters.PiTest do
       assert {:ok, %{"sessions" => []}, _state} =
                Pi.list_sessions(%{"cwd" => tmp_dir}, %{state | last_session_cwd: nil})
     end
+
+    test "session/delete does not follow a symlink out of the session directory", %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_dir: session_dir,
+      session_map_path: session_map_path
+    } do
+      outside = Path.join(tmp_dir, "outside")
+      File.mkdir_p!(outside)
+      secret = Path.join(outside, "secret.jsonl")
+      File.write!(secret, "keep\n")
+
+      link_dir = Path.join(session_dir, "link")
+      File.ln_s!(outside, link_dir)
+
+      session_file = Path.join(link_dir, "secret.jsonl")
+      expanded_root = Path.expand(session_dir)
+      expanded_file = Path.expand(session_file)
+      root_prefix = String.trim_trailing(expanded_root, "/") <> "/"
+
+      # Lexical expansion still looks contained; the link target is outside.
+      assert String.starts_with?(expanded_file, root_prefix)
+      refute String.starts_with?(Path.expand(secret), root_prefix)
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "linked-session" => %{
+              "sessionId" => "linked-session",
+              "cwd" => tmp_dir,
+              "sessionFile" => session_file
+            }
+          }
+        })
+      )
+
+      state = %{state | delete_session_files?: true}
+
+      assert {:reply, %{}, _state} =
+               Pi.translate_outbound(
+                 %{"method" => "session/delete", "params" => %{"sessionId" => "linked-session"}},
+                 state
+               )
+
+      assert File.exists?(secret)
+    end
+
+    test "session/delete does not follow a directory-symlink chain out of the session directory",
+         %{
+           state: state,
+           tmp_dir: tmp_dir,
+           session_dir: session_dir,
+           session_map_path: session_map_path
+         } do
+      outside = Path.join(tmp_dir, "outside")
+      File.mkdir_p!(outside)
+      secret = Path.join(outside, "secret.jsonl")
+      File.write!(secret, "keep\n")
+
+      # Final hop is a directory link, so File.rm follows it. A 41-file-link
+      # chain returns :eloop and would pass even on a lexical prefix check.
+      hop2 = Path.join(session_dir, "hop2")
+      hop1 = Path.join(session_dir, "hop1")
+      File.ln_s!(outside, hop2)
+      File.ln_s!(hop2, hop1)
+
+      session_file = Path.join(hop1, "secret.jsonl")
+      expanded_root = Path.expand(session_dir)
+      expanded_file = Path.expand(session_file)
+      root_prefix = String.trim_trailing(expanded_root, "/") <> "/"
+
+      assert String.starts_with?(expanded_file, root_prefix)
+      assert {:ok, %File.Stat{type: :directory}} = File.stat(hop1)
+      assert File.exists?(session_file)
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "chain-session" => %{
+              "sessionId" => "chain-session",
+              "cwd" => tmp_dir,
+              "sessionFile" => session_file
+            }
+          }
+        })
+      )
+
+      state = %{state | delete_session_files?: true}
+
+      assert {:reply, %{}, _state} =
+               Pi.translate_outbound(
+                 %{"method" => "session/delete", "params" => %{"sessionId" => "chain-session"}},
+                 state
+               )
+
+      assert File.exists?(secret)
+    end
   end
 
   describe "translate_outbound/2 — model, mode, and config" do
