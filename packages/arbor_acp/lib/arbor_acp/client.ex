@@ -907,7 +907,7 @@ defmodule Arbor.ACP.Client do
         match?(%{kind: :mcp, session_id: ^session_id}, request) and
         Map.has_key?(state.sessions, session_id)
 
-    {:reply, admitted?, state}
+    {:reply, if(admitted?, do: {:ok, request.deadline}, else: false), state}
   end
 
   def handle_call({:handler_worker_admit, ref, pid}, _from, state) do
@@ -915,7 +915,7 @@ defmodule Arbor.ACP.Client do
       request when is_map(request) and state.status == :ready ->
         if agent_request_current?(ref, request, state) do
           pending = Map.put(state.pending_agent_requests, ref, Map.put(request, :worker, pid))
-          {:reply, true, %{state | pending_agent_requests: pending}}
+          {:reply, {:ok, request.deadline}, %{state | pending_agent_requests: pending}}
         else
           {:reply, false, state}
         end

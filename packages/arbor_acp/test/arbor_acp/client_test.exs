@@ -1650,10 +1650,7 @@ defmodule Arbor.ACP.ClientTest do
 
       {client, _agent} =
         start_client(
-          [
-            permission_request: {tool_call, options},
-            cancel_permission_request: true
-          ],
+          [permission_request: {tool_call, options}],
           handler: BlockingPermissionHandler,
           handler_opts: [parent: self()]
         )
@@ -1666,6 +1663,8 @@ defmodule Arbor.ACP.ClientTest do
         end)
 
       assert_receive {:blocking_permission_handler_started, handler_pid}, 500
+      [{_ref, pending}] = Map.to_list(:sys.get_state(client).pending_agent_requests)
+      send(client, {:transport_message, Protocol.encode_cancel_request(pending.id)})
       assert_receive {:permission_response, resp}, 1_000
       assert resp["error"]["code"] == -32_800
       assert resp["error"]["message"] == "Request cancelled"
