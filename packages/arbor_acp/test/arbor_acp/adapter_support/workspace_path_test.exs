@@ -80,6 +80,100 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
   test "symlink loops terminate", %{root: root} do
     File.ln_s!(Path.join(root, "loop_b"), Path.join(root, "loop_a"))
     File.ln_s!(Path.join(root, "loop_a"), Path.join(root, "loop_b"))
-    assert is_binary(WorkspacePath.canonical(Path.join(root, "loop_a/file")))
+    looped = Path.join(root, "loop_a/file")
+    assert is_binary(WorkspacePath.canonical(looped))
+    assert {:error, :incomplete} = WorkspacePath.resolve(looped)
+    refute WorkspacePath.within?(looped, root)
+  end
+
+  test "a 41-symlink chain that leaves the root is rejected", %{root: root, outside: outside} do
+    last = Path.join(root, "link41")
+    File.ln_s!(outside, last)
+
+    Enum.each(40..1//-1, fn n ->
+      File.ln_s!(Path.join(root, "link#{n + 1}"), Path.join(root, "link#{n}"))
+    end)
+
+    escaped = Path.join(root, "link1/secret.txt")
+    assert {:error, :incomplete} = WorkspacePath.resolve(escaped)
+    refute WorkspacePath.within?(escaped, root)
+    assert WorkspacePath.contained(escaped, root) == :error
+  end
+
+  test "rm_within deletes a regular file inside the root", %{root: root} do
+    inside = Path.join(root, "inside.txt")
+    File.write!(inside, "session")
+    assert :ok = WorkspacePath.rm_within(inside, root)
+    refute File.exists?(inside)
+  end
+
+  test "rm_within deletes a nested regular file inside the root", %{root: root} do
+    parent = Path.join(root, "grand/parent")
+    File.mkdir_p!(parent)
+    inside = Path.join(parent, "inside.txt")
+    File.write!(inside, "session")
+    assert :ok = WorkspacePath.rm_within(inside, root)
+    refute File.exists?(inside)
+  end
+
+  test "rm_within does not delete an outside file swapped in after containment",
+       %{root: root, outside: outside} do
+    inside = Path.join(root, "inside.txt")
+    secret = Path.join(outside, "secret.txt")
+    File.write!(inside, "session")
+    File.write!(secret, "secret")
+
+    :ok =
+      WorkspacePath.rm_within(inside, root,
+        after_contain: fn ->
+          File.rm!(inside)
+          File.ln_s!(secret, inside)
+        end
+      )
+
+    assert File.exists?(secret)
+  end
+
+  test "rm_within does not follow a parent swapped for a symlink after containment",
+       %{root: root, outside: outside} do
+    sub = Path.join(root, "sub")
+    File.mkdir_p!(sub)
+    inside = Path.join(sub, "secret.txt")
+    secret = Path.join(outside, "secret.txt")
+    File.write!(inside, "session")
+    File.write!(secret, "secret")
+
+    :ok =
+      WorkspacePath.rm_within(inside, root,
+        after_contain: fn ->
+          File.rm!(inside)
+          File.rmdir!(sub)
+          File.ln_s!(outside, sub)
+        end
+      )
+
+    assert File.exists?(secret)
+  end
+
+  test "rm_within does not follow a grandparent swapped after the ancestor walk",
+       %{root: root, outside: outside} do
+    grand = Path.join(root, "grand")
+    parent = Path.join(grand, "parent")
+    File.mkdir_p!(parent)
+    File.mkdir_p!(Path.join(outside, "parent"))
+    inside = Path.join(parent, "secret.txt")
+    secret = Path.join(outside, "parent/secret.txt")
+    File.write!(inside, "session")
+    File.write!(secret, "secret")
+
+    :ok =
+      WorkspacePath.rm_within(inside, root,
+        after_ancestors: fn ->
+          File.rm_rf!(grand)
+          File.ln_s!(outside, grand)
+        end
+      )
+
+    assert File.exists?(secret)
   end
 end
