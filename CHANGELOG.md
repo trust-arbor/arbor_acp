@@ -6,7 +6,7 @@
 
 - Request handlers may return `{:async, work, state}` to commit state before running cancellable work outside the handler mailbox. Timeouts, cancellation and connection shutdown stop that work and preserve one response per request.
 
-- `WorkspacePath.rm_within/2` still returns `:ok` when a delete is refused or fails, and now logs a warning and emits `[:arbor_acp, :workspace_path, :rm_within, :failed]` with a workspace-relative path (or `"[outside]"`).
+- `WorkspacePath.rm_within/2` still returns `:ok` when a delete is refused or fails, and now logs a warning and emits `[:arbor_acp, :workspace_path, :rm_within, :failed]` with a workspace-relative path (or `"[outside]"`). A missing file is success. Control characters in the logged path are replaced.
 - Fix: Codex completions settle only the active turn, and a late start reply cannot reactivate a prompt that has finished.
 
 - **Security / behaviour change:** Claude, Codex and Pi adapters isolate workspace agent config by default (Claude `--setting-sources user` and `--strict-mcp-config`; private homes keyed by ACP session id; Codex minted homes omit `AGENTS.md`, disable skills, and do not trust the project; Pi `--no-context-files` / `--no-approve` and no workspace `.pi` / `AGENTS.md` unless `trust_workspace_config: true`). Existing logins, global settings, models, skills and prompts become invisible; cleanup deletes transcripts and credentials in the generated homes. Keep today's behavior with `trust_workspace_config: true` or an explicit `:claude_config_dir` / `:codex_home` / `:agent_dir`. See the adapters changelog.

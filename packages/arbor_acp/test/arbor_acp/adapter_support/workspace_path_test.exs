@@ -324,4 +324,110 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
     assert metadata.reason == :unlink_failed
     assert metadata.path == "locked/file.txt"
   end
+
+  test "rm_within treats a missing in-root file as success", %{root: root} do
+    missing = Path.join(root, "gone.txt")
+    refute File.exists?(missing)
+    parent = self()
+    handler_id = "rm-within-missing-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:arbor_acp, :workspace_path, :rm_within, :failed],
+      fn event, measurements, metadata, _config ->
+        send(parent, {:rm_failed, event, measurements, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      capture_log(fn ->
+        assert :ok = WorkspacePath.rm_within(missing, root)
+      end)
+
+    refute log =~ "workspace delete refused"
+    refute_received {:rm_failed, _, _, _}
+  end
+
+  test "rm_within refuses an in-root path that escapes through a symlink",
+       %{root: root, outside: outside} do
+    File.ln_s!(outside, Path.join(root, "link"))
+    secret = Path.join(outside, "secret.txt")
+    File.write!(secret, "secret-token-value")
+    escaped = Path.join(root, "link/secret.txt")
+    parent = self()
+    handler_id = "rm-within-symlink-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:arbor_acp, :workspace_path, :rm_within, :failed],
+      fn event, measurements, metadata, _config ->
+        send(parent, {:rm_failed, event, measurements, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      capture_log(fn ->
+        assert :ok = WorkspacePath.rm_within(escaped, root)
+      end)
+
+    assert File.read!(secret) == "secret-token-value"
+    assert log =~ "workspace delete refused"
+    assert log =~ "outside"
+    refute log =~ "secret-token-value"
+    refute log =~ secret
+
+    assert_receive {:rm_failed, [:arbor_acp, :workspace_path, :rm_within, :failed], %{count: 1},
+                    metadata}
+
+    assert metadata.reason == :outside
+    assert metadata.path == "link/secret.txt"
+  end
+
+  test "rm_within replaces control characters in the logged path", %{root: root} do
+    parent = Path.join(root, "locked")
+    File.mkdir_p!(parent)
+    inside = Path.join(parent, "file\n\t.txt")
+    File.write!(inside, "keep")
+    File.chmod!(parent, 0o555)
+
+    on_exit(fn ->
+      File.chmod!(parent, 0o755)
+    end)
+
+    parent_pid = self()
+    handler_id = "rm-within-control-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:arbor_acp, :workspace_path, :rm_within, :failed],
+      fn event, measurements, metadata, _config ->
+        send(parent_pid, {:rm_failed, event, measurements, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      capture_log(fn ->
+        assert :ok = WorkspacePath.rm_within(inside, root)
+      end)
+
+    assert File.read!(inside) == "keep"
+    refute log =~ "file\n\t.txt"
+
+    assert_receive {:rm_failed, [:arbor_acp, :workspace_path, :rm_within, :failed], %{count: 1},
+                    metadata}
+
+    assert metadata.reason == :unlink_failed
+    assert metadata.path == "locked/file??.txt"
+    refute metadata.path =~ "\n"
+    refute metadata.path =~ "\t"
+  end
 end

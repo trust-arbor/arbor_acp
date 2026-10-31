@@ -207,6 +207,7 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
         "  fi\n" <>
         "done\n" <>
         "case \"$name\" in \"\"|\".\"|\"..\"|*/*) exit 3 ;; esac\n" <>
+        "if [ ! -e \"./$name\" ] && [ ! -L \"./$name\" ]; then exit 0; fi\n" <>
         "exec rm -- \"$name\""
 
     case System.cmd(
@@ -250,8 +251,12 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
         "."
 
       true ->
-        String.replace(relative, <<0>>, "")
+        sanitize_relative(relative)
     end
+  end
+
+  defp sanitize_relative(relative) do
+    Regex.replace(~r/[\x00-\x1F\x7F]/, relative, "?")
   end
 
   # Walk the components left to right against the physically resolved prefix,

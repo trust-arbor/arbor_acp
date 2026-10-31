@@ -268,6 +268,53 @@ defmodule Arbor.ACP.CompatTest do
                error["source"] == "adapter_upstream:reference-adapter"
              end)
     end
+
+    test "default HTTP client does not follow a catalog redirect to a second origin" do
+      parent = self()
+
+      {_target_pid, target_port} =
+        start_http_stub(
+          fn request ->
+            send(parent, {:target_request, request.headers})
+
+            http_response(
+              200,
+              [{"content-type", "text/markdown"}],
+              "- [Agent One](https://example.test/one)\n- [Agent Two](https://example.test/two)\n"
+            )
+          end,
+          {127, 0, 0, 2}
+        )
+
+      location = "http://127.0.0.2:#{target_port}/agents.md"
+
+      {_origin_pid, origin_port} =
+        start_http_stub(fn request ->
+          send(parent, {:origin_request, request.headers})
+          http_response(302, [{"location", location}], "")
+        end)
+
+      # Use the production http_get (no injected client). Catalog is a local
+      # http:// origin; registry and GitHub are pointed at addresses that fail
+      # without a network hop so this only exercises the default client.
+      manifest =
+        @manifest
+        |> put_in(["catalog", "source"], "http://127.0.0.1:#{origin_port}/agents.md")
+        |> put_in(["registry", "source"], "http://127.0.0.1:1/registry.json")
+        |> put_in(
+          ["adapterUpstreams", Access.at(0), "repository"],
+          "https://example.test/not-github"
+        )
+
+      report = ACPCompat.check_remote(manifest, timeout: 2_000)
+
+      assert_receive {:origin_request, _origin_headers}
+      refute_received {:target_request, _headers}
+
+      assert Enum.any?(report.errors, fn error ->
+               error["source"] == "catalog"
+             end)
+    end
   end
 
   describe "interop_agent/2" do
