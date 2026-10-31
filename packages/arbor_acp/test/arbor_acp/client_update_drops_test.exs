@@ -140,6 +140,37 @@ defmodule Arbor.ACP.ClientUpdateDropsTest do
     assert state.update_drop_timer == nil
   end
 
+  for kind <- [:load, :resume] do
+    @kind kind
+    test "drop notices survive updates while #{@kind} is pending" do
+      listener = held_listener()
+
+      {client, transport} =
+        start_client(event_listener: listener, notify_update_drops: true, max_update_queue: 1)
+
+      operation =
+        Task.async(fn ->
+          case @kind do
+            :load -> Client.load_session(client, "pending-session", "/tmp")
+            :resume -> Client.resume_session(client, "pending-session", "/tmp")
+          end
+        end)
+
+      request = receive_raw(transport)
+      assert request["method"] in ["session/load", "session/resume"]
+      message = put_in(update(), ["params", "sessionId"], "pending-session")
+      for _ <- 1..3, do: send(client, {:transport_message, message})
+      state = :sys.get_state(client)
+      refute Map.has_key?(state.sessions, "pending-session")
+      assert state.update_drops[{:event_listener, "pending-session"}] == 2
+      send(listener, :drain)
+      assert_receive {:delivered, {:acp_session_update, "pending-session", _}}
+      assert_receive {:delivered, {:acp_session_updates_dropped, "pending-session", 2}}, 1_000
+      send_raw(transport, %{"jsonrpc" => "2.0", "id" => request["id"], "result" => %{}})
+      assert {:ok, _} = Task.await(operation)
+    end
+  end
+
   def capture(_event, measurements, metadata, {parent, client}) do
     if self() == client, do: send(parent, {:drop, measurements, metadata})
   end
@@ -212,7 +243,14 @@ defmodule Arbor.ACP.ClientUpdateDropsTest do
         send_raw(transport, %{
           "jsonrpc" => "2.0",
           "id" => id,
-          "result" => %{"protocolVersion" => 1, "agentCapabilities" => %{}, "authMethods" => []}
+          "result" => %{
+            "protocolVersion" => 1,
+            "agentCapabilities" => %{
+              "loadSession" => true,
+              "sessionCapabilities" => %{"resume" => %{}}
+            },
+            "authMethods" => []
+          }
         })
 
         %{"id" => id} = receive_raw(transport)

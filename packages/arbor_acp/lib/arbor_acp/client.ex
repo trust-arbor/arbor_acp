@@ -2006,7 +2006,7 @@ defmodule Arbor.ACP.Client do
         {pid, kind, enabled?} = drop_destination(state, target)
         bytes = drop_notice_size(kind, session_id, count)
 
-        if enabled? and Map.has_key?(state.sessions, session_id) and
+        if enabled? and authorized_session_id?(session_id, state) and
              bytes <= state.max_update_queue_bytes do
           case UpdateQueue.check(
                  pid,
