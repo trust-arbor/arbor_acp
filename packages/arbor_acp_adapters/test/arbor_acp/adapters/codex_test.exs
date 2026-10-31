@@ -8,7 +8,8 @@ defmodule Arbor.ACP.Adapters.CodexTest do
       Codex.init(
         workspace_roots: ["/tmp"],
         authorize_mcp_server: fn _server, _context -> true end,
-        trust_authorized_workspaces: true
+        trust_authorized_workspaces: true,
+        allow_unbound_threads: true
       )
 
     %{state: state}
@@ -689,7 +690,11 @@ defmodule Arbor.ACP.Adapters.CodexTest do
         request = %{
           "method" => method,
           "id" => id,
-          "params" => %{"sessionId" => "thread-abc", "cwd" => "/tmp/other", "model" => "gpt-5.1"}
+          "params" => %{
+            "sessionId" => "thread-abc",
+            "cwd" => "/tmp/project/.",
+            "model" => "gpt-5.1"
+          }
         }
 
         assert {:ok, data, state} = Codex.translate_outbound(request, state)
@@ -719,7 +724,7 @@ defmodule Arbor.ACP.Adapters.CodexTest do
 
         assert response["id"] == id
         assert response["result"]["sessionId"] == "thread-abc"
-        assert state.sessions["thread-abc"].cwd == "/tmp/other"
+        assert state.sessions["thread-abc"].cwd == "/tmp/project/."
         assert state.sessions["thread-abc"].model == "gpt-5.1"
 
         prompt = %{
@@ -734,7 +739,7 @@ defmodule Arbor.ACP.Adapters.CodexTest do
         assert {:ok, turn_data, _state} = Codex.translate_outbound(prompt, state)
         turn = decode(turn_data)
         assert turn["method"] == "turn/start"
-        assert turn["params"]["cwd"] == "/tmp/other"
+        assert turn["params"]["cwd"] == "/tmp/project/."
         assert turn["params"]["model"] == "gpt-5.1"
       end
     end

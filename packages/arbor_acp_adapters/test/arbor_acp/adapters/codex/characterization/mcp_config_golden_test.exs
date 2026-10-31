@@ -2015,7 +2015,7 @@ defmodule Arbor.ACP.Adapters.Codex.McpConfigGoldenTest do
               "additionalDirectories" => ["/srv/load/vendor"]
             }),
             session_resume(%{
-              "sessionId" => "thread-abc",
+              "sessionId" => "thread-def",
               "cwd" => "/srv/resume",
               "mcpServers" => [@stdio_server],
               "additionalDirectories" => ["/srv/resume/vendor"]

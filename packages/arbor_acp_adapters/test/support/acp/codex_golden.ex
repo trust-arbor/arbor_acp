@@ -239,7 +239,10 @@ defmodule Arbor.ACP.Test.CodexGolden do
   # -- step execution -------------------------------------------------------
 
   defp execute({:init, opts}, _state, _transcript) do
-    {:ok, state} = Codex.init(opts)
+    # Characterization fixtures load persisted ids that this connection never
+    # started. Production denies those; the harness opts in so the goldens
+    # keep pinning wire shape rather than the ownership gate.
+    {:ok, state} = Codex.init(Keyword.put_new(opts, :allow_unbound_threads, true))
     {%{kind: :init, opts: opts}, %{tag: :ok}, state}
   end
 

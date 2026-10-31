@@ -24,6 +24,14 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.MCPConfig do
   followed by a private file holding `:mcp_servers`, which is removed from the
   options. Everything is validated before anything is written.
   """
+  @spec validate(keyword()) :: :ok | {:error, term()}
+  def validate(opts) do
+    with {:ok, _paths} <- config_paths(opts),
+         {:ok, _json} <- encode_servers(Keyword.get(opts, :mcp_servers)) do
+      :ok
+    end
+  end
+
   @spec prepare(keyword()) :: {:ok, keyword()} | {:error, term()}
   def prepare(opts) do
     with {:ok, paths} <- config_paths(opts),

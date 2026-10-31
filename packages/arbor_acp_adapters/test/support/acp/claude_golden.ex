@@ -11,11 +11,11 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
   records the adapter state itself, so fixtures pin wire behavior rather than
   internal state layout.
 
-  The Claude adapter is not adapter-managed: `command/1` returns an
-  executable and args for the bridge to spawn, and the adapter implements
-  neither `handle_adapter_message/2` nor `shutdown/1`. Subprocess exit and
-  transport teardown are owned by `Arbor.ACP.AdapterBridge` and are therefore
-  not reachable from this harness (see the faults area moduledoc).
+  Golden and unit tests pass `managed: false` so `command/1` still returns
+  an executable and args and translations stay on the single-process path.
+  Production connections are adapter-managed: each ACP session owns a Claude
+  process. Subprocess exit of those session processes is not driven from this
+  harness (see the faults area moduledoc).
 
   ## Sandbox
 
@@ -180,6 +180,7 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
   import ExUnit.Assertions, only: [assert: 1, flunk: 1]
 
   alias Arbor.ACP.Adapters.ClaudeSDK
+  alias Arbor.ACP.AdapterSupport.WorkspacePath
 
   defmodule Entry do
     @moduledoc "One transcript entry: the step as executed and the adapter's normalized result."
@@ -446,7 +447,10 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
 
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf(sandbox) end)
 
-    aliases = [sandbox, realpath(sandbox)] |> Enum.uniq() |> longest_first()
+    aliases =
+      [sandbox, realpath(sandbox), WorkspacePath.canonical(sandbox)]
+      |> Enum.uniq()
+      |> longest_first()
 
     %{
       sandbox: sandbox,
@@ -580,7 +584,7 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
   defp execute({:init, opts}, _state, _transcript, ctx) do
     opts = default_init_opts() |> Keyword.merge(opts) |> substitute(ctx)
     ensure_sandboxed!(opts, ctx)
-    {:ok, state} = ClaudeSDK.init(opts)
+    {:ok, state} = ClaudeSDK.init(Keyword.put(opts, :managed, false))
     {%{kind: :init, opts: opts}, %{tag: :ok}, state}
   end
 
@@ -649,7 +653,7 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
     opts = cli_opts(opts, ctx)
 
     result =
-      case ClaudeSDK.command(opts) do
+      case ClaudeSDK.command(Keyword.put(opts, :managed, false)) do
         {:error, reason} -> %{tag: :error, error: reason}
         {executable, args} -> %{tag: :ok, reply: command_reply(executable, args, ctx)}
       end

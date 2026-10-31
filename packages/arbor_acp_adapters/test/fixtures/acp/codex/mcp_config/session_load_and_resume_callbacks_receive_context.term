@@ -149,7 +149,7 @@
               "type" => "stdio"
             }
           ],
-          "sessionId" => "thread-abc"
+          "sessionId" => "thread-def"
         }
       }
     },
@@ -175,7 +175,7 @@
             "excludeTurns" => true,
             "modelProvider" => "openai",
             "sandbox" => "workspace-write",
-            "threadId" => "thread-abc"
+            "threadId" => "thread-def"
           }
         }
       ]
