@@ -800,10 +800,8 @@ defmodule Arbor.ACP.Adapters.Codex do
 
     remaining_sessions = Map.delete(state.sessions, session_id)
 
-    if remaining_sessions == %{} do
-      _ = RuntimeHome.release(Keyword.put(state.opts, :session_id, session_id), :codex)
-    end
-
+    # The app-server outlives its threads. Its private CODEX_HOME belongs to
+    # the connection owner and is removed by RuntimeHome's owner monitor.
     state = %{
       state
       | sessions: remaining_sessions,

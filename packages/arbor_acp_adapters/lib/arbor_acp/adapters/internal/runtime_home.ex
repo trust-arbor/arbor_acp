@@ -48,6 +48,7 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   @spec path(keyword(), atom()) :: String.t() | nil
   def path(opts, kind) when is_list(opts) do
     spec = spec!(kind)
+    validate_home_env!(opts, spec)
 
     case configured_path(opts, spec) do
       path when is_binary(path) ->
@@ -63,6 +64,16 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   end
 
   def path(_opts, _kind), do: nil
+
+  defp validate_home_env!(opts, spec) do
+    env = normalize_env(Keyword.get(opts, :env, []))
+
+    if not trust_workspace_config?(opts) and Map.has_key?(env, spec.env) and
+         Map.get(env, spec.env) in [nil, ""] do
+      raise ArgumentError,
+            "#{spec.env} must be a nonempty home path when workspace isolation is enabled"
+    end
+  end
 
   @spec put(map(), keyword(), atom()) :: map()
   def put(env, opts, kind) when is_map(env) do
@@ -89,14 +100,20 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   # Only auth material from our private login home is carried into another
   # generated home. Caller homes, workspace config, transcripts and settings
   # are never copied. New children can use the login advertised at initialize.
-  def seed_auth(source_opts, target_opts, kind) do
+  def seed_auth(source_opts, target_opts, kind),
+    do: transfer_auth(source_opts, target_opts, kind, :seed)
+
+  def refresh_auth(source_opts, target_opts, kind),
+    do: transfer_auth(source_opts, target_opts, kind, :refresh)
+
+  defp transfer_auth(source_opts, target_opts, kind, mode) do
     source = configured_path(source_opts, spec!(kind))
     target = configured_path(target_opts, spec!(kind))
 
     if is_binary(source) and is_binary(target) and source != target and
          owned_path?(source, kind) and owned_path?(target, kind) do
       Enum.reduce_while(auth_files(kind), :ok, fn name, :ok ->
-        case copy_auth_file(Path.join(source, name), Path.join(target, name)) do
+        case copy_auth_file(Path.join(source, name), Path.join(target, name), mode) do
           :ok -> {:cont, :ok}
           {:error, _} = error -> {:halt, error}
         end
@@ -110,22 +127,11 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   defp auth_files(:pi), do: ["auth.json"]
   defp auth_files(_kind), do: []
 
-  defp copy_auth_file(source, target) do
+  defp copy_auth_file(source, target, mode) do
     case File.lstat(source) do
       {:ok, %File.Stat{type: :regular}} ->
         with {:ok, data} <- File.read(source) do
-          case File.open(target, [:write, :binary, :exclusive]) do
-            {:ok, io} ->
-              result = with :ok <- File.chmod(target, 0o600), do: IO.binwrite(io, data)
-              closed = File.close(io)
-              if result == :ok, do: closed, else: result
-
-            {:error, :eexist} ->
-              :ok
-
-            {:error, _} = error ->
-              error
-          end
+          write_auth_file(target, data, mode)
         end
 
       {:error, :enoent} ->
@@ -136,6 +142,32 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  defp write_auth_file(target, data, :seed) do
+    case File.open(target, [:write, :binary, :exclusive]) do
+      {:ok, io} ->
+        result = with :ok <- File.chmod(target, 0o600), do: IO.binwrite(io, data)
+        closed = File.close(io)
+        if result == :ok, do: closed, else: result
+
+      {:error, :eexist} ->
+        :ok
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp write_auth_file(target, data, :refresh) do
+    suffix = 12 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
+    temp = target <> ".refresh-" <> suffix
+
+    try do
+      with :ok <- write_auth_file(temp, data, :seed), do: File.rename(temp, target)
+    after
+      File.rm(temp)
     end
   end
 

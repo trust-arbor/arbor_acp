@@ -102,4 +102,45 @@ defmodule Arbor.ACP.Adapters.RuntimeHomeOwnershipTest do
     RuntimeHome.release(source, :claude)
     RuntimeHome.release(child, :claude)
   end
+
+  for {adapter, variable} <- [
+        {Arbor.ACP.Adapters.ClaudeSDK, "CLAUDE_CONFIG_DIR"},
+        {Arbor.ACP.Adapters.Codex, "CODEX_HOME"},
+        {Arbor.ACP.Adapters.Pi, "PI_CODING_AGENT_DIR"}
+      ],
+      value <- [false, nil, ""] do
+    @adapter adapter
+    @variable variable
+    @value value
+    test "#{inspect(adapter)} rejects an unset home #{inspect(value)} before environment merge" do
+      opts = [env: [{@variable, @value}]]
+      assert_raise ArgumentError, ~r/nonempty home path/, fn -> @adapter.init(opts) end
+
+      assert_raise ArgumentError, ~r/nonempty home path/, fn ->
+        Arbor.ACP.AdapterSupport.Subprocess.safe_env(opts, @adapter)
+      end
+    end
+  end
+
+  test "explicit authentication refresh replaces only generated child credentials", %{root: root} do
+    source = RuntimeHome.put_opt([], :claude)
+    target = RuntimeHome.put_opt([_runtime_home_session: "child"], :claude)
+    File.write!(Path.join(source[:claude_config_dir], ".credentials.json"), "account A")
+    assert :ok = RuntimeHome.seed_auth(source, target, :claude)
+    File.write!(Path.join(source[:claude_config_dir], ".credentials.json"), "account B")
+    assert :ok = RuntimeHome.refresh_auth(source, target, :claude)
+    assert File.read!(Path.join(target[:claude_config_dir], ".credentials.json")) == "account B"
+    caller = [claude_config_dir: root]
+    File.write!(Path.join(root, ".credentials.json"), "caller")
+    assert :ok = RuntimeHome.refresh_auth(source, caller, :claude)
+    assert File.read!(Path.join(root, ".credentials.json")) == "caller"
+
+    assert Bitwise.band(
+             File.stat!(Path.join(target[:claude_config_dir], ".credentials.json")).mode,
+             0o777
+           ) == 0o600
+
+    RuntimeHome.release(source, :claude)
+    RuntimeHome.release(target, :claude)
+  end
 end
