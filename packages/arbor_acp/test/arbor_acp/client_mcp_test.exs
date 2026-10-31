@@ -1064,6 +1064,37 @@ defmodule Arbor.ACP.ClientMcpTest do
     refute Map.has_key?(:sys.get_state(ctx.client).sessions, "sess-queued-close")
   end
 
+  test "a provider queued past its deadline cannot enter before timeout delivery" do
+    ctx =
+      boot(
+        handler: McpHandler,
+        handler_opts: [test_pid: self(), block_updates: true],
+        mcp_providers: %{"app" => :handler},
+        handler_request_timeout: 60_000
+      )
+
+    open_session(ctx, [acp("App", "app")], "sess-expired")
+    send_session_chunk(ctx, "sess-expired")
+    assert_receive {:update_blocking, update_pid}
+    id = agent_mcp(ctx, "app", "expired", "inner")
+    await_mcp_admitted(ctx)
+
+    :sys.replace_state(ctx.client, fn state ->
+      pending =
+        Map.new(state.pending_agent_requests, fn {ref, request} ->
+          {ref, Map.put(request, :deadline, System.monotonic_time(:millisecond) - 1)}
+        end)
+
+      %{state | pending_agent_requests: pending}
+    end)
+
+    send(update_pid, :release_update)
+    assert_receive {:session_updated, 1}
+    assert %{"id" => ^id, "error" => %{"message" => "MCP provider unavailable"}} = await_frame()
+    refute_receive {:handler_mcp, _, _, _}
+    assert :sys.get_state(ctx.client).pending_agent_requests == %{}
+  end
+
   test "a queued provider does not start after its request is cancelled" do
     ctx =
       boot(
