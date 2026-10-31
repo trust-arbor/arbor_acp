@@ -87,4 +87,19 @@ defmodule Arbor.ACP.Adapters.RuntimeHomeOwnershipTest do
     assert RuntimeHome.release_opt(opts, :pi) == opts
     assert File.dir?(root)
   end
+
+  test "auth seeding copies only regular credential files between generated homes", %{root: root} do
+    source = RuntimeHome.put_opt([], :claude)
+    child = RuntimeHome.put_opt([_runtime_home_session: "child"], :claude)
+    File.write!(Path.join(source[:claude_config_dir], ".credentials.json"), "temporary")
+    File.write!(Path.join(source[:claude_config_dir], "settings.json"), "{}")
+    assert :ok = RuntimeHome.seed_auth(source, child, :claude)
+    assert File.read!(Path.join(child[:claude_config_dir], ".credentials.json")) == "temporary"
+    refute File.exists?(Path.join(child[:claude_config_dir], "settings.json"))
+    caller = [claude_config_dir: root]
+    assert :ok = RuntimeHome.seed_auth(source, caller, :claude)
+    refute File.exists?(Path.join(root, ".credentials.json"))
+    RuntimeHome.release(source, :claude)
+    RuntimeHome.release(child, :claude)
+  end
 end
