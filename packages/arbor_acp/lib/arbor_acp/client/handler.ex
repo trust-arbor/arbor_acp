@@ -71,6 +71,16 @@ defmodule Arbor.ACP.Client.Handler do
             ) :: {:ok, state()}
 
   @doc """
+  Reports session updates dropped for a full handler mailbox. Optional; omitted
+  callbacks are a no-op. Counts are coalesced per session and delivered when
+  queue room becomes available, even if no further updates arrive. Notices
+  obey the update count and byte bounds. Every drop also emits
+  `[:arbor_acp, :session, :update_dropped]` with count/bytes measurements and
+  session, target, limit and configured bounds in metadata.
+  """
+  @callback handle_session_updates_dropped(String.t(), pos_integer(), state()) :: {:ok, state()}
+
+  @doc """
   Called when the agent requests permission to use a tool.
 
   Must return an outcome map with an `"optionId"` matching one of the
@@ -204,6 +214,7 @@ defmodule Arbor.ACP.Client.Handler do
               | {:error, term(), state()}
 
   @optional_callbacks [
+    handle_session_updates_dropped: 3,
     handle_session_update: 3,
     handle_session_update: 4,
     handle_permission_request: 4,
