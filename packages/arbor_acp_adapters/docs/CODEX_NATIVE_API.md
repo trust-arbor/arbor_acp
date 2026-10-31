@@ -207,14 +207,24 @@ never deletes that home. Credential-free tests keep their disposable home:
 ```sh
 CODEX_PATH=/absolute/path/to/codex \
 ARBOR_CODEX_AUTH_QUALIFICATION=1 \
+ARBOR_CODEX_QUALIFICATION_MODEL=gpt-6.1-sol \
 ARBOR_CODEX_QUALIFICATION_REPORT=/absolute/path/to/qualification.jsonl \
 mix test --only codex_authenticated
 ```
 
+Select an available model from `model/list` explicitly for reproducible results;
+the report records the requested model and returned thread model. Omitting
+`ARBOR_CODEX_QUALIFICATION_MODEL` retains the CLI's configured model. This option
+affects only the qualification harness.
+
 This runs five real model turns: native text streaming, managed `outputSchema`,
 a fixed dynamic tool roundtrip, denied command approval, and interruption while
 a dynamic-tool callback is pending. It uses disposable workspaces and ephemeral
-threads. The tool has no external effects; approvals are denied. The authenticated
+threads. The dynamic-tool case checks the completed native tool item's call id, success
+and exact returned content. Whether the model repeats that content in its final
+answer is reported separately; model wording is not the bridge's wire contract.
+The streaming case separately requires actual text deltas. The tool has no
+external effects; approvals are denied. The authenticated
 launcher disables MCP servers, apps, plugins, hooks and web search while retaining
 the existing login. Cleanup must confirm that the owned child was reaped and its
 process group is absent. Missing authentication, failed cases, unavailable

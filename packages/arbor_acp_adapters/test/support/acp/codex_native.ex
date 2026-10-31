@@ -212,7 +212,8 @@ defmodule Arbor.ACP.Test.CodexNative do
               cli_version: @version,
               elixir: System.version(),
               otp: to_string(:erlang.system_info(:otp_release)),
-              cleanup_verified: true
+              cleanup_verified: true,
+              requested_model: System.get_env("ARBOR_CODEX_QUALIFICATION_MODEL")
             },
             details || %{}
           )
@@ -252,6 +253,15 @@ defmodule Arbor.ACP.Test.CodexNative do
     end
   end
 
+  # An explicit, available model makes live qualification reproducible without
+  # changing the user's global CLI configuration or the adapter's defaults.
+  def qualification_model_params do
+    case System.get_env("ARBOR_CODEX_QUALIFICATION_MODEL") do
+      value when value in [nil, ""] -> %{}
+      value -> %{"model" => value}
+    end
+  end
+
   def start_thread!(client, root, extra \\ %{}) do
     request!(
       client,
@@ -266,7 +276,7 @@ defmodule Arbor.ACP.Test.CodexNative do
           "baseInstructions" =>
             "You are a protocol qualification agent. Follow the user's exact test. Use tools only when explicitly requested. Do not inspect unrelated files or access the network."
         },
-        extra
+        Map.merge(qualification_model_params(), extra)
       )
     )
   end

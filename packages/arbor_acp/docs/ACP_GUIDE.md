@@ -11,7 +11,7 @@ terminal, or user-input operations from the host. ACP uses a stateful initialize
 handshake and protocol version `1`. MCP protocol revision settings do not apply.
 
 Start with the [installation and local echo quickstart](../README.md). These
-guides describe the published `1.0.0-rc.5` candidate. The original
+guides target the `1.0.0-rc.5` candidate. The original
 `2.0.0-rc.1` candidate is retired with its tag and archive preserved.
 
 ## Connect to a native ACP agent

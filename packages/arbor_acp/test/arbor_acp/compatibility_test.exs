@@ -226,6 +226,10 @@ defmodule Arbor.ACP.CompatTest do
 
       location = "http://localhost:#{target_port}/leaked.json"
 
+      # Prove the exact redirect destination is reachable before asserting no replay.
+      assert {:ok, _body} = replay_http_get(location, [], 2_000, autoredirect: false)
+      assert_receive {:target_request, _probe_headers}
+
       {_origin_pid, origin_port} =
         start_http_stub(fn request ->
           send(parent, {:origin_request, request.headers})
@@ -287,6 +291,10 @@ defmodule Arbor.ACP.CompatTest do
         )
 
       location = "http://localhost:#{target_port}/agents.md"
+
+      # Prove the exact redirect destination is reachable before asserting no replay.
+      assert {:ok, _body} = replay_http_get(location, [], 2_000, autoredirect: false)
+      assert_receive {:target_request, _probe_headers}
 
       {_origin_pid, origin_port} =
         start_http_stub(fn request ->

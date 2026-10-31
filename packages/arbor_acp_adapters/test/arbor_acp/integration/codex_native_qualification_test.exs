@@ -30,7 +30,10 @@ defmodule Arbor.ACP.Integration.CodexNativeQualificationTest do
         consumer = Harness.subscribe!(client)
 
         assert {:ok, %{"sessionId" => id}} =
-                 Native.new_session(client, root, native_params: %{"ephemeral" => true})
+                 Native.new_session(client, root,
+                   native_params:
+                     Map.merge(%{"ephemeral" => true}, Harness.qualification_model_params())
+                 )
 
         schema = %{
           "type" => "object",
@@ -92,10 +95,36 @@ defmodule Arbor.ACP.Integration.CodexNativeQualificationTest do
       Harness.assert_completed!(completed)
       assert_receive {:qualification_tool, call_id}, 5_000
       assert is_binary(call_id)
-      assert String.contains?(Harness.text(completed), proof)
-      tool_event_seen = Enum.any?(completed.events, &(&1["method"] == "item/tool/call"))
-      assert tool_event_seen, "Native dynamic-tool event was not observed"
-      %{model: thread["model"], dynamic_tool_roundtrip_verified: true}
+
+      tool_item =
+        Enum.find_value(completed.events, fn
+          %{
+            "method" => "item/completed",
+            "params" => %{"item" => %{"type" => "dynamicToolCall", "id" => ^call_id} = item}
+          } ->
+            item
+
+          _other ->
+            nil
+        end)
+
+      assert %{
+               "status" => "completed",
+               "success" => true,
+               "contentItems" => [%{"type" => "inputText", "text" => ^proof}]
+             } = tool_item
+
+      assert Enum.any?(completed.events, fn event ->
+               event["method"] == "item/tool/call" and
+                 get_in(event, ["params", "callId"]) == call_id
+             end),
+             "Native dynamic-tool request was not observed"
+
+      %{
+        model: thread["model"],
+        dynamic_tool_roundtrip_verified: true,
+        model_echoed_tool_result: String.contains?(Harness.text(completed), proof)
+      }
     end)
   end
 
