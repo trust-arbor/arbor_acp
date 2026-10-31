@@ -580,7 +580,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           state = %{
             state
             | session_id: session_id,
-              claude_session_id: if(state.managed?, do: session_id, else: nil),
+              claude_session_id: if(state.managed?, do: state.claude_session_id, else: nil),
               cwd: cwd
           }
 
@@ -1513,7 +1513,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           monitor: monitor,
           fields:
             Map.take(
-              %{state | session_id: session_id, cwd: Keyword.get(opts, :cwd)},
+              %{
+                state
+                | session_id: session_id,
+                  claude_session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
+                  cwd: Keyword.get(opts, :cwd)
+              },
               @session_fields
             )
         }
@@ -1522,6 +1527,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           state
           | port: handle,
             session_id: session_id,
+            claude_session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
             cwd: Keyword.get(opts, :cwd),
             pending_controls: Map.put(state.pending_controls, request_id, :initialize),
             session_processes: Map.put(state.session_processes, session_id, entry)
