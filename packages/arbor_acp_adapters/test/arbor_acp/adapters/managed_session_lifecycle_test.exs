@@ -311,6 +311,83 @@ defmodule Arbor.ACP.Adapters.ManagedSessionLifecycleTest do
     assert {:ok, _} = ClaudeSDK.shutdown(state)
   end
 
+  test "closed opaque ids retain history for fork, load, resume and delete", %{
+    state: state,
+    root: root
+  } do
+    {id, state} = new_session(state, root, "opaque-history")
+    native = state.claude_session_id
+    write_history(state, root, native)
+    assert :ok = wait_until(fn -> length(argv_files(root)) == 1 end)
+
+    {:reply, %{}, state} =
+      ClaudeSDK.translate_outbound(request(2, "session/close", %{"sessionId" => id}), state)
+
+    assert {:ok, %{"sessionId" => fork}, state} =
+             ClaudeSDK.fork_session(%{"sessionId" => id, "cwd" => root}, state)
+
+    assert {:messages_and_reply, messages, %{"sessionId" => ^id}, state} =
+             ClaudeSDK.translate_outbound(
+               request(3, "session/load", %{"sessionId" => id, "cwd" => root}),
+               state
+             )
+
+    assert Enum.any?(messages, &(&1["params"]["sessionId"] == id))
+
+    assert {:reply, %{}, state} =
+             ClaudeSDK.translate_outbound(
+               request(4, "session/close", %{"sessionId" => id}),
+               state
+             )
+
+    assert {:reply, %{"sessionId" => ^id}, state} =
+             ClaudeSDK.translate_outbound(
+               request(5, "session/resume", %{"sessionId" => id, "cwd" => root}),
+               state
+             )
+
+    assert state.claude_session_id == native
+
+    assert {:reply, %{}, state} =
+             ClaudeSDK.translate_outbound(
+               request(6, "session/delete", %{"sessionId" => id, "cwd" => root}),
+               state
+             )
+
+    store = Arbor.ACP.Adapters.ClaudeSDK.SessionStore
+
+    assert {:error, _} =
+             store.read_session_messages(native,
+               claude_config_dir: state.opts[:claude_config_dir],
+               cwd: root
+             )
+
+    assert {:ok, [_]} =
+             store.read_session_messages(fork,
+               claude_config_dir: state.opts[:claude_config_dir],
+               cwd: root
+             )
+
+    refute List.keymember?(state.session_aliases, id, 0)
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
+  test "closed opaque aliases have a finite connection budget", %{state: state, root: root} do
+    native = "123e4567-e89b-12d3-a456-426614174000"
+    aliases = Enum.map(1..1_024, &{"old-#{&1}", native})
+    state = %{state | session_aliases: aliases}
+    {id, state} = new_session(state, root, "latest")
+
+    {:reply, %{}, state} =
+      ClaudeSDK.translate_outbound(request(2, "session/close", %{"sessionId" => id}), state)
+
+    assert length(state.session_aliases) <= 1_024
+    assert List.keymember?(state.session_aliases, id, 0)
+    refute List.keymember?(state.session_aliases, "old-1024", 0)
+    assert Enum.sum(Enum.map(state.session_aliases, &:erlang.external_size/1)) <= 1_048_576
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
   defp write_history(state, cwd, parent) do
     store = Arbor.ACP.Adapters.ClaudeSDK.SessionStore
     cwd = Arbor.ACP.AdapterSupport.WorkspacePath.canonical(cwd)
