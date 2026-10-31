@@ -822,7 +822,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     case prompt_turn_cwd(params, session, session_id, state) do
       {:ok, cwd} ->
         {id, state} = next_request_id(state)
-        additional_directories = session[:additional_directories] || []
+        additional_directories = approved_additional_directories(session, state)
 
         wire_params =
           %{
@@ -898,25 +898,26 @@ defmodule Arbor.ACP.Adapters.Codex do
   end
 
   # Creation-time real paths only. A later symlink swap is dropped if the
-  # stored path no longer resolves to itself or leaves workspace_roots.
+  # stored path no longer resolves to itself or is no longer authorized.
   defp approved_additional_directories(session, state) do
     session
     |> Map.get(:additional_directories, [])
-    |> Enum.filter(&still_authorized_additional_directory?(&1, state))
+    |> Enum.filter(&still_authorized_additional_directory?(&1, session[:cwd], state))
   end
 
-  defp still_authorized_additional_directory?(directory, state)
+  defp still_authorized_additional_directory?(directory, session_cwd, state)
        when is_binary(directory) and directory != "" do
     case WorkspacePath.resolve(directory) do
       {:ok, resolved} ->
-        resolved == directory and within_workspace_roots?(resolved, state.opts)
+        resolved == directory and
+          authorize_workspace(directory, {:additional_directory, session_cwd}, state) == :ok
 
       {:error, _} ->
         false
     end
   end
 
-  defp still_authorized_additional_directory?(_directory, _state), do: false
+  defp still_authorized_additional_directory?(_directory, _session_cwd, _state), do: false
 
   defp translate_slash_command({:compact, _rest}, acp_id, session_id, session, _params, state) do
     track_prompt_command(

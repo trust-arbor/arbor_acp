@@ -229,6 +229,73 @@ defmodule Arbor.ACP.Adapters.CodexPromptCwdTest do
       assert reason =~ ~r/not authorized|workspace|cwd/i
       refute_turn_start(pending_before, state_after)
     end
+
+    test "accepts a cwd inside an additionalDirectory approved by authorize_workspace", %{
+      workspace: workspace,
+      extra: extra,
+      extra_inside: extra_inside
+    } do
+      callback = fn path, _context ->
+        path in [workspace, extra]
+      end
+
+      {:ok, state} =
+        Codex.init(
+          workspace_roots: [workspace],
+          cwd: workspace,
+          authorize_workspace: callback
+        )
+
+      state = start_live_thread(state, "thread-1", workspace, [extra])
+      refute WorkspacePath.within?(extra, workspace)
+
+      requested = extra_inside <> "/."
+      assert {:ok, resolved} = WorkspacePath.contained(requested, extra)
+
+      assert {:ok, data, _state} = prompt(state, requested)
+      turn = decode(data)
+      assert turn["method"] == "turn/start"
+      assert turn["params"]["cwd"] == resolved
+    end
+
+    test "rejects a cwd inside an additionalDirectory denied by authorize_workspace", %{
+      workspace: workspace,
+      extra: extra,
+      extra_inside: extra_inside
+    } do
+      {:ok, state} = Codex.init(workspace_roots: [workspace, extra], cwd: workspace)
+      state = start_live_thread(state, "thread-1", workspace, [extra])
+
+      state = %{
+        state
+        | opts: Keyword.put(state.opts, :authorize_workspace, fn _path, _context -> false end)
+      }
+
+      pending_before = state.pending_requests
+      assert {:error, reason, state_after} = prompt(state, extra_inside)
+      assert reason =~ ~r/not authorized|workspace|cwd/i
+      refute_turn_start(pending_before, state_after)
+    end
+
+    test "omitted cwd omits a drifted additionalDirectory from writableRoots", %{
+      workspace: workspace,
+      extra: extra,
+      outside: outside
+    } do
+      {:ok, state} = Codex.init(workspace_roots: [workspace, extra], cwd: workspace)
+      state = start_live_thread(state, "thread-1", workspace, [extra])
+
+      File.rm_rf!(extra)
+      File.ln_s!(outside, extra)
+
+      assert {:ok, data, _state} = Codex.translate_outbound(prompt_message(nil), state)
+      turn = decode(data)
+      assert turn["method"] == "turn/start"
+      assert turn["params"]["cwd"] == workspace
+      writable_roots = get_in(turn, ["params", "sandboxPolicy", "writableRoots"]) || []
+      refute extra in writable_roots
+      refute outside in writable_roots
+    end
   end
 
   defp prompt(state, cwd), do: Codex.translate_outbound(prompt_message(cwd), state)
