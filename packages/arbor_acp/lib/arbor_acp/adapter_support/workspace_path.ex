@@ -39,7 +39,7 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
   Deletes `path` when it resolves inside `root`.
 
   Containment is resolved once; the delete uses that path and does not
-  resolve again. One process then walks from the resolved root: each
+  resolve again. One process then walks from the filesystem root through the resolved root: each
   ancestor is entered with `cd -P` only when an lstat of that component
   is a directory whose inode matches the directory landed in. The last
   component is unlinked relative to that cwd. A swap of the file or of
@@ -130,26 +130,45 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
       end
 
     expected_root = "#{root_info.major_device}:#{root_info.inode}"
+    root_components = root |> Path.split() |> Enum.drop(1)
 
     script =
-      "cd -P -- \"$1\" || exit 1\n" <>
-        "actual=$(stat #{stat_flag} '#{stat_fmt}' .) || exit 1\n" <>
-        "test \"$actual\" = \"$2\" || exit 2\n" <>
+      "expected_root=$1\n" <>
+        "root_count=$2\n" <>
         "name=$3\n" <>
         "shift 3\n" <>
+        "cd -P -- / || exit 1\n" <>
+        "index=0\n" <>
+        "if [ \"$root_count\" -eq 0 ]; then\n" <>
+        "  actual=$(stat #{stat_flag} '#{stat_fmt}' .) || exit 1\n" <>
+        "  test \"$actual\" = \"$expected_root\" || exit 2\n" <>
+        "fi\n" <>
         "for comp do\n" <>
         "  case \"$comp\" in \"\"|\".\"|\"..\"|*/*) exit 3 ;; esac\n" <>
-        "  [ -L \"$comp\" ] && exit 4\n" <>
-        "  [ -d \"$comp\" ] || exit 5\n" <>
-        "  expected=$(stat #{stat_flag} '#{stat_fmt}' \"$comp\") || exit 1\n" <>
-        "  cd -P -- \"$comp\" || exit 1\n" <>
+        "  [ -L \"./$comp\" ] && exit 4\n" <>
+        "  [ -d \"./$comp\" ] || exit 5\n" <>
+        "  expected=$(stat #{stat_flag} '#{stat_fmt}' \"./$comp\") || exit 1\n" <>
+        "  cd -P -- \"./$comp\" || exit 1\n" <>
         "  actual=$(stat #{stat_flag} '#{stat_fmt}' .) || exit 1\n" <>
         "  test \"$actual\" = \"$expected\" || exit 2\n" <>
+        "  index=$((index + 1))\n" <>
+        "  if [ \"$index\" -eq \"$root_count\" ]; then\n" <>
+        "    test \"$actual\" = \"$expected_root\" || exit 2\n" <>
+        "  fi\n" <>
         "done\n" <>
         "case \"$name\" in \"\"|\".\"|\"..\"|*/*) exit 3 ;; esac\n" <>
         "exec rm -- \"$name\""
 
-    case System.cmd("sh", ["-ec", script, "rm_within", root, expected_root, name | dirs],
+    case System.cmd(
+           "sh",
+           [
+             "-ec",
+             script,
+             "rm_within",
+             expected_root,
+             Integer.to_string(length(root_components)),
+             name | root_components ++ dirs
+           ],
            stderr_to_stdout: true
          ) do
       {_out, 0} -> :ok
