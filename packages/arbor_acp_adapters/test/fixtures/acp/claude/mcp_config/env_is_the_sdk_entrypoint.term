@@ -14,6 +14,7 @@
     step: %{kind: :env, opts: [cli_path: "<sandbox>/bin/claude"]},
     result: %{
       reply: %{
+        "ANTHROPIC_CONFIG_DIR" => "<generated-runtime-home>/anthropic",
         "CLAUDE_AGENT_SDK_VERSION" => "0.3.310",
         "CLAUDE_CODE_ENTRYPOINT" => "sdk-ts",
         "CLAUDE_CONFIG_DIR" => "<generated-runtime-home>"
@@ -25,6 +26,7 @@
     step: %{kind: :env, opts: [cli_path: "<sandbox>/bin/claude", model: "opus"]},
     result: %{
       reply: %{
+        "ANTHROPIC_CONFIG_DIR" => "<generated-runtime-home>/anthropic",
         "CLAUDE_AGENT_SDK_VERSION" => "0.3.310",
         "CLAUDE_CODE_ENTRYPOINT" => "sdk-ts",
         "CLAUDE_CONFIG_DIR" => "<generated-runtime-home>"

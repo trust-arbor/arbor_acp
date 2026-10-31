@@ -1,5 +1,7 @@
 defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   @moduledoc false
+  require Logger
+  alias Arbor.ACP.Adapters.Internal.PrivateKeychain
 
   # Private per-ACP-session config directories for vendor CLIs. Created 0700
   # under System.tmp_dir/0, keyed by session id (or :connection before one
@@ -49,6 +51,7 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   def path(opts, kind) when is_list(opts) do
     spec = spec!(kind)
     validate_home_env!(opts, spec)
+    validate_profile_env!(opts, kind)
 
     case configured_path(opts, spec) do
       path when is_binary(path) ->
@@ -75,11 +78,29 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
     end
   end
 
+  defp validate_profile_env!(opts, :claude) do
+    home = configured_path(opts, spec!(:claude))
+    isolated? = not trust_workspace_config?(opts) and (is_nil(home) or owned_path?(home, :claude))
+    supplied = normalize_env(Keyword.get(opts, :env, []))
+
+    if isolated? and Map.has_key?(supplied, "ANTHROPIC_CONFIG_DIR") and
+         Map.get(supplied, "ANTHROPIC_CONFIG_DIR") in [nil, ""] do
+      raise ArgumentError,
+            "ANTHROPIC_CONFIG_DIR must be a nonempty path when workspace isolation is enabled"
+    end
+  end
+
+  defp validate_profile_env!(_opts, _kind), do: :ok
+
   @spec put(map(), keyword(), atom()) :: map()
   def put(env, opts, kind) when is_map(env) do
     case path(opts, kind) do
-      nil -> env
-      path -> Map.put(env, env_var(kind), path)
+      nil ->
+        env
+
+      path ->
+        env = Map.put(env, env_var(kind), path)
+        if kind == :claude, do: put_auth_profile(env, opts, path), else: env
     end
   end
 
@@ -89,9 +110,53 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
     opts = drop_minted_option(opts, spec.option, kind)
 
     case path(opts, kind) do
-      nil -> opts
-      path -> Keyword.put(opts, spec.option, path)
+      nil ->
+        opts
+
+      path ->
+        opts = Keyword.put(opts, spec.option, path)
+
+        if kind == :claude and owned_path?(path, :claude),
+          do: Keyword.put_new(opts, :_anthropic_auth_dir, Path.join(path, "anthropic")),
+          else: opts
     end
+  end
+
+  defp put_auth_profile(env, opts, home) do
+    if owned_path?(home, :claude) do
+      supplied = normalize_env(Keyword.get(opts, :env, []))
+
+      case Map.fetch(supplied, "ANTHROPIC_CONFIG_DIR") do
+        {:ok, value} when value in [nil, ""] ->
+          raise ArgumentError,
+                "ANTHROPIC_CONFIG_DIR must be a nonempty path when workspace isolation is enabled"
+
+        {:ok, path} ->
+          Map.put(env, "ANTHROPIC_CONFIG_DIR", Path.expand(path))
+
+        :error ->
+          Map.put(
+            env,
+            "ANTHROPIC_CONFIG_DIR",
+            Keyword.get(opts, :_anthropic_auth_dir, Path.join(home, "anthropic"))
+          )
+      end
+    else
+      env
+    end
+  end
+
+  def track_keychain(opts) do
+    path = configured_path(opts, spec!(:claude))
+
+    if is_binary(path) and owned_path?(path, :claude) do
+      {_kind, _identity, watcher} = Map.fetch!(Process.get(@owned_key), path)
+      capture = PrivateKeychain.runner()
+      Process.put({__MODULE__, :keychain, path}, capture)
+      send(watcher, {:track_keychain, capture})
+    end
+
+    :ok
   end
 
   # Drop only the launch override we minted, while ownership can still be
@@ -171,21 +236,24 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
     end
   end
 
-  @spec release_opt(keyword(), atom()) :: keyword()
+  @spec release_opt(keyword(), atom()) :: keyword() | {:error, term()}
   def release_opt(opts, kind) do
     option = spec!(kind).option
     next_opts = drop_minted_option(opts, option, kind)
-    release(opts, kind)
-    next_opts
+
+    case release(opts, kind) do
+      :ok -> next_opts
+      {:error, _} = error -> error
+    end
   end
 
-  @spec release(keyword(), atom()) :: :ok
+  @spec release(keyword(), atom()) :: :ok | {:error, term()}
   def release(opts, kind) when is_list(opts) do
     spec = spec!(kind)
     key = cache_key(opts, kind)
 
     cached =
-      case Process.delete(key) do
+      case Process.get(key) do
         path when is_binary(path) -> path
         _ -> nil
       end
@@ -196,9 +264,12 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
     [cached, configured, option]
     |> Enum.filter(&is_binary/1)
     |> Enum.uniq()
-    |> Enum.each(&remove_minted(&1, kind))
-
-    :ok
+    |> Enum.reduce_while(:ok, fn path, :ok ->
+      case remove_minted(path, kind) do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
   end
 
   def release(_opts, _kind), do: :ok
@@ -373,32 +444,57 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   defp remove_minted(path, kind) do
     case Map.get(Process.get(@owned_key, %{}), path) do
       {^kind, identity, watcher} ->
-        removed = if same_directory?(path, identity), do: File.rm_rf(path), else: {:ok, []}
+        result =
+          if same_directory?(path, identity) do
+            with :ok <- cleanup_keychain(path, Process.get({__MODULE__, :keychain, path})) do
+              case File.rm_rf(path) do
+                {:ok, _} -> :ok
+                {:error, reason, _file} -> {:error, {:private_home_cleanup_failed, reason}}
+              end
+            end
+          else
+            :ok
+          end
 
-        if match?({:ok, _}, removed) do
+        if result == :ok do
           Process.exit(watcher, :shutdown)
           Process.put(@owned_key, Map.delete(Process.get(@owned_key, %{}), path))
+          Process.delete({__MODULE__, :keychain, path})
+
+          for key <- Process.get_keys(path),
+              match?({__MODULE__, ^kind, _session}, key),
+              do: Process.delete(key)
         end
 
-        for key <- Process.get_keys(path), match?({__MODULE__, ^kind, _session}, key) do
-          Process.delete(key)
-        end
+        result
 
       _caller_owned ->
         :ok
     end
-
-    :ok
   end
 
-  defp remove_when_down(owner, dir, identity) do
-    spawn(fn ->
-      ref = Process.monitor(owner)
+  defp cleanup_keychain(_path, nil), do: :ok
+  defp cleanup_keychain(path, capture), do: PrivateKeychain.cleanup(path, capture)
 
-      receive do
-        {:DOWN, ^ref, :process, _pid, _reason} ->
-          if same_directory?(dir, identity), do: File.rm_rf(dir)
-      end
-    end)
+  defp remove_when_down(owner, dir, identity) do
+    spawn(fn -> wait_for_owner(Process.monitor(owner), dir, identity, nil) end)
+  end
+
+  defp wait_for_owner(ref, dir, identity, capture) do
+    receive do
+      {:track_keychain, runner} ->
+        wait_for_owner(ref, dir, identity, runner)
+
+      {:DOWN, ^ref, :process, _pid, _reason} ->
+        if same_directory?(dir, identity) do
+          case cleanup_keychain(dir, capture) do
+            :ok ->
+              File.rm_rf(dir)
+
+            {:error, _} ->
+              Logger.warning("Private Claude credential cleanup could not be confirmed")
+          end
+        end
+    end
   end
 end

@@ -29,7 +29,7 @@
         %{
           "args" => ["auth", "login", "--claudeai"],
           "description" => "Use Claude subscription",
-          "env" => %{"CLAUDE_CONFIG_DIR" => "<generated-runtime-home>"},
+          "env" => %{"CLAUDE_CONFIG_DIR" => "<sandbox>/claude"},
           "id" => "claude-ai-login",
           "name" => "Claude Subscription",
           "type" => "terminal"
@@ -37,7 +37,7 @@
         %{
           "args" => ["auth", "login", "--console"],
           "description" => "Use Anthropic Console (API usage billing)",
-          "env" => %{"CLAUDE_CONFIG_DIR" => "<generated-runtime-home>"},
+          "env" => %{"CLAUDE_CONFIG_DIR" => "<sandbox>/claude"},
           "id" => "console-login",
           "name" => "Anthropic Console",
           "type" => "terminal"

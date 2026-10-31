@@ -805,7 +805,10 @@ defmodule Arbor.ACP.Adapters.Pi do
   # home remains until the owner exits; the RuntimeHome owner monitor then
   # removes it. Managed homes can go only after confirmed child cleanup.
   defp release_stopped_home(%{managed?: true, port: nil, cleanup_result: :ok} = state) do
-    %{state | opts: RuntimeHome.release_opt(state.opts, :pi)}
+    case RuntimeHome.release_opt(state.opts, :pi) do
+      {:error, reason} -> %{state | cleanup_result: {:error, reason}}
+      opts -> %{state | opts: opts}
+    end
   end
 
   defp release_stopped_home(state), do: state

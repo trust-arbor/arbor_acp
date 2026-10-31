@@ -187,6 +187,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     # tests set `managed: false` and keep the single-process translation path.
     managed?: true,
     cleanup_result: :ok,
+    home_cleanup_errors: %{},
     port: nil,
     session_processes: %{},
     session_aliases: [],
@@ -296,6 +297,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   @impl true
   def auth_methods(opts, state) do
+    opts = Keyword.merge(Map.get(state, :opts, []), opts)
+
     []
     |> maybe_add_terminal_auth_methods(opts, state)
     |> maybe_add_gateway_auth_methods(opts, state)
@@ -390,9 +393,22 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
             {:error, reason, failed} ->
               failed = close_session_process(failed, forked_session_id)
-              RuntimeHome.release(runtime_home_release_opts(failed, forked_session_id), :claude)
-              _ = SessionStore.delete_session(forked_session_id, parent_opts)
-              {:error, reason, previous}
+              failed = release_session_home(failed, forked_session_id)
+
+              if failed.cleanup_result == :ok do
+                _ = SessionStore.delete_session(forked_session_id, parent_opts)
+                {:error, reason, previous}
+              else
+                retained =
+                  Map.take(failed, [
+                    :session_processes,
+                    :session_homes,
+                    :home_cleanup_errors,
+                    :cleanup_result
+                  ])
+
+                {:error, reason, Map.merge(previous, retained)}
+              end
           end
 
         {:error, reason} ->
@@ -474,6 +490,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   def shutdown(%{managed?: false} = state), do: {:ok, state}
 
   def shutdown(state) do
+    state = refresh_cleanup_result(state)
+
     state =
       Enum.reduce(state.session_processes, state, fn {id, entry}, acc ->
         forget_session_process(acc, id, entry.handle)
@@ -483,8 +501,10 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
     case state.cleanup_result do
       :ok ->
-        RuntimeHome.release(state.opts, :claude)
-        {:ok, state}
+        case RuntimeHome.release(state.opts, :claude) do
+          :ok -> {:ok, state}
+          {:error, reason} -> {:error, reason, %{state | cleanup_result: {:error, reason}}}
+        end
 
       {:error, reason} ->
         {:error, reason, state}
@@ -1493,10 +1513,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
         if Map.has_key?(failed.session_processes, session_id) do
           {:error, reason, failed}
         else
-          RuntimeHome.release(runtime_home_release_opts(failed, session_id), :claude)
-
-          {:error, reason,
-           %{failed | session_homes: Map.delete(failed.session_homes, session_id)}}
+          {:error, reason, release_session_home(failed, session_id)}
         end
 
       result ->
@@ -1842,17 +1859,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
         state = remember_closed_alias(state, session_id)
         processes = Map.delete(state.session_processes, session_id)
 
-        cleanup =
-          Enum.find_value(processes, :ok, fn {_id, entry} ->
-            if reason = Map.get(entry, :cleanup_error), do: {:error, reason}
-          end)
-
         %{
           state
           | port: if(state.port == handle, do: nil, else: state.port),
-            session_processes: processes,
-            cleanup_result: cleanup
+            session_processes: processes
         }
+        |> refresh_cleanup_result()
 
       {:error, reason} ->
         processes =
@@ -2092,7 +2104,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   defp cleanup_reply(id, messages, %{cleanup_result: {:error, reason}} = state),
     do: cleanup_error_reply(id, messages, reason, state)
 
-  defp cleanup_error_reply(_id, [], reason, state), do: {:error, cleanup_error_text(reason), state}
+  defp cleanup_error_reply(_id, [], reason, state),
+    do: {:error, cleanup_error_text(reason), state}
 
   defp cleanup_error_reply(id, messages, reason, state),
     do:
@@ -2137,11 +2150,36 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   defp release_session_home(state, session_id) do
     if state.managed? and Map.has_key?(state.session_homes, session_id) and
          not Map.has_key?(state.session_processes, session_id) do
-      RuntimeHome.release(runtime_home_release_opts(state, session_id), :claude)
-      %{state | session_homes: Map.delete(state.session_homes, session_id)}
+      case RuntimeHome.release(runtime_home_release_opts(state, session_id), :claude) do
+        :ok ->
+          %{
+            state
+            | session_homes: Map.delete(state.session_homes, session_id),
+              home_cleanup_errors: Map.delete(state.home_cleanup_errors, session_id)
+          }
+          |> refresh_cleanup_result()
+
+        {:error, reason} ->
+          %{
+            state
+            | home_cleanup_errors: Map.put(state.home_cleanup_errors, session_id, reason),
+              cleanup_result: {:error, reason}
+          }
+      end
     else
       state
     end
+  end
+
+  defp refresh_cleanup_result(state) do
+    child_error =
+      Enum.find_value(state.session_processes, fn {_id, entry} ->
+        Map.get(entry, :cleanup_error)
+      end)
+
+    home_error = Enum.find_value(state.home_cleanup_errors, fn {_id, reason} -> reason end)
+    reason = child_error || home_error
+    %{state | cleanup_result: if(reason, do: {:error, reason}, else: :ok)}
   end
 
   defp runtime_home_release_opts(state, session_id) do
@@ -2297,10 +2335,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   end
 
   defp terminal_home_env(opts) do
-    case RuntimeHome.path(opts, :claude) do
-      nil -> %{}
-      path -> %{"CLAUDE_CONFIG_DIR" => path}
-    end
+    env = RuntimeHome.put(%{}, opts, :claude)
+
+    if path = env["CLAUDE_CONFIG_DIR"],
+      do: RuntimeHome.track_keychain(Keyword.put(opts, :claude_config_dir, path))
+
+    env
   end
 
   defp remote_environment? do

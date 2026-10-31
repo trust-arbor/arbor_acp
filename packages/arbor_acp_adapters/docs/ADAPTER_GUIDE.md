@@ -80,6 +80,13 @@ new generated child homes receive only its credential file, so subsequent
 sessions can use that login without sharing settings or transcripts.
 An explicit empty or unset vendor-home variable in `:env` is rejected while
 workspace isolation is enabled; it cannot silently restore the normal home.
+Claude's generated home also supplies a private `ANTHROPIC_CONFIG_DIR` for
+implicit Anthropic profiles. An explicit nonempty profile directory in `:env`
+is retained; an unset profile variable cannot bypass isolation. Terminal login
+uses the initialized adapter's effective home. On macOS, cleanup also removes
+the known Keychain services scoped to a generated login home. Unconfirmed
+credential or directory cleanup returns an error and retains the home for retry;
+caller-owned homes and their Keychain services are preserved.
 A project's `piCommand` stays ignored even with the opt-in.
 
 ```elixir

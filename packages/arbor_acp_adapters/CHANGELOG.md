@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Isolate implicit Anthropic profiles alongside generated Claude homes. Terminal login uses the initialized home, and macOS cleanup removes only its scoped Keychain services. Failed credential cleanup retains generated state and returns an error for retry; caller-owned homes are preserved.
+
 - Codex keeps one private home per app-server connection. Closing threads preserves it; ending the connection removes generated state.
 
 - Keep terminal login in a private connection home and seed only its credential files into generated Claude/Pi child homes. Retire Pi homes after unexpected exits and roll back failed Claude fork launches. Caller-owned homes are never seeded or removed.
