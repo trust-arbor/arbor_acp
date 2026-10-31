@@ -166,7 +166,7 @@ defmodule Arbor.ACP.Adapters.Codex.NativeTest do
   end
 
   test "overrides pass future fields and preserve normal parameters across all session methods" do
-    {:ok, state} = Codex.init(workspace_roots: ["/tmp"])
+    {:ok, state} = Codex.init(workspace_roots: ["/tmp"], allow_unbound_threads: true)
 
     meta = %{
       "arbor.acp.codex" => %{"params" => %{"futureField" => [nil, true], "model" => "custom"}}

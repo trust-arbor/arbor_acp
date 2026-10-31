@@ -8,7 +8,8 @@ defmodule Arbor.ACP.Adapters.CodexTest do
       Codex.init(
         workspace_roots: ["/tmp"],
         authorize_mcp_server: fn _server, _context -> true end,
-        trust_authorized_workspaces: true
+        trust_authorized_workspaces: true,
+        allow_unbound_threads: true
       )
 
     %{state: state}

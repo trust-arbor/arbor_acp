@@ -37,12 +37,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.FaultsGoldenTest do
       nor an id; and the inbound lines that are skipped: a blank line,
       whitespace, non-JSON, a JSON array, and an unknown event type.
 
-  Subprocess exit is deliberately absent. `Arbor.ACP.Adapters.ClaudeSDK`
-  is not adapter-managed: `command/1` returns an executable for the bridge
-  to spawn and the adapter implements neither `handle_adapter_message/2`
-  nor `shutdown/1`, so port exit, port close and partial-line buffering are
-  owned by `Arbor.ACP.AdapterBridge` and covered by its own tests. There is
-  no adapter callback this gate could drive to observe them.
+  Subprocess exit is deliberately absent. These goldens pass `managed: false`,
+  so they stay on the single-process translation path and do not open a
+  Claude process. Port exit, port close and partial-line buffering of a
+  managed session process are covered by the adapter's isolation tests and
+  by `Arbor.ACP.AdapterBridge`.
 
   Mutation check (2026-09-21): in `claude_sdk.ex`, making
   `handle_notification("session/cancel", ...)` skip the queue sweep

@@ -6,6 +6,14 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   `@anthropic-ai/claude-agent-sdk`, including the SDK entrypoint environment and
   stdio permission prompt control channel.
 
+  Each ACP session owns a Claude Code process, so sessions on one connection
+  do not share SDK conversation state. `command/1` therefore returns
+  `:adapter_managed` by default. Session-store calls that take a `cwd`
+  (`session/new`, `session/load`, `session/resume`, `session/list`,
+  `session/fork`, `session/delete`) reject a working directory outside
+  `:workspace_roots` (default the adapter `:cwd`); paths are canonicalized
+  with `Arbor.ACP.AdapterSupport.WorkspacePath`.
+
   ## MCP servers
 
   Claude Code takes MCP servers only when it starts, so they are adapter
@@ -48,13 +56,58 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   alias Arbor.ACP.Adapters.ClaudeSDK.MCPConfig
   alias Arbor.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
   alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
+  alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner
+  alias Arbor.ACP.AdapterSupport.WorkspacePath
   alias Arbor.RPC.JSONRPC, as: Envelope
+  alias Arbor.RPC.Subprocess
   alias Arbor.ACP.Adapters.Internal.PromptQueue
+
+  @session_fields [
+    :session_id,
+    :claude_session_id,
+    :model,
+    :permission_mode,
+    :effort,
+    :cwd,
+    :fast_mode_enabled,
+    :current_agent,
+    :pending_prompt_id,
+    :active_prompt_session_id,
+    :init_response,
+    :bypass_allowed?,
+    :auto_fallback_warned?,
+    :auto_fallback_pending?,
+    :last_model_usage,
+    :turn_model_usage,
+    :pending_controls,
+    :pending_client_requests,
+    :prompt_queue,
+    :available_commands,
+    :available_models,
+    :available_agents,
+    :text_acc,
+    :thinking_acc,
+    :thinking_blocks,
+    :current_block_type,
+    :current_assistant_text_streamed?,
+    :stream_message_id,
+    :tool_calls,
+    :message_ids,
+    :background_subagents,
+    :deferred_result,
+    :last_write
+  ]
 
   # `session/fork` fork point, as claude-agent-acp reads it: an explicitly
   # versioned object under `_meta.jetbrains.air.fork`.
   @fork_meta_path ["_meta", "jetbrains", "air", "fork"]
   @fork_meta_version 1
+  @session_scoped_methods ~w(
+    session/prompt
+    session/set_mode
+    session/set_config_option
+    session/cancel
+  )
 
   defstruct [
     :session_id,
@@ -65,6 +118,9 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     :permission_mode,
     :effort,
     :cwd,
+    # Snapshot of the adapter `:cwd` at init; implicit workspace-root checks
+    # use this (or `:workspace_roots`) rather than the current session cwd.
+    :workspace_root,
     :client_capabilities,
     :gateway_auth,
     :fast_mode_enabled,
@@ -111,7 +167,16 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     # write (the prompt, control request ids, the Auto fallback notice it
     # consumed, and the Claude request a client response answered), so a write
     # the bridge could not make can be retired; see outbound_write_failed/3.
-    last_write: %{prompt: nil, controls: [], notice: nil, answered: nil}
+    last_write: %{prompt: nil, controls: [], notice: nil, answered: nil},
+    # When true (the default), each ACP session owns a Claude process so
+    # sessions on one connection do not share SDK state. Unit and golden
+    # tests set `managed: false` and keep the single-process translation path.
+    managed?: true,
+    port: nil,
+    session_processes: %{},
+    # Per-session launch overrides (e.g. a minted CLAUDE_CONFIG_DIR). Merged
+    # into the child command so each process can have its own home.
+    session_homes: %{}
   ]
 
   @impl true
@@ -123,18 +188,32 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
      %__MODULE__{
        opts: opts,
        cwd: Keyword.get(opts, :cwd),
+       workspace_root: Keyword.get(opts, :cwd),
        session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
        claude_session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
        model: Keyword.get(opts, :model),
        permission_mode: encode_permission_mode(Keyword.get(opts, :permission_mode, :default)),
        effort: Keyword.get(opts, :effort),
        fast_mode_enabled: Keyword.get(opts, :fast_mode, false),
-       current_agent: Keyword.get(opts, :agent, "default")
+       current_agent: Keyword.get(opts, :agent, "default"),
+       managed?: Keyword.get(opts, :managed, true)
      }}
   end
 
   @impl true
   def command(opts) do
+    if Keyword.get(opts, :managed, true) do
+      with :ok <- MCPConfig.validate(opts) do
+        :adapter_managed
+      end
+    else
+      cli_command(opts)
+    end
+  end
+
+  defp cli_command(opts) do
+    opts = Keyword.delete(opts, :managed)
+
     with {:ok, opts} <- MCPConfig.prepare(opts) do
       ClaudeProtocol.command(opts)
     end
@@ -219,11 +298,17 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   @impl true
   def list_sessions(params, state) do
-    params
-    |> session_store_opts(state)
-    |> SessionStore.list_acp_sessions()
-    |> case do
-      {:ok, sessions} -> {:ok, sessions, state}
+    with {:ok, cwd} <- session_cwd(params, state),
+         :ok <- authorize_workspace(cwd, :session_list, state) do
+      params
+      |> session_store_opts(state)
+      |> Map.put(:cwd, cwd)
+      |> SessionStore.list_acp_sessions()
+      |> case do
+        {:ok, sessions} -> {:ok, sessions, state}
+        {:error, reason} -> {:error, reason, state}
+      end
+    else
       {:error, reason} -> {:error, reason, state}
     end
   end
@@ -233,28 +318,114 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     warn_unattached_mcp_servers("session/fork", params, state)
     session_id = params["sessionId"] || state.session_id
 
-    params
-    |> session_store_opts(state)
-    |> put_fork_message_id(params)
-    |> then(&SessionStore.fork_session(session_id, &1))
-    |> case do
-      {:ok, forked_session_id} ->
-        state = %{
-          state
-          | session_id: forked_session_id,
-            claude_session_id: forked_session_id,
-            cwd: params["cwd"] || state.cwd
-        }
+    with {:ok, cwd} <- session_cwd(params, state),
+         :ok <- authorize_workspace(cwd, :session_fork, state) do
+      params
+      |> session_store_opts(state)
+      |> Map.put(:cwd, cwd)
+      |> put_fork_message_id(params)
+      |> then(&SessionStore.fork_session(session_id, &1))
+      |> case do
+        {:ok, forked_session_id} ->
+          state = persist_current_session(state)
+          parent_fields = parent_session_fields(session_id, state)
+          state = reset_session_fields(state)
 
-        {:ok, Mapper.session_result(state, forked_session_id), state}
+          state = %{
+            state
+            | session_id: forked_session_id,
+              claude_session_id: forked_session_id,
+              cwd: cwd,
+              bypass_allowed?: Map.get(parent_fields, :bypass_allowed?, true),
+              permission_mode: Map.get(parent_fields, :permission_mode)
+          }
 
-      {:error, reason} ->
-        {:error, reason, state}
+          case start_session_process(forked_session_id, cwd, params, :fork, state) do
+            {:ok, state} ->
+              {:ok, Mapper.session_result(state, forked_session_id), state}
+
+            {:error, reason, state} ->
+              {:error, reason, state}
+          end
+
+        {:error, reason} ->
+          {:error, reason, state}
+      end
+    else
+      {:error, reason} -> {:error, reason, state}
     end
   end
 
   @impl true
-  def translate_outbound(msg, state), do: msg |> route_outbound(state) |> remember_write(state)
+  def translate_outbound(msg, state) do
+    state = maybe_switch_session(msg, state)
+    msg |> route_outbound(state) |> remember_write(state) |> deliver_managed(msg)
+  end
+
+  @impl true
+  def subprocess_receipt(message, state) do
+    Enum.find_value(state.session_processes, fn {_session_id, entry} ->
+      case PortRunner.event(entry.handle, message) do
+        {:frame, token, _bytes} -> {entry.handle, token}
+        _other -> nil
+      end
+    end)
+  end
+
+  @impl true
+  def handle_adapter_message({:arbor_rpc, _generation, _event} = message, state) do
+    case find_session_event(message, state) do
+      {session_id, handle, {:frame, _token, line}} ->
+        state = switch_session(state, session_id)
+        inbound_to_adapter_message(translate_inbound(line, state), handle)
+
+      {session_id, handle, {:closed, _reason, remainder}} ->
+        state = switch_session(state, session_id)
+        {messages, state} = cleanup_session(state, session_id)
+        state = forget_session_process(state, session_id, handle)
+
+        remainder
+        |> String.split("\n", trim: true)
+        |> Enum.reduce({:messages, messages, state}, fn line, {_tag, acc, acc_state} ->
+          inbound_to_adapter_message(translate_inbound(line, acc_state), handle)
+          |> then(fn
+            {:messages, extra, acc_state} -> {:messages, acc ++ extra, acc_state}
+            {:skip, acc_state} -> {:messages, acc, acc_state}
+          end)
+        end)
+        |> then(fn
+          {:messages, [], state} -> {:skip, persist_current_session(state)}
+          {:messages, messages, state} -> {:messages, messages, persist_current_session(state)}
+          other -> other
+        end)
+
+      _other ->
+        {:skip, state}
+    end
+  end
+
+  def handle_adapter_message({:DOWN, monitor, :process, _pid, _reason}, state)
+      when is_reference(monitor) do
+    case find_session_by_monitor(state, monitor) do
+      {session_id, handle} ->
+        {_messages, state} = cleanup_session(state, session_id)
+        {:skip, forget_session_process(state, session_id, handle)}
+
+      nil ->
+        {:skip, state}
+    end
+  end
+
+  def handle_adapter_message(_message, state), do: {:skip, state}
+
+  @impl true
+  def shutdown(state) do
+    state.session_processes
+    |> Enum.reduce(state, fn {session_id, entry}, acc ->
+      forget_session_process(acc, session_id, entry.handle)
+    end)
+    |> then(&{:ok, &1})
+  end
 
   # The bridge writes what translate_outbound/2 returns. When it cannot, it
   # answers the request with the error and calls this, so nothing the write
@@ -352,18 +523,32 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp route_outbound(%{"id" => _id, "method" => method} = msg, state)
        when is_binary(method) do
-    handle_request(method, msg, state)
+    with_session_scope(method, msg, state, fn state ->
+      handle_request(method, msg, state)
+    end)
   end
 
   defp route_outbound(%{"method" => method} = msg, state) when is_binary(method) do
-    handle_notification(method, msg, state)
+    with_session_scope(method, msg, state, fn state ->
+      handle_notification(method, msg, state)
+    end)
   end
 
   defp route_outbound(%{"id" => _id} = msg, state) do
+    state =
+      state
+      |> persist_current_session()
+      |> then(&switch_to_client_request_session(msg["id"], &1))
+
     case Mapper.client_response(msg, state) do
-      {:ok, data, state} -> {:ok, data, state}
-      {:ok, messages, data, state} -> {:messages_and_write, messages, data, state}
-      :unknown -> {:ok, :skip, state}
+      {:ok, data, state} ->
+        {:ok, data, persist_current_session(state)}
+
+      {:ok, messages, data, state} ->
+        {:messages_and_write, messages, data, persist_current_session(state)}
+
+      :unknown ->
+        {:ok, :skip, persist_current_session(state)}
     end
   end
 
@@ -371,18 +556,32 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp handle_request("session/new", %{"id" => _id, "params" => params}, state) do
     warn_unattached_mcp_servers("session/new", params, state)
-    session_id = state.session_id || params["sessionId"] || generated_session_id()
 
-    state = %{
-      state
-      | session_id: session_id,
-        claude_session_id: if(state.session_id, do: state.claude_session_id, else: nil),
-        cwd: params["cwd"] || state.cwd
-    }
+    session_id =
+      if state.managed? do
+        params["sessionId"] || generated_session_id()
+      else
+        state.session_id || params["sessionId"] || generated_session_id()
+      end
 
-    reply_with_bypass_policy(params, state, fn state ->
-      Mapper.session_result(state, session_id)
-    end)
+    with {:ok, cwd} <- session_cwd(params, state),
+         :ok <- authorize_workspace(cwd, :session_new, state) do
+      state = prepare_session_state(session_id, cwd, params, state)
+
+      case start_session_process(session_id, cwd, params, :new, state) do
+        {:ok, state} ->
+          state = %{state | session_id: session_id, claude_session_id: nil, cwd: cwd}
+
+          reply_with_bypass_policy(params, state, fn state ->
+            Mapper.session_result(state, session_id)
+          end)
+
+        {:error, reason, state} ->
+          {:error, reason, state}
+      end
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
   end
 
   defp handle_request("initialize", %{"params" => params}, state) do
@@ -441,31 +640,19 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     warn_unattached_mcp_servers("session/load", params, state)
     session_id = params["sessionId"] || state.session_id || generated_session_id()
 
-    state = %{
-      state
-      | session_id: session_id,
-        claude_session_id: session_id,
-        cwd: params["cwd"] || state.cwd
-    }
+    with {:ok, cwd} <- session_cwd(params, state),
+         :ok <- authorize_workspace(cwd, :session_load, state) do
+      state = prepare_session_state(session_id, cwd, params, state)
 
-    case SessionStore.read_session_messages(session_id, session_store_opts(params, state)) do
-      {:ok, events} ->
-        {messages, state} = Mapper.replay_messages(events, state)
+      case start_session_process(session_id, cwd, params, :load, state) do
+        {:ok, state} ->
+          load_persisted_session(session_id, cwd, params, state)
 
-        # Same policy pair as session/new and session/resume: a loaded session
-        # can inherit a bypass or Auto mode the model cannot support, so both
-        # have to be clamped here too.
-        {state, bypass_write} = apply_bypass_policy(params, state)
-        {state, auto_write} = apply_auto_mode_policy(state)
-        result = Mapper.session_result(state, session_id)
-
-        case Enum.reject([bypass_write, auto_write], &is_nil/1) do
-          [] -> {:messages_and_reply, messages, result, state}
-          writes -> {:messages_and_reply_and_write, messages, result, writes, state}
-        end
-
-      {:error, reason} ->
-        {:error, reason, state}
+        {:error, reason, state} ->
+          {:error, reason, state}
+      end
+    else
+      {:error, reason} -> {:error, reason, state}
     end
   end
 
@@ -473,20 +660,34 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     warn_unattached_mcp_servers("session/resume", params, state)
     session_id = params["sessionId"] || state.session_id || generated_session_id()
 
-    state = %{
-      state
-      | session_id: session_id,
-        claude_session_id: session_id,
-        cwd: params["cwd"] || state.cwd
-    }
+    with {:ok, cwd} <- session_cwd(params, state),
+         :ok <- authorize_workspace(cwd, :session_resume, state) do
+      state = prepare_session_state(session_id, cwd, params, state)
 
-    reply_with_bypass_policy(params, state, fn state ->
-      Mapper.session_result(state, session_id)
-    end)
+      case start_session_process(session_id, cwd, params, :resume, state) do
+        {:ok, state} ->
+          state = %{
+            state
+            | session_id: session_id,
+              claude_session_id: session_id,
+              cwd: cwd
+          }
+
+          reply_with_bypass_policy(params, state, fn state ->
+            Mapper.session_result(state, session_id)
+          end)
+
+        {:error, reason, state} ->
+          {:error, reason, state}
+      end
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
   end
 
   defp handle_request("session/close", %{"params" => %{"sessionId" => session_id}}, state) do
     {messages, state} = cleanup_session(state, session_id)
+    state = close_session_process(state, session_id)
 
     if messages == [] do
       {:reply, %{}, state}
@@ -513,13 +714,19 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
          %{"params" => %{"sessionId" => session_id} = params},
          state
        ) do
-    params
-    |> session_store_opts(state)
-    |> then(&SessionStore.delete_session(session_id, &1))
+    with {:ok, cwd} <- session_cwd(params, state),
+         :ok <- authorize_workspace(cwd, :session_delete, state) do
+      params
+      |> session_store_opts(state)
+      |> Map.put(:cwd, cwd)
+      |> then(&SessionStore.delete_session(session_id, &1))
+    else
+      {:error, reason} -> {:error, reason}
+    end
     |> case do
       :ok ->
         {messages, state} = cleanup_session(state, session_id)
-        state = clear_deleted_session(state, session_id)
+        state = state |> close_session_process(session_id) |> clear_deleted_session(session_id)
 
         if messages == [] do
           {:reply, %{}, state}
@@ -541,16 +748,22 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
          %{"id" => id, "params" => %{"sessionId" => session_id, "prompt" => prompt}},
          state
        ) do
-    with_pending_auto_notice(state, fn state ->
-      if state.pending_prompt_id do
-        case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
-          {:ok, message} -> {:ok, :skip, enqueue_prompt(state, id, session_id, message)}
-          {:error, reason} -> {:error, reason, state}
-        end
-      else
-        start_prompt(id, session_id, prompt, state)
-      end
-    end)
+    case require_known_session(session_id, state) do
+      {:ok, state} ->
+        with_pending_auto_notice(state, fn state ->
+          if state.pending_prompt_id do
+            case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
+              {:ok, message} -> {:ok, :skip, enqueue_prompt(state, id, session_id, message)}
+              {:error, reason} -> {:error, reason, state}
+            end
+          else
+            start_prompt(id, session_id, prompt, state)
+          end
+        end)
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
   end
 
   defp handle_request("session/set_mode", %{"params" => %{"modeId" => mode_id}}, state) do
@@ -753,6 +966,38 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp handle_request(_method, _msg, state), do: {:ok, :skip, state}
 
+  defp load_persisted_session(session_id, cwd, params, state) do
+    state = %{
+      state
+      | session_id: session_id,
+        claude_session_id: session_id,
+        cwd: cwd
+    }
+
+    case SessionStore.read_session_messages(
+           session_id,
+           params |> session_store_opts(state) |> Map.put(:cwd, cwd)
+         ) do
+      {:ok, events} ->
+        {messages, state} = Mapper.replay_messages(events, state)
+
+        # Same policy pair as session/new and session/resume: a loaded session
+        # can inherit a bypass or Auto mode the model cannot support, so both
+        # have to be clamped here too.
+        {state, bypass_write} = apply_bypass_policy(params, state)
+        {state, auto_write} = apply_auto_mode_policy(state)
+        result = Mapper.session_result(state, session_id)
+
+        case Enum.reject([bypass_write, auto_write], &is_nil/1) do
+          [] -> {:messages_and_reply, messages, result, state}
+          writes -> {:messages_and_reply_and_write, messages, result, writes, state}
+        end
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
   # Mirrors claude-agent-acp#1129: a host that never uses bypassPermissions may
   # opt a session out by sending `_meta.claudeCode.options.allowDangerouslySkipPermissions:
   # false` on session/new, and again on session/load or session/resume. It removes
@@ -925,11 +1170,444 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       limit: params["limit"] || params[:limit],
       offset: params["offset"] || params[:offset],
       claude_config_dir: Keyword.get(state.opts, :claude_config_dir),
-      env: Keyword.get(state.opts, :env, [])
+      env: Keyword.get(state.opts, :env, []),
+      include_worktrees: false
     }
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
   end
+
+  defp session_cwd(params, state) do
+    cwd = (params || %{})["cwd"] || state.cwd || Keyword.get(state.opts, :cwd)
+
+    if is_binary(cwd) and cwd != "" and Path.type(cwd) == :absolute do
+      {:ok, WorkspacePath.canonical(cwd)}
+    else
+      {:error, "Workspace paths must be absolute"}
+    end
+  end
+
+  defp authorize_workspace(path, kind, state) do
+    context = %{kind: kind, adapter: __MODULE__}
+
+    case Keyword.get(state.opts, :authorize_workspace) do
+      callback when is_function(callback, 2) ->
+        callback
+        |> safe_authorize(path, context)
+        |> authorization_result("Workspace path is not authorized")
+
+      callback when is_function(callback, 1) ->
+        callback
+        |> safe_authorize(path)
+        |> authorization_result("Workspace path is not authorized")
+
+      nil ->
+        if within_workspace_roots?(path, state),
+          do: :ok,
+          else: {:error, "Workspace path is not authorized"}
+
+      _invalid ->
+        {:error, "Invalid workspace authorization callback"}
+    end
+  end
+
+  defp authorization_result(result, _message) when result in [:ok, true], do: :ok
+  defp authorization_result({:ok, _value}, _message), do: :ok
+  defp authorization_result(_result, message), do: {:error, message}
+
+  defp within_workspace_roots?(path, state) do
+    roots =
+      case Keyword.get(state.opts, :workspace_roots) do
+        roots when is_list(roots) -> roots
+        nil -> [Keyword.get(state.opts, :cwd) || state.workspace_root]
+        root -> [root]
+      end
+
+    Enum.any?(roots, fn
+      root when is_binary(root) and root != "" ->
+        Path.type(root) == :absolute and WorkspacePath.within?(path, root)
+
+      _invalid ->
+        false
+    end)
+  end
+
+  defp safe_authorize(callback, path, context) do
+    callback.(path, context)
+  rescue
+    _exception -> false
+  catch
+    _kind, _reason -> false
+  end
+
+  defp safe_authorize(callback, path) do
+    callback.(path)
+  rescue
+    _exception -> false
+  catch
+    _kind, _reason -> false
+  end
+
+  defp maybe_switch_session(%{"params" => %{"sessionId" => session_id}}, state)
+       when is_binary(session_id) and session_id != "" do
+    if Map.has_key?(state.session_processes, session_id),
+      do: switch_session(state, session_id),
+      else: state
+  end
+
+  defp maybe_switch_session(_msg, state), do: state
+
+  defp require_known_session(_session_id, %{managed?: false} = state), do: {:ok, state}
+
+  defp require_known_session(session_id, state)
+       when is_binary(session_id) and session_id != "" do
+    if Map.has_key?(state.session_processes, session_id) do
+      {:ok, switch_session(state, session_id)}
+    else
+      {:error, "Unknown Claude session"}
+    end
+  end
+
+  defp require_known_session(_session_id, _state), do: {:error, "Unknown Claude session"}
+
+  defp with_session_scope(method, msg, state, fun) when method in @session_scoped_methods do
+    case get_in(msg, ["params", "sessionId"]) do
+      session_id when is_binary(session_id) and session_id != "" ->
+        case require_known_session(session_id, state) do
+          {:ok, state} -> fun.(state)
+          {:error, reason} -> {:error, reason, state}
+        end
+
+      _missing ->
+        fun.(state)
+    end
+  end
+
+  defp with_session_scope(_method, _msg, state, fun), do: fun.(state)
+
+  defp parent_session_fields(session_id, state) when is_binary(session_id) do
+    case Map.get(state.session_processes, session_id) do
+      %{fields: fields} when is_map(fields) -> fields
+      _missing -> Map.take(state, @session_fields)
+    end
+  end
+
+  defp parent_session_fields(_session_id, state), do: Map.take(state, @session_fields)
+
+  defp switch_to_client_request_session(id, state) do
+    case find_session_for_client_request(id, state) do
+      nil -> state
+      session_id -> switch_session(state, session_id)
+    end
+  end
+
+  defp find_session_for_client_request(id, state) do
+    Enum.find_value(state.session_processes, fn {session_id, entry} ->
+      pending = Map.get(entry.fields, :pending_client_requests) || %{}
+      if Map.has_key?(pending, id), do: session_id
+    end)
+  end
+
+  defp prepare_session_state(session_id, cwd, _params, %{managed?: false} = state) do
+    %{state | session_id: session_id, cwd: cwd}
+  end
+
+  defp prepare_session_state(session_id, cwd, params, state) do
+    state = persist_current_session(state)
+
+    state =
+      if Map.has_key?(state.session_processes, session_id) do
+        switch_session(state, session_id)
+      else
+        reset_session_fields(state)
+      end
+
+    {state, _write} = apply_bypass_policy(params, %{state | session_id: session_id, cwd: cwd})
+    state
+  end
+
+  defp switch_session(state, session_id) do
+    if state.session_id == session_id do
+      state
+    else
+      state
+      |> persist_current_session()
+      |> load_session_fields(session_id)
+    end
+  end
+
+  defp persist_current_session(%{session_id: session_id} = state)
+       when is_binary(session_id) do
+    case Map.get(state.session_processes, session_id) do
+      nil ->
+        state
+
+      entry ->
+        %{
+          state
+          | session_processes:
+              Map.put(state.session_processes, session_id, %{
+                entry
+                | fields: Map.take(state, @session_fields)
+              })
+        }
+    end
+  end
+
+  defp persist_current_session(state), do: state
+
+  defp load_session_fields(state, session_id) do
+    case Map.get(state.session_processes, session_id) do
+      %{handle: handle, fields: fields} ->
+        state
+        |> Map.merge(fields)
+        |> Map.put(:port, handle)
+
+      _missing ->
+        state
+    end
+  end
+
+  defp start_session_process(_session_id, _cwd, _params, _kind, %{managed?: false} = state),
+    do: {:ok, state}
+
+  defp start_session_process(session_id, cwd, _params, kind, state) do
+    state = persist_current_session(state)
+    opts = session_process_opts(state, cwd, session_id, kind)
+
+    case cli_command(opts) do
+      {:error, reason} ->
+        {:error, format_command_error(reason), state}
+
+      {cmd, args} ->
+        open_session_process(session_id, cmd, args, opts, state)
+    end
+  end
+
+  defp session_process_opts(state, cwd, session_id, kind) do
+    opts =
+      state.opts
+      |> Keyword.put(:cwd, cwd)
+      |> Keyword.delete(:resume)
+      |> Keyword.merge(session_home_opts(state, session_id))
+      |> constrain_child_permissions(state)
+
+    if kind in [:load, :resume, :fork] and SessionStore.valid_session_id?(session_id) do
+      Keyword.put(opts, :resume, session_id)
+    else
+      opts
+    end
+  end
+
+  defp session_home_opts(state, session_id) do
+    case Map.get(state.session_homes, session_id) do
+      opts when is_list(opts) -> opts
+      _missing -> []
+    end
+  end
+
+  defp constrain_child_permissions(opts, %{bypass_allowed?: false} = state) do
+    mode = state.permission_mode || "default"
+    mode = if mode == "bypassPermissions", do: "default", else: mode
+
+    opts
+    |> Keyword.put(:permission_mode, mode)
+    |> Keyword.put(:allow_dangerously_skip_permissions, false)
+  end
+
+  defp constrain_child_permissions(opts, _state), do: opts
+
+  defp open_session_process(session_id, cmd, args, opts, state) do
+    state = close_session_process(state, session_id)
+
+    case PortRunner.open(cmd, args, opts, __MODULE__) do
+      {:ok, handle} ->
+        [actor] = Subprocess.linked_processes(handle)
+        monitor = Process.monitor(actor)
+        request_id = control_id("initialize")
+
+        entry = %{
+          handle: handle,
+          monitor: monitor,
+          fields:
+            Map.take(
+              %{state | session_id: session_id, cwd: Keyword.get(opts, :cwd)},
+              @session_fields
+            )
+        }
+
+        state = %{
+          state
+          | port: handle,
+            session_id: session_id,
+            cwd: Keyword.get(opts, :cwd),
+            pending_controls: Map.put(state.pending_controls, request_id, :initialize),
+            session_processes: Map.put(state.session_processes, session_id, entry)
+        }
+
+        init =
+          opts
+          |> ClaudeProtocol.initialize_request(request_id)
+          |> ClaudeProtocol.line()
+
+        case PortRunner.command(handle, init) do
+          :ok ->
+            {:ok, persist_current_session(state)}
+
+          {:error, reason} ->
+            {:error, inspect(reason), forget_session_process(state, session_id, handle)}
+        end
+
+      {:error, reason} ->
+        {:error, inspect(reason), state}
+    end
+  end
+
+  defp reset_session_fields(state) do
+    blank = %__MODULE__{
+      opts: state.opts,
+      managed?: state.managed?,
+      client_capabilities: state.client_capabilities,
+      gateway_auth: state.gateway_auth,
+      session_processes: state.session_processes
+    }
+
+    Map.merge(state, Map.take(blank, @session_fields))
+  end
+
+  defp close_session_process(state, session_id) do
+    case Map.get(state.session_processes, session_id) do
+      %{handle: handle} -> forget_session_process(state, session_id, handle)
+      _missing -> state
+    end
+  end
+
+  defp forget_session_process(state, session_id, handle) do
+    case Map.get(state.session_processes, session_id) do
+      %{monitor: monitor} when is_reference(monitor) ->
+        Process.demonitor(monitor, [:flush])
+
+      _other ->
+        :ok
+    end
+
+    _ = PortRunner.close(handle)
+
+    port = if state.port == handle, do: nil, else: state.port
+
+    %{
+      state
+      | port: port,
+        session_processes: Map.delete(state.session_processes, session_id)
+    }
+  end
+
+  defp find_session_event(message, state) do
+    Enum.find_value(state.session_processes, fn {session_id, entry} ->
+      case PortRunner.event(entry.handle, message) do
+        :ignore -> nil
+        event -> {session_id, entry.handle, event}
+      end
+    end)
+  end
+
+  defp find_session_by_monitor(state, monitor) do
+    Enum.find_value(state.session_processes, fn {session_id, entry} ->
+      if entry.monitor == monitor, do: {session_id, entry.handle}
+    end)
+  end
+
+  defp inbound_to_adapter_message({:messages, messages, state}, _handle),
+    do: {:messages, messages, persist_current_session(state)}
+
+  defp inbound_to_adapter_message({:messages_and_write, messages, data, state}, handle) do
+    _ = PortRunner.command(handle, data)
+    {:messages, messages, persist_current_session(state)}
+  end
+
+  defp inbound_to_adapter_message({:skip_and_write, data, state}, handle) do
+    _ = PortRunner.command(handle, data)
+    {:skip, persist_current_session(state)}
+  end
+
+  defp inbound_to_adapter_message({:skip, state}, _handle),
+    do: {:skip, persist_current_session(state)}
+
+  defp deliver_managed(result, msg) do
+    state = elem(result, tuple_size(result) - 1)
+
+    if state.managed? and writes_data?(result) do
+      data = write_payload(result)
+
+      case write_session_data(data, state) do
+        :ok ->
+          drop_write(result)
+
+        {:error, reason} ->
+          retired =
+            case outbound_write_failed(msg, reason, state) do
+              {:write, replacement, retired_state} ->
+                _ = write_session_data(replacement, retired_state)
+                retired_state
+
+              retired_state ->
+                retired_state
+            end
+
+          {:error, inspect(reason), retired}
+      end
+    else
+      result
+    end
+  end
+
+  defp writes_data?({:ok, data, _state}), do: data not in [:skip, :pending]
+  defp writes_data?({:reply_and_write, _result, _data, _state}), do: true
+  defp writes_data?({:messages_and_write, _messages, _data, _state}), do: true
+  defp writes_data?({:pending_and_write, _data, _state}), do: true
+  defp writes_data?({:messages_and_reply_and_write, _messages, _result, _data, _state}), do: true
+  defp writes_data?(_result), do: false
+
+  defp write_payload({:ok, data, _state}), do: data
+  defp write_payload({:reply_and_write, _result, data, _state}), do: data
+  defp write_payload({:messages_and_write, _messages, data, _state}), do: data
+  defp write_payload({:pending_and_write, data, _state}), do: data
+  defp write_payload({:messages_and_reply_and_write, _messages, _result, data, _state}), do: data
+
+  defp drop_write({:ok, _data, state}), do: {:ok, :skip, persist_current_session(state)}
+
+  defp drop_write({:reply_and_write, result, _data, state}),
+    do: {:reply, result, persist_current_session(state)}
+
+  defp drop_write({:messages_and_write, messages, _data, state}),
+    do: {:messages, messages, persist_current_session(state)}
+
+  defp drop_write({:pending_and_write, _data, state}),
+    do: {:ok, :pending, persist_current_session(state)}
+
+  defp drop_write({:messages_and_reply_and_write, messages, result, _data, state}),
+    do: {:messages_and_reply, messages, result, persist_current_session(state)}
+
+  defp write_session_data(data, state) do
+    case session_handle(state) do
+      nil -> {:error, :no_active_claude_session}
+      handle -> PortRunner.command(handle, data)
+    end
+  end
+
+  defp session_handle(%{port: handle}) when not is_nil(handle), do: handle
+
+  defp session_handle(%{session_id: session_id, session_processes: processes}) do
+    case Map.get(processes, session_id) do
+      %{handle: handle} -> handle
+      _missing -> nil
+    end
+  end
+
+  defp format_command_error({:invalid_option, key, message}),
+    do: "invalid #{key}: #{message}"
+
+  defp format_command_error(reason), do: inspect(reason)
 
   defp put_fork_message_id(opts, params) do
     case fork_message_id(params) do
