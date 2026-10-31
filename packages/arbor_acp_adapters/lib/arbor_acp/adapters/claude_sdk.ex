@@ -343,7 +343,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       |> then(&SessionStore.fork_session(session_id, &1))
       |> case do
         {:ok, forked_session_id} ->
-          state = persist_current_session(state)
+          previous = persist_current_session(state)
+          state = previous
           parent_fields = parent_session_fields(session_id, state)
           state = reset_session_fields(state)
 
@@ -385,8 +386,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
             {:ok, state} ->
               {:ok, Mapper.session_result(state, forked_session_id), state}
 
-            {:error, reason, state} ->
-              {:error, reason, state}
+            {:error, reason, failed} ->
+              failed = close_session_process(failed, forked_session_id)
+              RuntimeHome.release(runtime_home_release_opts(failed, forked_session_id), :claude)
+              _ = SessionStore.delete_session(forked_session_id, parent_opts)
+              {:error, reason, previous}
           end
 
         {:error, reason} ->
@@ -651,7 +655,18 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp handle_request("authenticate", %{"params" => %{"methodId" => method_id}}, state)
        when method_id in ["claude-login", "claude-ai-login", "console-login"] do
-    {:reply, %{}, state}
+    result =
+      Enum.reduce_while(state.session_homes, :ok, fn {_id, opts}, :ok ->
+        case RuntimeHome.seed_auth(state.opts, Keyword.merge(state.opts, opts), :claude) do
+          :ok -> {:cont, :ok}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+
+    case result do
+      :ok -> {:reply, %{}, state}
+      {:error, reason} -> {:error, inspect(reason), state}
+    end
   end
 
   defp handle_request("authenticate", %{"params" => %{"methodId" => method_id}}, state) do
@@ -1456,7 +1471,10 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
         {:error, format_command_error(reason), state}
 
       {cmd, args} ->
-        open_session_process(session_id, cmd, args, opts, state)
+        case RuntimeHome.seed_auth(state.opts, opts, :claude) do
+          :ok -> open_session_process(session_id, cmd, args, opts, state)
+          {:error, reason} -> {:error, inspect(reason), state}
+        end
     end
   end
 
@@ -1501,12 +1519,28 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
                :write,
                :exclusive
              ]),
-           :ok <- SessionStore.delete_session(session_id, parent_opts) do
+           :ok <-
+             retire_fork_source(
+               session_id,
+               parent_opts,
+               Path.join(target_dir, session_id <> ".jsonl")
+             ) do
         :ok
       else
         {:error, reason} -> {:error, inspect(reason)}
         _missing_or_unsafe -> {:error, "Forked Claude session could not be moved to its home"}
       end
+    end
+  end
+
+  defp retire_fork_source(session_id, opts, target) do
+    case SessionStore.delete_session(session_id, opts) do
+      :ok ->
+        :ok
+
+      {:error, _} = error ->
+        File.rm(target)
+        error
     end
   end
 

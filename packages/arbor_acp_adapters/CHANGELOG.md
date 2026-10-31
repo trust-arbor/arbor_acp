@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep terminal login in a private connection home and seed only its credential files into generated Claude/Pi child homes. Retire Pi homes after unexpected exits and roll back failed Claude fork launches. Caller-owned homes are never seeded or removed.
+
 - Track generated vendor homes by owner and directory identity, preserving caller-provided homes even when their names use the generated prefix. Managed Claude sessions launch, list, load and fork through their own homes; managed Pi removes its home after child cleanup and allocates a fresh home on restart.
 
 - Fix: Codex completions settle only the active turn, and a late start reply cannot reactivate a prompt that has finished.
