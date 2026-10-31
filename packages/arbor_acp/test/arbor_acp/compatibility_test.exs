@@ -206,18 +206,25 @@ defmodule Arbor.ACP.CompatTest do
       parent = self()
       secret = "compat-redirect-secret-#{System.unique_integer([:positive])}"
 
+      # Second origin on 127.0.0.2 so a followed 3xx is a different host, not
+      # just another port on 127.0.0.1. OTP 28 :httpc still follows by default
+      # but strips Authorization on that hop, so asserting "no Bearer token"
+      # passes even when the request is replayed. The hop itself must not occur.
       {_target_pid, target_port} =
-        start_http_stub(fn request ->
-          send(parent, {:target_request, request.headers})
+        start_http_stub(
+          fn request ->
+            send(parent, {:target_request, request.headers})
 
-          http_response(
-            200,
-            [{"content-type", "application/json"}],
-            Jason.encode!(%{"sha" => @sha_a})
-          )
-        end)
+            http_response(
+              200,
+              [{"content-type", "application/json"}],
+              Jason.encode!(%{"sha" => @sha_a})
+            )
+          end,
+          {127, 0, 0, 2}
+        )
 
-      location = "http://127.0.0.1:#{target_port}/leaked.json"
+      location = "http://127.0.0.2:#{target_port}/leaked.json"
 
       {_origin_pid, origin_port} =
         start_http_stub(fn request ->
@@ -245,7 +252,7 @@ defmodule Arbor.ACP.CompatTest do
         end
       end
 
-      _report =
+      report =
         ACPCompat.check_remote(@manifest,
           http_client: http_client,
           github_token: secret,
@@ -255,14 +262,58 @@ defmodule Arbor.ACP.CompatTest do
       assert_receive {:origin_request, origin_headers}
       assert authorization_value(origin_headers) == "Bearer #{secret}"
 
-      target_auth =
-        receive do
-          {:target_request, target_headers} -> authorization_value(target_headers)
-        after
-          200 -> nil
-        end
+      refute_received {:target_request, _headers}
 
-      refute target_auth == "Bearer #{secret}"
+      assert Enum.any?(report.errors, fn error ->
+               error["source"] == "adapter_upstream:reference-adapter"
+             end)
+    end
+
+    test "default HTTP client does not follow a catalog redirect to a second origin" do
+      parent = self()
+
+      {_target_pid, target_port} =
+        start_http_stub(
+          fn request ->
+            send(parent, {:target_request, request.headers})
+
+            http_response(
+              200,
+              [{"content-type", "text/markdown"}],
+              "- [Agent One](https://example.test/one)\n- [Agent Two](https://example.test/two)\n"
+            )
+          end,
+          {127, 0, 0, 2}
+        )
+
+      location = "http://127.0.0.2:#{target_port}/agents.md"
+
+      {_origin_pid, origin_port} =
+        start_http_stub(fn request ->
+          send(parent, {:origin_request, request.headers})
+          http_response(302, [{"location", location}], "")
+        end)
+
+      # Use the production http_get (no injected client). Catalog is a local
+      # http:// origin; registry and GitHub are pointed at addresses that fail
+      # without a network hop so this only exercises the default client.
+      manifest =
+        @manifest
+        |> put_in(["catalog", "source"], "http://127.0.0.1:#{origin_port}/agents.md")
+        |> put_in(["registry", "source"], "http://127.0.0.1:1/registry.json")
+        |> put_in(
+          ["adapterUpstreams", Access.at(0), "repository"],
+          "https://example.test/not-github"
+        )
+
+      report = ACPCompat.check_remote(manifest, timeout: 2_000)
+
+      assert_receive {:origin_request, _origin_headers}
+      refute_received {:target_request, _headers}
+
+      assert Enum.any?(report.errors, fn error ->
+               error["source"] == "catalog"
+             end)
     end
   end
 
@@ -326,14 +377,14 @@ defmodule Arbor.ACP.CompatTest do
     end)
   end
 
-  defp start_http_stub(handler) do
+  defp start_http_stub(handler, ip \\ {127, 0, 0, 1}) do
     {:ok, listen} =
       :gen_tcp.listen(0, [
         :binary,
         active: false,
         packet: :raw,
         reuseaddr: true,
-        ip: {127, 0, 0, 1},
+        ip: ip,
         backlog: 16
       ])
 

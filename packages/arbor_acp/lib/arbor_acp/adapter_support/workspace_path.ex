@@ -1,9 +1,22 @@
 defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
   @moduledoc "Documented adapter support for WorkspacePath."
 
+  require Logger
+
   @max_symlink_depth 40
+  @rm_failed_event [:arbor_acp, :workspace_path, :rm_within, :failed]
 
   @type resolve_error :: :incomplete
+  @type rm_error ::
+          :trailing_slash
+          | :unresolved_root
+          | :root_not_directory
+          | :unsafe_name
+          | :unresolved_parent
+          | :outside
+          | :ancestor_not_directory
+          | :unsupported_os
+          | :unlink_failed
 
   @spec within?(String.t(), String.t()) :: boolean()
   def within?(path, root) when is_binary(path) and is_binary(root) do
@@ -50,22 +63,63 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
 
   `opts[:after_ancestors]` runs after the ancestor walk and before the
   anchored unlink, so tests can swap a grandparent in that window.
+
+  Callers still receive `:ok` when a delete is refused or fails, so
+  session cleanup cannot crash. Those cases emit a warning and
+  `[:arbor_acp, :workspace_path, :rm_within, :failed]` with a workspace-relative
+  path (or `"[outside]"`).
   """
   @spec rm_within(String.t(), String.t(), keyword()) :: :ok
   def rm_within(path, root, opts \\ []) when is_binary(path) and is_binary(root) do
-    with false <- String.ends_with?(path, "/"),
-         {:ok, resolved_root} <- resolve(root),
-         {:ok, %File.Stat{type: :directory} = root_info} <- File.lstat(resolved_root),
-         name = Path.basename(path),
-         true <- safe_basename?(name),
-         {:ok, parent} <- resolve(Path.dirname(absolute(path))),
-         resolved = Path.join(parent, name),
-         true <- contained_resolved?(resolved, resolved_root) do
-      if hook = Keyword.get(opts, :after_contain), do: hook.()
-      rm_contained(resolved, resolved_root, root_info, opts)
-    else
-      _outside_or_unresolved -> :ok
+    case do_rm_within(path, root, opts) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        report_rm_failure(path, root, reason)
+        :ok
     end
+  end
+
+  @spec do_rm_within(String.t(), String.t(), keyword()) :: :ok | {:error, rm_error()}
+  defp do_rm_within(path, root, opts) do
+    if String.ends_with?(path, "/") do
+      {:error, :trailing_slash}
+    else
+      with {:ok, resolved_root} <- resolve_or(root, :unresolved_root),
+           {:ok, root_info} <- directory_lstat(resolved_root),
+           name = Path.basename(path),
+           :ok <- validate_basename(name),
+           {:ok, parent} <- resolve_or(Path.dirname(absolute(path)), :unresolved_parent),
+           resolved = Path.join(parent, name),
+           :ok <- contain_or_outside(resolved, resolved_root) do
+        if hook = Keyword.get(opts, :after_contain), do: hook.()
+        rm_contained(resolved, resolved_root, root_info, opts)
+      end
+    end
+  end
+
+  defp resolve_or(path, reason) do
+    case resolve(path) do
+      {:ok, resolved} -> {:ok, resolved}
+      {:error, _incomplete} -> {:error, reason}
+    end
+  end
+
+  defp directory_lstat(path) do
+    case File.lstat(path) do
+      {:ok, %File.Stat{type: :directory} = info} -> {:ok, info}
+      {:ok, _other} -> {:error, :root_not_directory}
+      {:error, _reason} -> {:error, :unresolved_root}
+    end
+  end
+
+  defp validate_basename(name) do
+    if safe_basename?(name), do: :ok, else: {:error, :unsafe_name}
+  end
+
+  defp contain_or_outside(resolved, resolved_root) do
+    if contained_resolved?(resolved, resolved_root), do: :ok, else: {:error, :outside}
   end
 
   defp rm_contained(resolved, resolved_root, root_info, opts) do
@@ -73,7 +127,7 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
       if hook = Keyword.get(opts, :after_ancestors), do: hook.()
       anchored_unlink(resolved_root, resolved, root_info)
     else
-      :ok
+      {:error, :ancestor_not_directory}
     end
   end
 
@@ -96,21 +150,21 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
 
     case Path.split(relative) do
       [] ->
-        :ok
+        {:error, :unsafe_name}
 
       ["."] ->
-        :ok
+        {:error, :unsafe_name}
 
       components ->
         {dirs, [name]} = Enum.split(components, -1)
 
-        with true <- Enum.all?([name | dirs], &safe_basename?/1) do
+        if Enum.all?([name | dirs], &safe_basename?/1) do
           case :os.type() do
             {:unix, os} -> unix_anchored_unlink(resolved_root, root_info, dirs, name, os)
-            _other -> :ok
+            _other -> {:error, :unsupported_os}
           end
         else
-          _ -> :ok
+          {:error, :unsafe_name}
         end
     end
   end
@@ -153,6 +207,7 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
         "  fi\n" <>
         "done\n" <>
         "case \"$name\" in \"\"|\".\"|\"..\"|*/*) exit 3 ;; esac\n" <>
+        "if [ ! -e \"./$name\" ] && [ ! -L \"./$name\" ]; then exit 0; fi\n" <>
         "exec rm -- \"$name\""
 
     case System.cmd(
@@ -168,8 +223,40 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
            stderr_to_stdout: true
          ) do
       {_out, 0} -> :ok
-      _other -> :ok
+      _other -> {:error, :unlink_failed}
     end
+  end
+
+  defp report_rm_failure(path, root, reason) do
+    relative = relative_for_log(path, root)
+
+    Logger.warning("workspace delete refused: #{reason} (#{relative})")
+
+    :telemetry.execute(@rm_failed_event, %{count: 1}, %{reason: reason, path: relative})
+  end
+
+  defp relative_for_log(path, root) do
+    abs_path = absolute(path)
+    abs_root = absolute(root)
+    relative = Path.relative_to(abs_path, abs_root)
+
+    cond do
+      Path.type(relative) == :absolute ->
+        "[outside]"
+
+      String.starts_with?(relative, "../") ->
+        "[outside]"
+
+      relative in ["", "."] ->
+        "."
+
+      true ->
+        sanitize_relative(relative)
+    end
+  end
+
+  defp sanitize_relative(relative) do
+    Regex.replace(~r/[\x00-\x1F\x7F]/, relative, "?")
   end
 
   # Walk the components left to right against the physically resolved prefix,
