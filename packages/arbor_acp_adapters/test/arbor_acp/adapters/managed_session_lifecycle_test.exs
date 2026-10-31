@@ -152,6 +152,97 @@ defmodule Arbor.ACP.Adapters.ManagedSessionLifecycleTest do
     assert reason =~ "not bound"
   end
 
+  test "default managed ids can be resumed through the native CLI", %{state: state, root: root} do
+    {:reply, %{"sessionId" => id}, state} =
+      ClaudeSDK.translate_outbound(request(1, "session/new", %{"cwd" => root}), state)
+
+    assert Arbor.ACP.Adapters.ClaudeSDK.SessionStore.valid_session_id?(id)
+
+    assert {:reply, %{"sessionId" => ^id}, state} =
+             ClaudeSDK.translate_outbound(
+               request(2, "session/resume", %{"sessionId" => id, "cwd" => root}),
+               state
+             )
+
+    assert :ok = wait_until(fn -> length(argv_files(root)) == 2 end)
+    assert Enum.any?(argv_files(root), &(File.read!(&1) =~ "--resume\n#{id}\n"))
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
+  test "resuming an active prompt leaves its child and pending work intact", %{
+    state: state,
+    root: root
+  } do
+    {id, state} = new_session(state, root, "a")
+    state = %{state | pending_prompt_id: "prompt", active_prompt_session_id: id}
+    handle = state.port
+
+    assert {:error, reason, state} =
+             ClaudeSDK.translate_outbound(
+               request(2, "session/resume", %{"sessionId" => id, "cwd" => root}),
+               state
+             )
+
+    assert reason =~ "active prompt"
+    assert state.pending_prompt_id == "prompt"
+    assert state.port == handle
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
+  test "configured preferences survive new session state reset", %{root: root, cli: cli} do
+    {:ok, state} =
+      ClaudeSDK.init(
+        cwd: root,
+        cli_path: cli,
+        model: "configured-model",
+        permission_mode: :bypass,
+        claude_config_dir: Path.join(root, "config")
+      )
+
+    {_id, state} = new_session(state, root, "a")
+    assert state.model == "configured-model"
+    assert state.permission_mode == "bypassPermissions"
+    assert :ok = wait_until(fn -> length(argv_files(root)) == 1 end)
+    argv = File.read!(hd(argv_files(root)))
+    assert argv =~ "--permission-mode\nbypassPermissions\n"
+    assert argv =~ "--model\nconfigured-model\n"
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
+  test "fork launch inherits the parent's changed permission mode", %{state: state, root: root} do
+    parent = "123e4567-e89b-12d3-a456-426614174000"
+    {^parent, state} = new_session(state, root, parent)
+    state = %{state | permission_mode: "acceptEdits"}
+    store = Arbor.ACP.Adapters.ClaudeSDK.SessionStore
+
+    dir =
+      Path.join([
+        state.opts[:claude_config_dir],
+        "projects",
+        store.project_key(Arbor.ACP.AdapterSupport.WorkspacePath.canonical(root))
+      ])
+
+    File.mkdir_p!(dir)
+
+    File.write!(
+      Path.join(dir, parent <> ".jsonl"),
+      Jason.encode!(%{
+        "sessionId" => parent,
+        "cwd" => root,
+        "type" => "user",
+        "message" => %{"role" => "user", "content" => "parent"}
+      }) <> "\n"
+    )
+
+    assert {:ok, _result, state} =
+             ClaudeSDK.fork_session(%{"sessionId" => parent, "cwd" => root}, state)
+
+    assert state.permission_mode == "acceptEdits"
+    assert :ok = wait_until(fn -> length(argv_files(root)) == 2 end)
+    assert Enum.any?(argv_files(root), &(File.read!(&1) =~ "--permission-mode\nacceptEdits\n"))
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
   defp argv_files(root), do: Path.wildcard(Path.join(root, "argv.*"))
 
   defp new_session(state, cwd, id) do
