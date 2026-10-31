@@ -905,8 +905,12 @@ defmodule Arbor.ACP.Client do
   def handle_call({:handler_worker_admit, ref, pid}, _from, state) do
     case Map.get(state.pending_agent_requests, ref) do
       request when is_map(request) and state.status == :ready ->
-        pending = Map.put(state.pending_agent_requests, ref, Map.put(request, :worker, pid))
-        {:reply, true, %{state | pending_agent_requests: pending}}
+        if agent_request_current?(ref, request, state) do
+          pending = Map.put(state.pending_agent_requests, ref, Map.put(request, :worker, pid))
+          {:reply, true, %{state | pending_agent_requests: pending}}
+        else
+          {:reply, false, state}
+        end
 
       _cancelled ->
         {:reply, false, state}
