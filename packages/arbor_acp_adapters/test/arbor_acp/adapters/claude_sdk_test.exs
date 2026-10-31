@@ -1,5 +1,5 @@
 defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
   import Arbor.ACP.TestHelpers, only: [wait_until: 1]
