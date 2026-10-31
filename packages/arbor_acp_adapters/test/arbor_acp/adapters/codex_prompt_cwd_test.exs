@@ -1,6 +1,7 @@
 defmodule Arbor.ACP.Adapters.CodexPromptCwdTest do
   @moduledoc """
-  session/prompt cwd values must stay inside the session's bound workspace.
+  session/prompt cwd values must stay inside the session's bound workspace
+  or one of its additionalDirectories.
   """
 
   use ExUnit.Case, async: true
@@ -14,9 +15,14 @@ defmodule Arbor.ACP.Adapters.CodexPromptCwdTest do
       |> Path.join("codex_prompt_cwd_#{System.unique_integer([:positive])}")
 
     workspace = Path.join(root, "ws")
+    extra = Path.join(root, "extra")
+    extra_inside = Path.join(extra, "nested")
+    extra_prefix = Path.join(root, "extrax")
     outside = Path.join(root, "outside")
     inside = Path.join(workspace, "sub")
     File.mkdir_p!(workspace)
+    File.mkdir_p!(extra_inside)
+    File.mkdir_p!(extra_prefix)
     File.mkdir_p!(outside)
     File.mkdir_p!(inside)
     on_exit(fn -> File.rm_rf(root) end)
@@ -24,7 +30,15 @@ defmodule Arbor.ACP.Adapters.CodexPromptCwdTest do
     {:ok, state} = Codex.init(workspace_roots: [workspace], cwd: workspace)
     state = start_live_thread(state, "thread-1", workspace)
 
-    %{state: state, workspace: workspace, outside: outside, inside: inside}
+    %{
+      state: state,
+      workspace: workspace,
+      extra: extra,
+      extra_inside: extra_inside,
+      extra_prefix: extra_prefix,
+      outside: outside,
+      inside: inside
+    }
   end
 
   test "rejects an absolute cwd outside the session root and does not start a turn",
@@ -93,6 +107,68 @@ defmodule Arbor.ACP.Adapters.CodexPromptCwdTest do
     refute_turn_start(pending_before, state_after)
   end
 
+  describe "additionalDirectories" do
+    setup %{workspace: workspace, extra: extra} do
+      {:ok, state} = Codex.init(workspace_roots: [workspace, extra], cwd: workspace)
+      state = start_live_thread(state, "thread-1", workspace, [extra])
+      %{state: state}
+    end
+
+    test "accepts a cwd inside an additionalDirectory and forwards the resolved path", %{
+      state: state,
+      extra: extra,
+      extra_inside: extra_inside
+    } do
+      requested = extra_inside <> "/."
+      assert {:ok, resolved} = WorkspacePath.contained(requested, extra)
+      refute requested == resolved
+
+      assert {:ok, data, _state} = prompt(state, requested)
+      turn = decode(data)
+      assert turn["method"] == "turn/start"
+      assert turn["params"]["cwd"] == resolved
+    end
+
+    test "rejects a ../ escape out of an additionalDirectory and does not start a turn", %{
+      state: state,
+      extra: extra,
+      outside: outside
+    } do
+      pending_before = state.pending_requests
+      escaped = Path.join(extra, "../outside")
+
+      assert {:error, reason, state_after} = prompt(state, escaped)
+      assert reason =~ ~r/not authorized|workspace|cwd/i
+      refute_turn_start(pending_before, state_after)
+      assert File.dir?(outside)
+    end
+
+    test "rejects a symlink out of an additionalDirectory and does not start a turn", %{
+      state: state,
+      extra: extra,
+      outside: outside
+    } do
+      pending_before = state.pending_requests
+      link = Path.join(extra, "link")
+      File.ln_s!(outside, link)
+
+      assert {:error, reason, state_after} = prompt(state, link)
+      assert reason =~ ~r/not authorized|workspace|cwd/i
+      refute_turn_start(pending_before, state_after)
+    end
+
+    test "rejects a prefix sibling of an additionalDirectory and does not start a turn", %{
+      state: state,
+      extra_prefix: extra_prefix
+    } do
+      pending_before = state.pending_requests
+
+      assert {:error, reason, state_after} = prompt(state, extra_prefix)
+      assert reason =~ ~r/not authorized|workspace|cwd/i
+      refute_turn_start(pending_before, state_after)
+    end
+  end
+
   defp prompt(state, cwd), do: Codex.translate_outbound(prompt_message(cwd), state)
 
   defp prompt_message(cwd) do
@@ -114,8 +190,18 @@ defmodule Arbor.ACP.Adapters.CodexPromptCwdTest do
     refute started, "session/prompt must not send turn/start for a cwd outside the session root"
   end
 
-  defp start_live_thread(state, thread_id, cwd) do
-    msg = %{"method" => "session/new", "id" => 90, "params" => %{"cwd" => cwd}}
+  defp start_live_thread(state, thread_id, cwd, additional_directories \\ []) do
+    params =
+      %{"cwd" => cwd}
+      |> then(fn params ->
+        if additional_directories == [] do
+          params
+        else
+          Map.put(params, "additionalDirectories", additional_directories)
+        end
+      end)
+
+    msg = %{"method" => "session/new", "id" => 90, "params" => params}
     assert {:ok, data, state} = Codex.translate_outbound(msg, state)
 
     native_id =

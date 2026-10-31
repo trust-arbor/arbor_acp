@@ -869,21 +869,32 @@ defmodule Arbor.ACP.Adapters.Codex do
   end
 
   defp constrain_prompt_cwd(cwd, session_id, session, state) do
-    root = thread_binding(session_id, state) || session[:cwd]
-
     cond do
       not is_binary(cwd) or cwd == "" or Path.type(cwd) != :absolute ->
         {:error, "Workspace paths must be absolute"}
 
-      not is_binary(root) or root == "" ->
-        {:error, "Workspace path is not authorized"}
-
       true ->
-        case WorkspacePath.contained(cwd, root) do
+        case contained_in_session_workspaces(cwd, session_id, session, state) do
           {:ok, resolved} -> {:ok, resolved}
           :error -> {:error, "Workspace path is not authorized"}
         end
     end
+  end
+
+  defp contained_in_session_workspaces(cwd, session_id, session, state) do
+    roots =
+      [
+        thread_binding(session_id, state) || session[:cwd]
+        | session[:additional_directories] || []
+      ]
+      |> Enum.filter(&(is_binary(&1) and &1 != ""))
+
+    Enum.find_value(roots, :error, fn root ->
+      case WorkspacePath.contained(cwd, root) do
+        {:ok, resolved} -> {:ok, resolved}
+        :error -> nil
+      end
+    end)
   end
 
   defp translate_slash_command({:compact, _rest}, acp_id, session_id, session, _params, state) do

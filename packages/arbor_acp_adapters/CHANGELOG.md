@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Codex `session/prompt` resolves a caller-supplied `cwd` against the session's bound workspace and rejects the request without sending `turn/start` when the path is outside that root or cannot be resolved. An omitted `cwd` and a `cwd` inside the bound workspace are unchanged.
+- Codex `session/prompt` requires a caller-supplied `cwd` to resolve inside the session's bound workspace or one of its `additionalDirectories`. The resolved real path is forwarded to `turn/start`. A path outside those roots or that cannot be resolved is rejected without sending `turn/start`. An omitted `cwd` is unchanged.
 
 - Claude uses one private home per connection, shared by its separate session processes. Closing a generated-home session removes its history; disconnect removes the home. Caller-owned homes retain history on close. Reauthentication restarts idle managed children to refresh native credentials, retaining conversation ids and preferences.
 - Codex load/resume requires the bound canonical workspace, including when sibling directories share an allowed root. Claude custom-id aliases are bounded to 1,024 recently closed entries / 1 MiB per connection; native UUIDs remain the durable identifier with persistent homes.

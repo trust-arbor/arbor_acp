@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Codex `session/prompt` rejects a caller-supplied `cwd` that is outside the session's bound workspace or cannot be resolved, and does not send `turn/start` in those cases.
+- Codex `session/prompt` requires a caller-supplied `cwd` to resolve inside the session's bound workspace or one of its `additionalDirectories`. The resolved real path is forwarded to `turn/start`. A path outside those roots or that cannot be resolved is rejected without sending `turn/start`.
 
 - Report every dropped session update through telemetry. Listeners can opt into coalesced drop notices with `notify_update_drops: true`; handlers can implement `handle_session_updates_dropped/3`. Notices respect queue bounds and recover without another update.
 

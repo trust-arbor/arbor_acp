@@ -338,4 +338,6 @@ Codex thread bindings require the same canonical working directory for load
 and resume. Equivalent path spellings are accepted; moving a thread from
 `/repos/a` to `/repos/b` is rejected even when both are beneath an allowed
 root `/repos`. A `session/prompt` `cwd` is resolved against that bound
-workspace and rejected when it is outside the root or cannot be resolved.
+workspace or the session's `additionalDirectories` and forwarded as the
+resolved real path; it is rejected when it is outside those roots or cannot
+be resolved.
