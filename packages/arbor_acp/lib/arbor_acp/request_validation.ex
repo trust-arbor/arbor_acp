@@ -1,6 +1,8 @@
 defmodule Arbor.ACP.RequestValidation do
   @moduledoc false
 
+  alias Arbor.ACP.Internal.Mcp
+
   @uint32_max 4_294_967_295
   @uint64_max 18_446_744_073_709_551_615
   @terminal_id_methods ~w(
@@ -47,6 +49,7 @@ defmodule Arbor.ACP.RequestValidation do
 
   def validate_agent_request("terminal/" <> _method, _params), do: {:error, :method_not_found}
   def validate_agent_request("_" <> _ = method, params), do: validate_extension(method, params)
+  def validate_agent_request("mcp/message", params), do: Mcp.validate_message(params)
   def validate_agent_request(_method, _params), do: :ok
 
   @spec validate_elicitation_response(term()) :: :ok | {:error, :invalid_params}
@@ -351,8 +354,9 @@ defmodule Arbor.ACP.RequestValidation do
       Enum.all?(headers, &valid_name_value?/1)
   end
 
-  defp valid_mcp_server?(%{"type" => "acp", "name" => name, "serverId" => server_id}),
-    do: non_empty_string?(name) and non_empty_string?(server_id)
+  defp valid_mcp_server?(%{"type" => "acp"} = server) do
+    match?({:acp, _id, _wire}, Mcp.normalize_server(server))
+  end
 
   defp valid_mcp_server?(%{"name" => name, "command" => command, "args" => args, "env" => env})
        when is_list(args) and is_list(env) do

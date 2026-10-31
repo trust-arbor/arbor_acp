@@ -76,6 +76,9 @@ defmodule Arbor.ACP.Agent.HandlerRunner do
   def extension_notification(pid, method, params, ctx),
     do: GenServer.cast(pid, {:extension_notification, method, params, ctx})
 
+  def mcp_notification(pid, session_id, params),
+    do: GenServer.cast(pid, {:mcp_notification, session_id, params})
+
   def cancel(pid, ref, session_id, ctx) do
     GenServer.cast(pid, {:callback, ref, :handle_cancel, [session_id, ctx]})
   end
@@ -115,6 +118,18 @@ defmodule Arbor.ACP.Agent.HandlerRunner do
            state.handler_mod,
            :handle_extension_notification,
            [method, params, ctx],
+           state.handler_state
+         ) do
+      {:ok, {:ok, handler_state}} -> {:noreply, %{state | handler_state: handler_state}}
+      _ -> {:noreply, state}
+    end
+  end
+
+  def handle_cast({:mcp_notification, session_id, params}, state) do
+    case invoke(
+           state.handler_mod,
+           :handle_mcp_notification,
+           [session_id, params],
            state.handler_state
          ) do
       {:ok, {:ok, handler_state}} -> {:noreply, %{state | handler_state: handler_state}}

@@ -602,6 +602,33 @@ defmodule Arbor.ACP.Protocol do
     Envelope.request(method, Map.put_new(params, "sessionId", session_id), generate_id())
   end
 
+  @doc """
+  Encodes an UNSTABLE `mcp/message` request from the agent to the client.
+
+  `:params` and `:meta` are omitted when `nil`. `:id` sets the outer JSON-RPC id.
+  """
+  @spec encode_mcp_message_request(String.t(), String.t(), String.t(), keyword()) :: map()
+  def encode_mcp_message_request(server_id, request_id, method, opts \\ []) do
+    Envelope.request(
+      "mcp/message",
+      mcp_message_params(server_id, request_id, method, opts),
+      Keyword.get(opts, :id, generate_id())
+    )
+  end
+
+  @doc """
+  Encodes an UNSTABLE `mcp/message` notification from the client to the agent.
+
+  The notification has no JSON-RPC id. `:params` and `:meta` are omitted when `nil`.
+  """
+  @spec encode_mcp_message_notification(String.t(), String.t(), String.t(), keyword()) :: map()
+  def encode_mcp_message_notification(server_id, request_id, method, opts \\ []) do
+    Envelope.notification(
+      "mcp/message",
+      mcp_message_params(server_id, request_id, method, opts)
+    )
+  end
+
   # Responses to agent requests
 
   @doc "Encodes a response to a `session/request_permission` request from the agent."
@@ -630,6 +657,32 @@ defmodule Arbor.ACP.Protocol do
   @spec encode_file_write_response(integer() | String.t() | nil) :: map()
   def encode_file_write_response(id) do
     encode_response(%{}, id)
+  end
+
+  @doc """
+  Encodes a successful outer response whose payload is an inner MCP result.
+
+  The inner result may be any JSON value, including `null`.
+  """
+  @spec encode_mcp_result(integer() | String.t() | nil, term()) :: map()
+  def encode_mcp_result(id, result) do
+    encode_response(%{"result" => result}, id)
+  end
+
+  @doc """
+  Encodes a successful outer response whose payload is an inner MCP error.
+
+  This is not a JSON-RPC error. The outer response succeeds and carries `McpError`.
+  """
+  @spec encode_mcp_error(integer() | String.t() | nil, map()) :: map()
+  def encode_mcp_error(id, error) when is_map(error) do
+    encode_response(%{"error" => error}, id)
+  end
+
+  defp mcp_message_params(server_id, request_id, method, opts) do
+    %{"serverId" => server_id, "requestId" => request_id, "method" => method}
+    |> Maps.put_present("params", Keyword.get(opts, :params))
+    |> Maps.put_present("_meta", Keyword.get(opts, :meta))
   end
 
   defp session_lifecycle_params(params, opts) do

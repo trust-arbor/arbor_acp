@@ -49,6 +49,19 @@ defmodule Arbor.ACP.CapabilitiesTest do
       assert Capabilities.supported?(caps, :logout)
       assert Capabilities.supported?(caps, :boolean_config_options)
       refute Capabilities.supported?(caps, :session_delete)
+      refute Capabilities.supported?(caps, :mcp_acp)
+    end
+
+    test "treats mcpCapabilities.acp as enabled only when it is true" do
+      assert Capabilities.supported?(%{"mcpCapabilities" => %{"acp" => true}}, :mcp_acp)
+      assert Capabilities.supported?(%{mcpCapabilities: %{acp: true}}, :mcp_acp)
+      refute Capabilities.supported?(%{"mcpCapabilities" => %{"acp" => %{}}}, :mcp_acp)
+      refute Capabilities.supported?(%{"mcpCapabilities" => %{"acp" => false}}, :mcp_acp)
+      refute Capabilities.supported?(%{}, :mcp_acp)
+
+      assert :ok = Capabilities.ensure(%{"mcpCapabilities" => %{"acp" => true}}, :mcp_acp)
+
+      assert {:error, {:unsupported_capability, :mcp_acp}} = Capabilities.ensure(%{}, :mcp_acp)
     end
 
     test "also reads atom-keyed maps" do
