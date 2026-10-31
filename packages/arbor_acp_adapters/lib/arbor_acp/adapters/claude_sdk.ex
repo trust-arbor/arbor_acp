@@ -299,7 +299,15 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   @impl true
   def auth_methods(opts, state) do
-    opts = Keyword.merge(Map.get(state, :opts, []), opts)
+    state_opts = Map.get(state, :opts, [])
+
+    env =
+      Map.merge(
+        Arbor.RPC.PortEnvironment.normalize(Keyword.get(state_opts, :env, [])),
+        Arbor.RPC.PortEnvironment.normalize(Keyword.get(opts, :env, []))
+      )
+
+    opts = state_opts |> Keyword.merge(opts) |> Keyword.put(:env, env)
 
     []
     |> maybe_add_terminal_auth_methods(opts, state)

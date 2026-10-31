@@ -109,7 +109,21 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
     spec = spec!(kind)
     opts = drop_minted_option(opts, spec.option, kind)
     path = path(opts, kind)
-    opts = if path, do: Keyword.put(opts, spec.option, path), else: opts
+    supplied = normalize_env(Keyword.get(opts, :env, []))
+
+    opts =
+      cond do
+        path -> Keyword.put(opts, spec.option, path)
+        Map.has_key?(supplied, spec.env) -> Keyword.delete(opts, spec.option)
+        true -> opts
+      end
+
+    opts =
+      if is_binary(Map.get(supplied, spec.env)) and Map.get(supplied, spec.env) != "" do
+        Keyword.put(opts, :env, Map.put(supplied, spec.env, path))
+      else
+        opts
+      end
 
     if kind == :claude do
       opts =
@@ -127,7 +141,24 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
             Map.put(supplied, "ANTHROPIC_CONFIG_DIR", profile_path(profile, opts))
           )
 
-        _absent ->
+        :error ->
+          if not owned_path?(path, :claude) do
+            case env_value(opts, "ANTHROPIC_CONFIG_DIR") do
+              profile when is_binary(profile) ->
+                Keyword.put(
+                  opts,
+                  :env,
+                  Map.put(supplied, "ANTHROPIC_CONFIG_DIR", profile_path(profile, opts))
+                )
+
+              _ ->
+                opts
+            end
+          else
+            opts
+          end
+
+        _unset ->
           opts
       end
     else
@@ -284,11 +315,15 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
       end
 
     configured = configured_path(opts, spec)
-    option = option_path(opts, spec)
 
-    [cached, configured, option]
+    supplied? =
+      Map.has_key?(normalize_env(Keyword.get(opts, :env, [])), spec.env) or
+        option_path(opts, spec) != nil
+
+    selected = if supplied?, do: configured, else: cached
+
+    [selected]
     |> Enum.filter(&is_binary/1)
-    |> Enum.uniq()
     |> Enum.reduce_while(:ok, fn path, :ok ->
       case remove_minted(path, kind) do
         :ok -> {:cont, :ok}
@@ -300,15 +335,12 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   def release(_opts, _kind), do: :ok
 
   defp configured_path(opts, spec) do
-    case option_path(opts, spec) do
-      path when is_binary(path) ->
-        path
-
-      nil ->
-        case env_get(Keyword.get(opts, :env, []), spec.env) do
-          path when is_binary(path) and path != "" -> Path.expand(path)
-          _ -> nil
-        end
+    # Caller :env has the final say in Subprocess. Use that same path for
+    # storage, terminal login and cleanup, and anchor relative env paths to cwd.
+    case Map.fetch(normalize_env(Keyword.get(opts, :env, [])), spec.env) do
+      {:ok, path} when is_binary(path) and path != "" -> profile_path(path, opts)
+      {:ok, _unset} -> nil
+      :error -> option_path(opts, spec)
     end
   end
 
@@ -317,13 +349,6 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
       path when is_binary(path) and path != "" -> Path.expand(path)
       _ -> nil
     end
-  end
-
-  defp env_get(env, name) do
-    env
-    |> normalize_env()
-    |> Map.get(name)
-    |> env_string()
   end
 
   defp normalize_env(env) when is_map(env) do
