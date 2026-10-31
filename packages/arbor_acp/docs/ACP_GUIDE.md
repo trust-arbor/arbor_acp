@@ -117,6 +117,15 @@ opt-in `notice`, `compaction_update` and `compaction_summary_chunk`.
 prompt call in an application-owned task if the same UI process must receive
 updates immediately, or handle updates in a client handler. Do not leave a
 listener mailbox undrained: delivery is bounded and excess updates are dropped.
+Each drop emits `[:arbor_acp, :session, :update_dropped]` telemetry with count,
+bytes, session id, destination, and the queue limit reached. Enable
+`notify_update_drops: true` to receive coalesced
+`{:acp_session_updates_dropped, session_id, count}` messages after the listener
+has room. Handlers can implement `handle_session_updates_dropped/3` for the
+same notice. Notices obey queue bounds and retain no update payloads.
+Counts belong to a session, including concurrent pending load/resume calls.
+A caller's local wait timeout does not cancel the underlying agent request;
+its notices remain valid until the client retires that request or the session.
 
 For synchronous text collection, call `Client.prompt_text/4` instead:
 
