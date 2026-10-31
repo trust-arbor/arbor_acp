@@ -440,9 +440,16 @@ defmodule Arbor.ACP.Adapters.WorkspaceConfigIsolationTest do
           state_a
         )
 
-      refute File.dir?(home_a)
+      # init's generated home advertises terminal login; no managed child
+      # has been launched, so an ACP close cannot retire that connection home.
+      assert File.dir?(home_a)
       assert File.dir?(home_b)
       assert is_struct(closed, ClaudeSDK)
+      assert {:ok, _} = ClaudeSDK.shutdown(closed)
+      refute File.dir?(home_a)
+      assert File.dir?(home_b)
+      assert {:ok, _} = ClaudeSDK.shutdown(state_b)
+      refute File.dir?(home_b)
     end
   end
 

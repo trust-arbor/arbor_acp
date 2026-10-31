@@ -903,7 +903,8 @@ defmodule Arbor.ACP.Client do
     request = Map.get(state.pending_agent_requests, ref)
 
     admitted? =
-      match?(%{kind: :mcp, session_id: ^session_id}, request) and
+      agent_request_current?(ref, request, state) and
+        match?(%{kind: :mcp, session_id: ^session_id}, request) and
         Map.has_key?(state.sessions, session_id)
 
     {:reply, admitted?, state}
@@ -912,8 +913,12 @@ defmodule Arbor.ACP.Client do
   def handle_call({:handler_worker_admit, ref, pid}, _from, state) do
     case Map.get(state.pending_agent_requests, ref) do
       request when is_map(request) and state.status == :ready ->
-        pending = Map.put(state.pending_agent_requests, ref, Map.put(request, :worker, pid))
-        {:reply, true, %{state | pending_agent_requests: pending}}
+        if agent_request_current?(ref, request, state) do
+          pending = Map.put(state.pending_agent_requests, ref, Map.put(request, :worker, pid))
+          {:reply, true, %{state | pending_agent_requests: pending}}
+        else
+          {:reply, false, state}
+        end
 
       _cancelled ->
         {:reply, false, state}
@@ -1024,6 +1029,7 @@ defmodule Arbor.ACP.Client do
         {:noreply, state}
 
       {request, pending} ->
+        cancel_timer(request.timer_ref)
         stop_mcp_worker(request)
         state = finish_mcp_request(%{state | pending_agent_requests: pending}, request)
 
@@ -2572,7 +2578,27 @@ defmodule Arbor.ACP.Client do
     Protocol.encode_error(-32603, "Client handler returned an invalid result", nil, id)
   end
 
+  defp agent_request_current?(ref, request, state) do
+    cond do
+      state.status != :ready or not is_map(request) ->
+        false
+
+      Map.get(request, :deadline, :infinity) == :infinity ->
+        true
+
+      request.deadline > System.monotonic_time(:millisecond) ->
+        true
+
+      true ->
+        if gate = Map.get(request, :handler_gate), do: :atomics.put(gate, 1, 0)
+        send(self(), {:agent_handler_timeout, ref})
+        false
+    end
+  end
+
   defp track_agent_request(state, ref, kind, id, session_id, extra \\ %{}) do
+    deadline = System.monotonic_time(:millisecond) + state.handler_request_timeout
+
     timer_ref =
       Process.send_after(self(), {:agent_handler_timeout, ref}, state.handler_request_timeout)
 
@@ -2583,6 +2609,7 @@ defmodule Arbor.ACP.Client do
           id: id,
           session_id: session_id,
           timer_ref: timer_ref,
+          deadline: deadline,
           handler_gate: HandlerRunner.request_gate(ref)
         },
         extra

@@ -91,5 +91,46 @@ defmodule Arbor.ACP.Adapters.PiHomeLifecycleTest do
     assert %Pi{} = Pi.shutdown(state)
   end
 
+  test "authentication refresh reaches an existing private child", %{root: root, cli: cli} do
+    {:ok, state} =
+      Pi.init(cwd: root, cli_path: cli, session_map_path: Path.join(root, "map.json"))
+
+    result = Pi.translate_outbound(request(1, "session/new", %{"cwd" => root}), state)
+    state = elem(result, tuple_size(result) - 1)
+    File.write!(Path.join(state.auth_home_opts[:agent_dir], "auth.json"), "new login")
+    assert {:reply, %{}, state} = Pi.translate_outbound(request(2, "authenticate", %{}), state)
+    assert File.read!(Path.join(state.opts[:agent_dir], "auth.json")) == "new login"
+    assert %Pi{} = Pi.shutdown(state)
+  end
+
+  test "failed Pi launches release each new home and preserve the login home", %{root: root} do
+    {:ok, state} =
+      Pi.init(
+        cwd: root,
+        cli_path: Path.join(root, "missing-cli"),
+        session_map_path: Path.join(root, "map.json")
+      )
+
+    bootstrap = state.auth_home_opts[:agent_dir]
+
+    owned = fn ->
+      Process.get({Arbor.ACP.Adapters.Internal.RuntimeHome, :owned_homes}, %{}) |> map_size()
+    end
+
+    initial = owned.()
+
+    state =
+      Enum.reduce(1..3, state, fn id, state ->
+        result = Pi.translate_outbound(request(id, "session/new", %{"cwd" => root}), state)
+        state = elem(result, tuple_size(result) - 1)
+        assert state.port == nil
+        assert owned.() == initial
+        assert File.dir?(bootstrap)
+        state
+      end)
+
+    assert %Pi{} = Pi.shutdown(state)
+  end
+
   defp request(id, method, params), do: %{"id" => id, "method" => method, "params" => params}
 end

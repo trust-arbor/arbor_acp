@@ -176,6 +176,36 @@ defmodule Arbor.ACP.ClientAsyncHandlerTest do
     assert_receive {:kill_handled, 0}
   end
 
+  test "expired queued async work cannot enter before timeout delivery" do
+    {client, transport} = start_client()
+    runner = :sys.get_state(client).handler_pid
+    :sys.suspend(runner)
+
+    send(
+      client,
+      {:transport_message, request("read", "fs/read_text_file", %{"path" => "/tmp/file"})}
+    )
+
+    assert map_size(:sys.get_state(client).pending_agent_requests) == 1
+
+    :sys.replace_state(client, fn state ->
+      pending =
+        Map.new(state.pending_agent_requests, fn {ref, request} ->
+          {ref, Map.put(request, :deadline, System.monotonic_time(:millisecond) - 1)}
+        end)
+
+      %{state | pending_agent_requests: pending}
+    end)
+
+    :sys.resume(runner)
+
+    assert %{"id" => "read", "error" => %{"message" => "Client handler timed out"}} =
+             receive_raw(transport)
+
+    assert :sys.get_state(client).pending_agent_requests == %{}
+    refute_receive {:work, :file_read, _}
+  end
+
   defp start_client do
     {:ok, peer} = Memory.new_pair()
     {:ok, transport} = Memory.connect(peer: peer, role: :agent)
