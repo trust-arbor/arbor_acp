@@ -171,6 +171,79 @@ defmodule Arbor.ACP.ClientUpdateDropsTest do
     end
   end
 
+  for {kind, failure} <- [
+        {:load, :error},
+        {:resume, :error},
+        {:load, :timeout},
+        {:resume, :caller_exit}
+      ] do
+    @kind kind
+    @failure failure
+    test "#{kind} #{@failure} retires notices before a retry for the same id" do
+      listener = held_listener()
+
+      {client, transport} =
+        start_client(event_listener: listener, notify_update_drops: true, max_update_queue: 1)
+
+      open = fn ->
+        case @kind do
+          :load -> Client.load_session(client, "retry-session", "/tmp")
+          :resume -> Client.resume_session(client, "retry-session", "/tmp")
+        end
+      end
+
+      operation = Task.async(open)
+      request = receive_raw(transport)
+      message = put_in(update(), ["params", "sessionId"], "retry-session")
+      for _ <- 1..3, do: send(client, {:transport_message, message})
+      state = :sys.get_state(client)
+      assert state.update_drops[{:event_listener, "retry-session"}] == 2
+      {old_token, timer} = state.update_drop_timer
+      Process.cancel_timer(timer)
+
+      case @failure do
+        :error ->
+          send(
+            client,
+            {:transport_message,
+             %{
+               "jsonrpc" => "2.0",
+               "id" => request["id"],
+               "error" => %{"code" => -32603, "message" => "open failed"}
+             }}
+          )
+
+          assert {:error, _} = Task.await(operation)
+
+        :timeout ->
+          send(client, {:pending_request_timeout, request["id"]})
+          assert {:error, :request_timeout} = Task.await(operation)
+          assert receive_raw(transport)["method"] == "$/cancel_request"
+
+        :caller_exit ->
+          Process.unlink(operation.pid)
+          Process.exit(operation.pid, :kill)
+          assert receive_raw(transport)["method"] == "$/cancel_request"
+      end
+
+      assert :sys.get_state(client).update_drops == %{}
+      assert :sys.get_state(client).update_drop_timer == nil
+      retry = Task.async(open)
+      retried = receive_raw(transport)
+      send(listener, :drain)
+      assert_receive {:delivered, {:acp_session_update, "retry-session", _}}
+      send(client, {:flush_update_drop_notices, old_token})
+
+      send(
+        client,
+        {:transport_message, %{"jsonrpc" => "2.0", "id" => retried["id"], "result" => %{}}}
+      )
+
+      assert {:ok, _} = Task.await(retry)
+      refute_receive {:delivered, {:acp_session_updates_dropped, "retry-session", _}}
+    end
+  end
+
   def capture(_event, measurements, metadata, {parent, client}) do
     if self() == client, do: send(parent, {:drop, measurements, metadata})
   end

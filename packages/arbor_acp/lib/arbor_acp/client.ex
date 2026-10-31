@@ -1757,6 +1757,14 @@ defmodule Arbor.ACP.Client do
   defp apply_session_resolution({kind, session_id}, {:ok, _result}, state)
        when kind in [:close_session, :delete_session] do
     %{state | sessions: Map.delete(state.sessions, session_id)}
+    |> forget_update_drops(session_id)
+  end
+
+  defp apply_session_resolution({kind, session_id, _roots}, {:error, _}, state)
+       when kind in [:load_session, :resume_session] do
+    if Map.has_key?(state.sessions, session_id),
+      do: state,
+      else: forget_update_drops(state, session_id)
   end
 
   defp apply_session_resolution(_tag, _reply, state), do: state
@@ -2036,6 +2044,20 @@ defmodule Arbor.ACP.Client do
     %{state | update_drops: pending} |> schedule_drop_notices()
   end
 
+  defp forget_update_drops(state, session_id) do
+    pending = Map.reject(state.update_drops, fn {{_target, id}, _count} -> id == session_id end)
+
+    timer =
+      if map_size(pending) == 0 do
+        if state.update_drop_timer, do: cancel_timer(elem(state.update_drop_timer, 1))
+        nil
+      else
+        state.update_drop_timer
+      end
+
+    %{state | update_drops: pending, update_drop_timer: timer}
+  end
+
   defp schedule_drop_notices(%{update_drop_timer: nil, update_drops: pending} = state)
        when map_size(pending) > 0 do
     token = make_ref()
@@ -2147,6 +2169,16 @@ defmodule Arbor.ACP.Client do
          state
        ),
        do: %{state | prompt_text: Map.delete(state.prompt_text, session_id)}
+
+  defp clear_abandoned_prompt_text(
+         {_from, {kind, session_id, _roots}, _monitor, _timer},
+         state
+       )
+       when kind in [:load_session, :resume_session] do
+    if Map.has_key?(state.sessions, session_id),
+      do: state,
+      else: forget_update_drops(state, session_id)
+  end
 
   defp clear_abandoned_prompt_text(_pending, state), do: state
 
