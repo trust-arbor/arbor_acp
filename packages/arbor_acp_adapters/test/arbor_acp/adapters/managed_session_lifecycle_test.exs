@@ -26,9 +26,9 @@ defmodule Arbor.ACP.Adapters.ManagedSessionLifecycleTest do
 
   test "monitored exit answers only the affected session prompt", %{state: state, root: root} do
     {a, state} = new_session(state, root, "a")
-    state = %{state | pending_prompt_id: "prompt-a"}
+    state = %{state | pending_prompt_id: "prompt-a", active_prompt_session_id: a}
     {b, state} = new_session(state, root, "b")
-    state = %{state | pending_prompt_id: "prompt-b"}
+    state = %{state | pending_prompt_id: "prompt-b", active_prompt_session_id: b}
     entry = state.session_processes[a]
     [actor] = Arbor.RPC.Subprocess.linked_processes(entry.handle)
 
