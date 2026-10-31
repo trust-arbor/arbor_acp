@@ -61,7 +61,10 @@ when the adapter is not minting a private vendor config dir.
 Claude, Codex and Pi isolate workspace agent configuration by default:
 Claude is launched with `--setting-sources user` and `--strict-mcp-config`,
 and each of those adapters mints a private `CLAUDE_CONFIG_DIR` /
-`CODEX_HOME` / `PI_CODING_AGENT_DIR` keyed by ACP session id. Codex's minted
+`CODEX_HOME` / `PI_CODING_AGENT_DIR`. Managed Claude and Pi children have
+session homes, removed after child cleanup. Codex shares one private home
+across its connection's app-server threads and removes it when the connection
+ends; closing the last thread keeps that home available. Codex's minted
 home has no `AGENTS.md`, disables skills, and does not trust the project; Pi
 is launched with `--no-context-files` and `--no-approve` and ignores the
 workspace `.pi` tree, inherited `PI_CODING_AGENT_DIR`, and a
@@ -71,7 +74,11 @@ the adapter at a real home. Cleanup deletes the generated home, including
 transcripts and credentials written there. Pass `trust_workspace_config:
 true` to load project settings and use the normal vendor home again, or
 set `:claude_config_dir`, `:codex_home` or `:agent_dir` to keep a specific
-directory. A project's `piCommand` stays ignored even with the opt-in.
+directory. Caller-provided directories are never removed. Claude and Pi keep
+a separate private connection login home for the advertised terminal login;
+new generated child homes receive only its credential file, so subsequent
+sessions can use that login without sharing settings or transcripts.
+A project's `piCommand` stays ignored even with the opt-in.
 
 ```elixir
 adapter_opts = [
