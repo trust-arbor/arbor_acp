@@ -1467,21 +1467,23 @@ defmodule Arbor.ACP.Adapters.Codex.PromptContentGoldenTest do
     assert %{"cwd" => "/tmp/top"} = last_turn_start(transcript)
   end
 
-  test "prompt_cwd_outside_workspace_roots_forwarded" do
+  test "prompt_cwd_outside_workspace_roots_rejected" do
     steps =
       session_steps() ++
         [
           {:note,
-           "session/prompt params.cwd is forwarded to turn/start without any workspace " <>
-             "authorization"},
+           "session/prompt params.cwd is resolved against the session workspace and rejected " <>
+             "when it is outside that root"},
           prompt(20, [text("hi")], %{"cwd" => "/opt/elsewhere"})
         ]
 
     transcript =
-      CodexGolden.assert_golden(@area, "prompt_cwd_outside_workspace_roots_forwarded", steps)
+      CodexGolden.assert_golden(@area, "prompt_cwd_outside_workspace_roots_rejected", steps)
 
-    assert %{"cwd" => "/opt/elsewhere"} = last_turn_start(transcript)
-    assert %{tag: :ok} = CodexGolden.last_result(transcript)
+    assert %{tag: :error, error: "Workspace path is not authorized"} =
+             CodexGolden.last_result(transcript)
+
+    refute Enum.any?(CodexGolden.writes(transcript), &(&1["method"] == "turn/start"))
   end
 
   test "prompt_params_override_model_summary_cwd" do

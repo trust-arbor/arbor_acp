@@ -819,37 +819,71 @@ defmodule Arbor.ACP.Adapters.Codex do
   end
 
   defp translate_user_prompt(input_items, acp_id, session_id, session, params, state) do
-    {id, state} = next_request_id(state)
-    additional_directories = session[:additional_directories] || []
+    case prompt_turn_cwd(params, session, session_id, state) do
+      {:ok, cwd} ->
+        {id, state} = next_request_id(state)
+        additional_directories = session[:additional_directories] || []
 
-    wire_params =
-      %{
-        "threadId" => session_id,
-        "input" => input_items,
-        "summary" => params["summary"] || "auto"
-      }
-      |> maybe_put("model", params["model"] || session[:model] || state.model)
-      |> maybe_put("effort", session[:reasoning_effort] || state.reasoning_effort)
-      |> maybe_put("serviceTier", service_tier_for_session(session, state))
-      |> maybe_put("cwd", params["cwd"] || session[:cwd] || Keyword.get(state.opts, :cwd))
-      |> Config.merge_turn_mode_wire_params(
-        session[:mode_id] || state.mode_id || Config.default_mode(),
-        additional_directories
-      )
+        wire_params =
+          %{
+            "threadId" => session_id,
+            "input" => input_items,
+            "summary" => params["summary"] || "auto"
+          }
+          |> maybe_put("model", params["model"] || session[:model] || state.model)
+          |> maybe_put("effort", session[:reasoning_effort] || state.reasoning_effort)
+          |> maybe_put("serviceTier", service_tier_for_session(session, state))
+          |> maybe_put("cwd", cwd)
+          |> Config.merge_turn_mode_wire_params(
+            session[:mode_id] || state.mode_id || Config.default_mode(),
+            additional_directories
+          )
 
-    request =
-      Protocol.encode_request(
-        id,
-        Protocol.method(:turn_start),
-        NativeProtocol.overrides(wire_params, params)
-      )
+        request =
+          Protocol.encode_request(
+            id,
+            Protocol.method(:turn_start),
+            NativeProtocol.overrides(wire_params, params)
+          )
 
-    state =
-      state
-      |> Sessions.put(session_id, reset_prompt_accumulators(session, acp_id))
-      |> track_request(id, :turn_start, acp_id, %{session_id: session_id})
+        state =
+          state
+          |> Sessions.put(session_id, reset_prompt_accumulators(session, acp_id))
+          |> track_request(id, :turn_start, acp_id, %{session_id: session_id})
 
-    {:ok, request, state}
+        {:ok, request, state}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  defp prompt_turn_cwd(params, session, session_id, state) do
+    case params["cwd"] do
+      nil ->
+        {:ok, session[:cwd] || Keyword.get(state.opts, :cwd)}
+
+      cwd ->
+        constrain_prompt_cwd(cwd, session_id, session, state)
+    end
+  end
+
+  defp constrain_prompt_cwd(cwd, session_id, session, state) do
+    root = thread_binding(session_id, state) || session[:cwd]
+
+    cond do
+      not is_binary(cwd) or cwd == "" or Path.type(cwd) != :absolute ->
+        {:error, "Workspace paths must be absolute"}
+
+      not is_binary(root) or root == "" ->
+        {:error, "Workspace path is not authorized"}
+
+      true ->
+        case WorkspacePath.contained(cwd, root) do
+          {:ok, resolved} -> {:ok, resolved}
+          :error -> {:error, "Workspace path is not authorized"}
+        end
+    end
   end
 
   defp translate_slash_command({:compact, _rest}, acp_id, session_id, session, _params, state) do

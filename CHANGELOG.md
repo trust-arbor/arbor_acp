@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Codex `session/prompt` rejects a caller-supplied `cwd` that is outside the session's bound workspace or cannot be resolved, and does not send `turn/start` in those cases.
+
 - Report every dropped session update through telemetry. Listeners can opt into coalesced drop notices with `notify_update_drops: true`; handlers can implement `handle_session_updates_dropped/3`. Notices respect queue bounds and recover without another update.
 
 - Request handlers may return `{:async, work, state}` to commit state before running cancellable work outside the handler mailbox. Timeouts, cancellation and connection shutdown stop that work and preserve one response per request.
