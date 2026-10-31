@@ -244,6 +244,58 @@ defmodule Arbor.ACP.ClientUpdateDropsTest do
     end
   end
 
+  test "one failed open preserves notices while another open for the same id remains pending" do
+    listener = held_listener()
+
+    {client, transport} =
+      start_client(event_listener: listener, notify_update_drops: true, max_update_queue: 1)
+
+    first = Task.async(fn -> Client.load_session(client, "overlap", "/tmp") end)
+    first_request = receive_raw(transport)
+    second = Task.async(fn -> Client.resume_session(client, "overlap", "/tmp") end)
+    second_request = receive_raw(transport)
+    message = put_in(update(), ["params", "sessionId"], "overlap")
+    for _ <- 1..3, do: send(client, {:transport_message, message})
+    assert :sys.get_state(client).update_drops[{:event_listener, "overlap"}] == 2
+
+    send(
+      client,
+      {:transport_message,
+       %{
+         "jsonrpc" => "2.0",
+         "id" => first_request["id"],
+         "error" => %{"code" => -32603, "message" => "failed"}
+       }}
+    )
+
+    assert {:error, _} = Task.await(first)
+    assert :sys.get_state(client).update_drops[{:event_listener, "overlap"}] == 2
+    send(listener, :drain)
+    assert_receive {:delivered, {:acp_session_update, "overlap", _}}
+    assert_receive {:delivered, {:acp_session_updates_dropped, "overlap", 2}}, 1_000
+
+    send(
+      client,
+      {:transport_message, %{"jsonrpc" => "2.0", "id" => second_request["id"], "result" => %{}}}
+    )
+
+    assert {:ok, _} = Task.await(second)
+  end
+
+  test "end_session without agent close support retires its notices immediately" do
+    listener = held_listener()
+
+    {client, _transport} =
+      start_client(event_listener: listener, notify_update_drops: true, max_update_queue: 1)
+
+    for _ <- 1..3, do: send(client, {:transport_message, update()})
+    assert :sys.get_state(client).update_drops != %{}
+    assert :ok = Client.end_session(client, "drop-session")
+    state = :sys.get_state(client)
+    assert state.update_drops == %{}
+    assert state.update_drop_timer == nil
+  end
+
   def capture(_event, measurements, metadata, {parent, client}) do
     if self() == client, do: send(parent, {:drop, measurements, metadata})
   end

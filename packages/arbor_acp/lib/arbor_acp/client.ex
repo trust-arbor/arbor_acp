@@ -821,6 +821,7 @@ defmodule Arbor.ACP.Client do
       {:error, {:unsupported_capability, :session_close}} ->
         emit_session_ended(session_id)
         state = %{state | sessions: Map.delete(state.sessions, session_id)}
+        state = forget_update_drops(state, session_id)
         {:reply, :ok, release_mcp_session(state, session_id)}
     end
   end
@@ -1656,6 +1657,7 @@ defmodule Arbor.ACP.Client do
         Process.demonitor(monitor_ref, [:flush])
         omitted = mcp_plan_omissions(state, id)
         {reply, state} = settle_mcp_plan(id, telemetry_tag, reply, state)
+        state = %{state | pending_requests: pending}
         state = apply_session_resolution(telemetry_tag, reply, state)
         emit_resolve_telemetry(telemetry_tag, reply)
         {reply, state} = finish_prompt_collection(telemetry_tag, reply, state)
@@ -1762,7 +1764,7 @@ defmodule Arbor.ACP.Client do
 
   defp apply_session_resolution({kind, session_id, _roots}, {:error, _}, state)
        when kind in [:load_session, :resume_session] do
-    if Map.has_key?(state.sessions, session_id),
+    if authorized_session_id?(session_id, state),
       do: state,
       else: forget_update_drops(state, session_id)
   end
@@ -2175,7 +2177,7 @@ defmodule Arbor.ACP.Client do
          state
        )
        when kind in [:load_session, :resume_session] do
-    if Map.has_key?(state.sessions, session_id),
+    if authorized_session_id?(session_id, state),
       do: state,
       else: forget_update_drops(state, session_id)
   end
