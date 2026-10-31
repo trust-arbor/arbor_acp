@@ -33,7 +33,7 @@
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--mcp-config", "<sandbox>/a.json",
          "<sandbox>/b.json", "<generated-mcp-config>", "--permission-mode", "default",
-         "--include-partial-messages", "--strict-mcp-config"],
+         "--include-partial-messages", "--setting-sources", "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude",
         generated_mcp_config: %{
           contents: %{"mcpServers" => %{"docs" => %{"command" => "docs-mcp"}}},

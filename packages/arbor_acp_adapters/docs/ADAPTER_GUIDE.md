@@ -15,7 +15,7 @@ Pass the module as `adapter`, and vendor settings inside `adapter_opts`:
 | --- | --- | --- | --- |
 | Claude Code | `Arbor.ACP.Adapters.ClaudeSDK` | SDK stream-json control protocol | `cli_path`, then `CLAUDE_CODE_EXECUTABLE`, then `claude` |
 | Codex | `Arbor.ACP.Adapters.Codex` | `app-server` JSON-RPC | `codex_path`, then `CODEX_PATH`, then `codex` |
-| Pi | `Arbor.ACP.Adapters.Pi` | `--mode rpc --no-themes` | `cli_path`, `pi_command`, `PI_ACP_PI_COMMAND`, Pi settings, then `pi` |
+| Pi | `Arbor.ACP.Adapters.Pi` | `--mode rpc --no-themes` (plus `--no-context-files` and `--no-approve` unless `trust_workspace_config`) | `cli_path`, `pi_command`, `PI_ACP_PI_COMMAND`, Pi settings, then `pi` |
 | ZCode | `Arbor.ACP.Adapters.ZCode` | `app-server` NDJSON | `cli_path`, then `ZCODE_EXECUTABLE`, then `zcode` |
 
 The README contains a complete Codex session including cleanup. For another
@@ -55,7 +55,47 @@ of `false` unsets a variable.
 Built-in adapter defaults clear inherited provider keys and nested Claude session
 markers. Explicitly pass the credentials/configuration needed by the child;
 putting a key in the parent shell alone does not guarantee it reaches the agent.
-HOME remains available, so existing vendor login state may still be used.
+HOME remains available, so existing vendor login state may still be used
+when the adapter is not minting a private vendor config dir.
+
+Claude, Codex and Pi isolate workspace agent configuration by default:
+Claude is launched with `--setting-sources user` and `--strict-mcp-config`,
+and each of those adapters mints a private `CLAUDE_CONFIG_DIR` /
+`CODEX_HOME` / `PI_CODING_AGENT_DIR`. Claude shares one private home per
+connection while retaining separate processes and native conversation ids.
+Codex shares one private home across its connection's app-server threads.
+These homes remain until the connection ends, including when its last session
+closes. Closing a Claude session removes only its generated-home history.
+Pi children have separate session homes, removed after confirmed child cleanup. Codex's minted
+home has no `AGENTS.md`, disables skills, and does not trust the project; Pi
+is launched with `--no-context-files` and `--no-approve` and ignores the
+workspace `.pi` tree, inherited `PI_CODING_AGENT_DIR`, and a
+`pi` executable that resolves inside the workspace. Existing vendor logins,
+global settings, models, skills and prompts are invisible until you point
+the adapter at a real home. Cleanup deletes the generated home, including
+transcripts and credentials written there. Pass `trust_workspace_config:
+true` to load project settings and use the normal vendor home again, or
+set `:claude_config_dir`, `:codex_home` or `:agent_dir` to keep a specific
+directory. An explicit vendor-home `:env` value takes precedence over its home
+option, matching subprocess environment precedence; relative env paths are
+anchored to the connection's configured cwd for storage and managed children.
+Caller-provided directories and their history are preserved on
+close; explicit session/delete still deletes the requested history. Claude's
+terminal login and children use the same private credential store. Successful
+reauthentication restarts idle managed Claude children to reload credentials,
+retaining their native ids and preferences; active work must finish first.
+Pi keeps a separate private connection login home and seeds only its credential
+file into generated child homes.
+An explicit empty or unset vendor-home variable in `:env` is rejected while
+workspace isolation is enabled; it cannot silently restore the normal home.
+Claude's generated home also supplies a private `ANTHROPIC_CONFIG_DIR` for
+implicit Anthropic profiles. An explicit nonempty profile directory in `:env`
+is retained; an unset profile variable cannot bypass isolation. Terminal login
+uses the initialized adapter's effective home. On macOS, cleanup also removes
+the known Keychain services scoped to a generated login home. Unconfirmed
+credential or directory cleanup returns an error and retains the home for retry;
+caller-owned homes and their Keychain services are preserved.
+A project's `piCommand` stays ignored even with the opt-in.
 
 ```elixir
 adapter_opts = [
@@ -109,7 +149,6 @@ Claude's subprocess must receive MCP configuration when it starts:
 ```elixir
 adapter_opts = [
   cwd: File.cwd!(),
-  strict_mcp_config: true,
   mcp_servers: %{
     "local-tools" => %{"type" => "http", "url" => "http://localhost:4000/mcp"}
   }
@@ -120,7 +159,9 @@ This is a map of names to Claude configuration, not an ACP `mcpServers` list.
 The adapter writes it to a 0600 file in a fresh 0700 directory and removes that
 file when the owning bridge exits. `mcp_config_path` instead accepts existing
 configuration file paths managed by the host, relative to `cwd` or absolute.
-`strict_mcp_config: true` asks Claude to use only the supplied configuration.
+`--strict-mcp-config` is the default, so Claude uses only the supplied
+configuration. Set `strict_mcp_config: false` or `trust_workspace_config: true`
+to allow Claude's own MCP files again.
 
 Session `mcp_servers` do not attach new servers to an already running Claude
 process. The adapter advertises no session MCP transport and reports
@@ -290,4 +331,10 @@ for the rest of the controller/agent API.
 Managed Claude session ids are native UUIDs by default. Caller-provided opaque
 ids are compatibility aliases within a connection: up to 1,024 recently closed
 aliases are retained within 1 MiB. Persist native UUIDs for identifiers that must
-remain usable across connections or after compatibility aliases expire.
+remain usable across connections or after compatibility aliases expire, and
+supply a persistent home when history must survive the connection.
+
+Codex thread bindings require the same canonical working directory for load
+and resume. Equivalent path spellings are accepted; moving a thread from
+`/repos/a` to `/repos/b` is rejected even when both are beneath an allowed
+root `/repos`.

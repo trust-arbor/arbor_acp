@@ -25,9 +25,9 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--permission-prompt-tool", "stdio", "--permission-mode", "default",
-         "--include-partial-messages", "--resume", "123e4567-e89b-12d3-a456-426614174000",
-         "--resume-session-at", "msg-7", "--fork-session", "--session-id",
-         "123e4567-e89b-12d3-a456-426614174001"],
+         "--include-partial-messages", "--setting-sources", "user", "--strict-mcp-config",
+         "--resume", "123e4567-e89b-12d3-a456-426614174000", "--resume-session-at", "msg-7",
+         "--fork-session", "--session-id", "123e4567-e89b-12d3-a456-426614174001"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok

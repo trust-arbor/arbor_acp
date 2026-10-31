@@ -1,6 +1,7 @@
 defmodule Arbor.ACP.Adapters.Pi.Startup do
   @moduledoc false
 
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
   alias Arbor.ACP.Adapters.Pi.Settings
 
   @package "@earendil-works/pi-coding-agent"
@@ -17,10 +18,10 @@ defmodule Arbor.ACP.Adapters.Pi.Startup do
           version_section(cwd, settings),
           update_notice(cwd, settings),
           prelude_section(prelude_lines),
-          context_section(cwd),
-          inventory_section("Skills", skill_dirs(cwd)),
-          inventory_section("Prompts", prompt_dirs(cwd)),
-          inventory_section("Extensions", extension_dirs(cwd))
+          context_section(cwd, settings["_opts"] || []),
+          inventory_section("Skills", skill_dirs(cwd, settings["_opts"] || [])),
+          inventory_section("Prompts", prompt_dirs(cwd, settings["_opts"] || [])),
+          inventory_section("Extensions", extension_dirs(cwd, settings["_opts"] || []))
         ]
         |> Enum.reject(&blank?/1)
 
@@ -96,11 +97,13 @@ defmodule Arbor.ACP.Adapters.Pi.Startup do
     if text == "", do: nil, else: "Startup output\n#{text}"
   end
 
-  defp context_section(cwd) do
-    path = Path.join(cwd, "AGENTS.md")
+  defp context_section(cwd, opts) do
+    if RuntimeHome.trust_workspace_config?(opts) do
+      path = Path.join(cwd, "AGENTS.md")
 
-    if File.exists?(path) do
-      "Context\nAGENTS.md"
+      if File.exists?(path) do
+        "Context\nAGENTS.md"
+      end
     end
   end
 
@@ -113,27 +116,34 @@ defmodule Arbor.ACP.Adapters.Pi.Startup do
     if count > 0, do: "#{label}\n#{count} available", else: nil
   end
 
-  defp skill_dirs(cwd) do
+  defp skill_dirs(cwd, opts) do
     [
       Path.join([System.user_home!(), ".pi", "agent", "skills"]),
-      Path.join([System.user_home!(), ".agents", "skills"]),
-      Path.join([cwd, ".pi", "skills"])
+      Path.join([System.user_home!(), ".agents", "skills"])
+      | project_dirs(cwd, opts, ["skills"])
     ]
   end
 
-  defp prompt_dirs(cwd) do
+  defp prompt_dirs(cwd, opts) do
     [
-      Path.join([System.user_home!(), ".pi", "agent", "prompts"]),
-      Path.join([cwd, ".pi", "prompts"])
+      Path.join([System.user_home!(), ".pi", "agent", "prompts"])
+      | project_dirs(cwd, opts, ["prompts"])
     ]
   end
 
-  defp extension_dirs(cwd) do
+  defp extension_dirs(cwd, opts) do
     [
-      Path.join([System.user_home!(), ".pi", "agent", "extensions"]),
-      Path.join([cwd, ".pi", "extensions"]),
-      Path.join([cwd, ".pi", "packages"])
+      Path.join([System.user_home!(), ".pi", "agent", "extensions"])
+      | project_dirs(cwd, opts, ["extensions"]) ++ project_dirs(cwd, opts, ["packages"])
     ]
+  end
+
+  defp project_dirs(cwd, opts, segments) do
+    if RuntimeHome.trust_workspace_config?(opts) do
+      [Path.join([cwd, ".pi" | segments])]
+    else
+      []
+    end
   end
 
   defp markdown_files(dir) do

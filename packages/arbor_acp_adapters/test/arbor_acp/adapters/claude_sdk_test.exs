@@ -30,13 +30,16 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
       assert "--include-partial-messages" in args
       assert "--permission-mode" in args
       assert "default" in args
+      assert "--setting-sources" in args
+      assert "user" in args
+      assert "--strict-mcp-config" in args
     end
 
     test "exposes SDK entrypoint env" do
-      assert ClaudeSDK.env([]) == %{
-               "CLAUDE_CODE_ENTRYPOINT" => "sdk-ts",
-               "CLAUDE_AGENT_SDK_VERSION" => "0.3.310"
-             }
+      env = ClaudeSDK.env([])
+      assert env["CLAUDE_CODE_ENTRYPOINT"] == "sdk-ts"
+      assert env["CLAUDE_AGENT_SDK_VERSION"] == "0.3.310"
+      assert is_binary(env["CLAUDE_CONFIG_DIR"])
     end
 
     test "passes session and mcp options through to Claude Code" do
@@ -413,7 +416,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
       }
 
       assert {:ok, :skip, state} = ClaudeSDK.translate_outbound(msg, state)
-      ids = ClaudeSDK.auth_methods([gateway_auth: true], state) |> Enum.map(& &1["id"])
+      ids = fake_auth_methods([gateway_auth: true], state) |> Enum.map(& &1["id"])
 
       assert "claude-ai-login" in ids
       assert "console-login" in ids
@@ -422,7 +425,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
 
       console =
         Enum.find(
-          ClaudeSDK.auth_methods([gateway_auth: true], state),
+          fake_auth_methods([gateway_auth: true], state),
           &(&1["id"] == "console-login")
         )
 
@@ -1827,5 +1830,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDKTest do
     |> String.trim()
     |> Jason.decode!()
     |> get_in(["response", "response", "updatedInput"])
+  end
+
+  defp fake_auth_methods(opts, state) do
+    Arbor.ACP.Adapters.Internal.PrivateKeychain.with_runner(fn _ -> {:ok, "", 44} end, fn ->
+      ClaudeSDK.auth_methods(opts, state)
+    end)
   end
 end

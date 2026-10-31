@@ -1,6 +1,7 @@
 defmodule Arbor.ACP.Adapters.Pi.SlashCommands do
   @moduledoc false
 
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
   alias Arbor.ACP.Adapters.Pi.Settings
 
   @builtin_commands [
@@ -38,8 +39,11 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommands do
     cwd = cwd || File.cwd!()
 
     [
-      {Path.join(Settings.agent_dir(opts), "prompts"), "user"},
-      {Path.expand(Path.join([".pi", "prompts"]), cwd), "project"}
+      {Path.join(Settings.agent_dir(opts), "prompts"), "user"}
+      | if(RuntimeHome.trust_workspace_config?(opts),
+          do: [{Path.expand(Path.join([".pi", "prompts"]), cwd), "project"}],
+          else: []
+        )
     ]
     |> Enum.flat_map(fn {dir, source} -> load_dir(dir, source) end)
   end

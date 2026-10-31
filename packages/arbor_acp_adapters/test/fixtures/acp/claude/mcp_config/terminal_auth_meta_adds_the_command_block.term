@@ -31,11 +31,13 @@
             "terminal-auth" => %{
               "args" => ["auth", "login", "--claudeai"],
               "command" => "<sandbox>/bin/claude",
+              "env" => %{"CLAUDE_CONFIG_DIR" => "<sandbox>/claude"},
               "label" => "Claude Login"
             }
           },
           "args" => ["auth", "login", "--claudeai"],
           "description" => "Use Claude subscription",
+          "env" => %{"CLAUDE_CONFIG_DIR" => "<sandbox>/claude"},
           "id" => "claude-ai-login",
           "name" => "Claude Subscription",
           "type" => "terminal"
@@ -45,11 +47,13 @@
             "terminal-auth" => %{
               "args" => ["auth", "login", "--console"],
               "command" => "<sandbox>/bin/claude",
+              "env" => %{"CLAUDE_CONFIG_DIR" => "<sandbox>/claude"},
               "label" => "Anthropic Console Login"
             }
           },
           "args" => ["auth", "login", "--console"],
           "description" => "Use Anthropic Console (API usage billing)",
+          "env" => %{"CLAUDE_CONFIG_DIR" => "<sandbox>/claude"},
           "id" => "console-login",
           "name" => "Anthropic Console",
           "type" => "terminal"
