@@ -376,7 +376,7 @@ defmodule Arbor.ACP.Adapters.WorkspaceConfigIsolationTest do
       assert is_binary(home) and home != ""
 
       methods =
-        ClaudeSDK.auth_methods(
+        fake_auth_methods(
           [cwd: cwd],
           %{
             client_capabilities: %{
@@ -638,5 +638,11 @@ defmodule Arbor.ACP.Adapters.WorkspaceConfigIsolationTest do
     ])
 
     path
+  end
+
+  defp fake_auth_methods(opts, state) do
+    Arbor.ACP.Adapters.Internal.PrivateKeychain.with_runner(fn _ -> {:ok, "", 44} end, fn ->
+      ClaudeSDK.auth_methods(opts, state)
+    end)
   end
 end

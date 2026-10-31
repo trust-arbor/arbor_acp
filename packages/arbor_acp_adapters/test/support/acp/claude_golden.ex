@@ -667,7 +667,7 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
     ensure_local_env!()
     opts = cli_opts(opts, ctx)
 
-    {%{kind: :auth_methods, opts: opts}, %{tag: :ok, reply: ClaudeSDK.auth_methods(opts, state)},
+    {%{kind: :auth_methods, opts: opts}, %{tag: :ok, reply: fake_auth_methods(opts, state)},
      state}
   end
 
@@ -675,8 +675,7 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
     ensure_local_env!()
     opts = cli_opts(opts, ctx)
 
-    {%{kind: :auth_methods_fresh, opts: opts}, %{tag: :ok, reply: ClaudeSDK.auth_methods(opts)},
-     state}
+    {%{kind: :auth_methods_fresh, opts: opts}, %{tag: :ok, reply: fake_auth_methods(opts)}, state}
   end
 
   defp execute(:capabilities, state, _transcript, _ctx) do
@@ -1056,5 +1055,11 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
       width: 98,
       custom_options: [sort_maps: true]
     ) <> "\n"
+  end
+
+  defp fake_auth_methods(opts, state \\ %ClaudeSDK{}) do
+    Arbor.ACP.Adapters.Internal.PrivateKeychain.with_runner(fn _ -> {:ok, "", 44} end, fn ->
+      ClaudeSDK.auth_methods(opts, state)
+    end)
   end
 end
