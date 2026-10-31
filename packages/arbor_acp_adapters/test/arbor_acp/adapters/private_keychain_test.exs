@@ -144,6 +144,48 @@ defmodule Arbor.ACP.Adapters.PrivateKeychainTest do
     refute File.exists?(home)
   end
 
+  test "relative profile overrides identify the same directory for terminal and child cwd changes" do
+    alias Arbor.ACP.Adapters.ClaudeSDK
+    alias Arbor.ACP.AdapterSupport.Subprocess
+    root = Path.join(System.tmp_dir!(), "acp_profile_path_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(Path.join(root, "workspace"))
+    on_exit(fn -> File.rm_rf!(root) end)
+    opts = [cwd: root, env: [{"ANTHROPIC_CONFIG_DIR", "profiles"}]]
+    {:ok, state} = ClaudeSDK.init(opts)
+    state = %{state | client_capabilities: %{"auth" => %{"terminal" => true}}}
+
+    [method | _] =
+      PrivateKeychain.with_runner(fn _ -> {:ok, "", 44} end, fn ->
+        ClaudeSDK.auth_methods(opts, state)
+      end)
+
+    profile = Path.join(root, "profiles")
+    assert method["env"]["ANTHROPIC_CONFIG_DIR"] == profile
+    # Managed children may switch workspaces; the connection's auth override stays fixed.
+    child_opts = Keyword.put(state.opts, :cwd, Path.join(root, "workspace"))
+
+    assert {:ok, ^profile, 0} =
+             Subprocess.capture(
+               "/bin/sh",
+               ["-c", ~s(printf '%s' "$ANTHROPIC_CONFIG_DIR")],
+               child_opts,
+               ClaudeSDK
+             )
+
+    # Unmanaged bridge launch retains the original environment's relative value,
+    # which the CLI resolves against the bridge's configured child cwd.
+    assert {:ok, relative, 0} =
+             Subprocess.capture(
+               "/bin/sh",
+               ["-c", ~s(printf '%s' "$ANTHROPIC_CONFIG_DIR")],
+               opts,
+               ClaudeSDK
+             )
+
+    assert Path.expand(relative, root) == profile
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
   test "generated Claude homes also isolate implicit Anthropic profiles" do
     opts = RuntimeHome.put_opt([], :claude)
     env = RuntimeHome.put(%{}, opts, :claude)

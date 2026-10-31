@@ -116,9 +116,24 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
       path ->
         opts = Keyword.put(opts, spec.option, path)
 
-        if kind == :claude and owned_path?(path, :claude),
-          do: Keyword.put_new(opts, :_anthropic_auth_dir, Path.join(path, "anthropic")),
-          else: opts
+        if kind == :claude and owned_path?(path, :claude) do
+          opts = Keyword.put_new(opts, :_anthropic_auth_dir, Path.join(path, "anthropic"))
+          supplied = normalize_env(Keyword.get(opts, :env, []))
+
+          case Map.fetch(supplied, "ANTHROPIC_CONFIG_DIR") do
+            {:ok, profile} when is_binary(profile) and profile != "" ->
+              Keyword.put(
+                opts,
+                :env,
+                Map.put(supplied, "ANTHROPIC_CONFIG_DIR", profile_path(profile, opts))
+              )
+
+            _absent ->
+              opts
+          end
+        else
+          opts
+        end
     end
   end
 
@@ -132,7 +147,7 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
                 "ANTHROPIC_CONFIG_DIR must be a nonempty path when workspace isolation is enabled"
 
         {:ok, path} ->
-          Map.put(env, "ANTHROPIC_CONFIG_DIR", Path.expand(path))
+          Map.put(env, "ANTHROPIC_CONFIG_DIR", profile_path(path, opts))
 
         :error ->
           Map.put(
@@ -144,6 +159,11 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
     else
       env
     end
+  end
+
+  defp profile_path(path, opts) do
+    cwd = Keyword.get(opts, :cwd) || Keyword.get(opts, :cd) || File.cwd!()
+    Path.expand(path, Path.expand(cwd))
   end
 
   def track_keychain(opts) do

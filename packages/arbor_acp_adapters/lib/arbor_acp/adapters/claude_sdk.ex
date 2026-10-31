@@ -2340,7 +2340,14 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     if path = env["CLAUDE_CONFIG_DIR"],
       do: RuntimeHome.track_keychain(Keyword.put(opts, :claude_config_dir, path))
 
-    env
+    case RuntimeHome.env_value(opts, "ANTHROPIC_CONFIG_DIR") do
+      nil ->
+        env
+
+      profile ->
+        cwd = Keyword.get(opts, :cwd) || Keyword.get(opts, :cd) || File.cwd!()
+        Map.put(env, "ANTHROPIC_CONFIG_DIR", Path.expand(profile, Path.expand(cwd)))
+    end
   end
 
   defp remote_environment? do
