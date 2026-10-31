@@ -133,10 +133,15 @@ defmodule Arbor.ACP.Adapters.PiTest do
       )
 
       settings = Settings.load(project, agent_dir: agent_dir)
-      assert settings["quietStartup"] == true
+      refute settings["quietStartup"]
       refute Map.has_key?(settings, "piCommand")
       assert Settings.pi_command([agent_dir: agent_dir], settings) == "pi"
       assert {"pi", _args} = Pi.cli_command(cwd: project, agent_dir: agent_dir)
+
+      trusted = Settings.load(project, agent_dir: agent_dir, trust_workspace_config: true)
+      assert trusted["quietStartup"] == true
+      refute Map.has_key?(trusted, "piCommand")
+      assert Settings.pi_command([agent_dir: agent_dir], trusted) == "pi"
 
       File.write!(
         Path.join(agent_dir, "settings.json"),
@@ -2267,6 +2272,8 @@ defmodule Arbor.ACP.Adapters.PiTest do
       prompts_dir = Path.join([tmp_dir, ".pi", "prompts"])
       File.mkdir_p!(prompts_dir)
       File.write!(Path.join(prompts_dir, "review.md"), "Review $1 and $@")
+
+      state = %{state | opts: Keyword.put(state.opts, :trust_workspace_config, true)}
 
       msg = %{"method" => "session/new", "id" => 25, "params" => %{"cwd" => tmp_dir}}
       {state, pi, _messages} = outbound(state, ordered_pi(ctx), msg)

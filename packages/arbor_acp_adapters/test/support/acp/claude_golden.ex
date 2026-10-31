@@ -912,6 +912,7 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
         Enum.reduce(acc.ctx.aliases, text, &String.replace(&2, &1, @sandbox_placeholder))
       end)
       |> String.replace(acc.home, "<home>")
+      |> normalize_runtime_home()
       |> normalize_timestamps(acc.now)
 
     acc =
@@ -969,6 +970,14 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
   defp child_role("id"), do: :acp_id
   defp child_role("fileSize"), do: :file_size
   defp child_role(_key), do: :other
+
+  defp normalize_runtime_home(binary) do
+    Regex.replace(~r{(?:/[^ \n\"]*)?arbor_acp_runtime_home_[A-Za-z0-9_-]+}, binary, fn path ->
+      if String.contains?(path, "arbor_acp_runtime_home_"),
+        do: "<generated-runtime-home>",
+        else: path
+    end)
+  end
 
   defp normalize_timestamps(binary, now) do
     Regex.replace(@timestamp_pattern, binary, fn stamp ->

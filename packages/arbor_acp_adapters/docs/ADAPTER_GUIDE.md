@@ -15,7 +15,7 @@ Pass the module as `adapter`, and vendor settings inside `adapter_opts`:
 | --- | --- | --- | --- |
 | Claude Code | `Arbor.ACP.Adapters.ClaudeSDK` | SDK stream-json control protocol | `cli_path`, then `CLAUDE_CODE_EXECUTABLE`, then `claude` |
 | Codex | `Arbor.ACP.Adapters.Codex` | `app-server` JSON-RPC | `codex_path`, then `CODEX_PATH`, then `codex` |
-| Pi | `Arbor.ACP.Adapters.Pi` | `--mode rpc --no-themes` | `cli_path`, `pi_command`, `PI_ACP_PI_COMMAND`, Pi settings, then `pi` |
+| Pi | `Arbor.ACP.Adapters.Pi` | `--mode rpc --no-themes` (plus `--no-context-files` and `--no-approve` unless `trust_workspace_config`) | `cli_path`, `pi_command`, `PI_ACP_PI_COMMAND`, Pi settings, then `pi` |
 | ZCode | `Arbor.ACP.Adapters.ZCode` | `app-server` NDJSON | `cli_path`, then `ZCODE_EXECUTABLE`, then `zcode` |
 
 The README contains a complete Codex session including cleanup. For another
@@ -55,7 +55,23 @@ of `false` unsets a variable.
 Built-in adapter defaults clear inherited provider keys and nested Claude session
 markers. Explicitly pass the credentials/configuration needed by the child;
 putting a key in the parent shell alone does not guarantee it reaches the agent.
-HOME remains available, so existing vendor login state may still be used.
+HOME remains available, so existing vendor login state may still be used
+when the adapter is not minting a private vendor config dir.
+
+Claude, Codex and Pi isolate workspace agent configuration by default:
+Claude is launched with `--setting-sources user` and `--strict-mcp-config`,
+and each of those adapters mints a private `CLAUDE_CONFIG_DIR` /
+`CODEX_HOME` / `PI_CODING_AGENT_DIR` keyed by ACP session id. Codex's minted
+home has no `AGENTS.md`, disables skills, and does not trust the project; Pi
+is launched with `--no-context-files` and `--no-approve` and ignores the
+workspace `.pi` tree, inherited `PI_CODING_AGENT_DIR`, and a
+`pi` executable that resolves inside the workspace. Existing vendor logins,
+global settings, models, skills and prompts are invisible until you point
+the adapter at a real home. Cleanup deletes the generated home, including
+transcripts and credentials written there. Pass `trust_workspace_config:
+true` to load project settings and use the normal vendor home again, or
+set `:claude_config_dir`, `:codex_home` or `:agent_dir` to keep a specific
+directory. A project's `piCommand` stays ignored even with the opt-in.
 
 ```elixir
 adapter_opts = [
@@ -109,7 +125,6 @@ Claude's subprocess must receive MCP configuration when it starts:
 ```elixir
 adapter_opts = [
   cwd: File.cwd!(),
-  strict_mcp_config: true,
   mcp_servers: %{
     "local-tools" => %{"type" => "http", "url" => "http://localhost:4000/mcp"}
   }
@@ -120,7 +135,9 @@ This is a map of names to Claude configuration, not an ACP `mcpServers` list.
 The adapter writes it to a 0600 file in a fresh 0700 directory and removes that
 file when the owning bridge exits. `mcp_config_path` instead accepts existing
 configuration file paths managed by the host, relative to `cwd` or absolute.
-`strict_mcp_config: true` asks Claude to use only the supplied configuration.
+`--strict-mcp-config` is the default, so Claude uses only the supplied
+configuration. Set `strict_mcp_config: false` or `trust_workspace_config: true`
+to allow Claude's own MCP files again.
 
 Session `mcp_servers` do not attach new servers to an already running Claude
 process. The adapter advertises no session MCP transport and reports

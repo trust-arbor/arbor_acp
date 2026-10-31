@@ -56,6 +56,13 @@ options.
 - Use an absolute `adapter_opts[:cwd]`. For Codex and ZCode, workspace roots
   default to cwd; checks resolve symlinks. Supply the documented authorization
   callbacks when accepting additional workspaces or caller-provided MCP servers.
+  Claude, Codex and Pi ignore workspace agent config (`.claude/settings*.json`,
+  `.mcp.json`, `.pi/`, `AGENTS.md`) unless `trust_workspace_config: true`, and
+  they mint a private per-session vendor config dir unless `:claude_config_dir`,
+  `:codex_home`, `:agent_dir`, or the matching `:env` variable is set. That empty home hides existing logins,
+  global settings, models, skills and prompts; cleanup deletes transcripts and
+  credentials written into it. Pass `trust_workspace_config: true` or an
+  explicit directory to keep today's behavior.
 - `trusted_mcp_servers` contains exact descriptor maps. A server name alone does
   not authorize an arbitrary URL, command or environment. Codex trusted-project
   registration additionally requires `trust_authorized_workspaces: true`.

@@ -4,6 +4,7 @@
 
 - Fix: Codex completions settle only the active turn, and a late start reply cannot reactivate a prompt that has finished.
 
+- **Security / behaviour change:** Claude, Codex and Pi adapters isolate workspace agent config by default (Claude `--setting-sources user` and `--strict-mcp-config`; private homes keyed by ACP session id; Codex minted homes omit `AGENTS.md`, disable skills, and do not trust the project; Pi `--no-context-files` / `--no-approve` and no workspace `.pi` / `AGENTS.md` unless `trust_workspace_config: true`). Existing logins, global settings, models, skills and prompts become invisible; cleanup deletes transcripts and credentials in the generated homes. Keep today's behavior with `trust_workspace_config: true` or an explicit `:claude_config_dir` / `:codex_home` / `:agent_dir`. See the adapters changelog.
 - Fix: the ACP client rejected `notice` and context compaction session updates as invalid even when the application had opted in with `clientCapabilities.session.notices` or `.compaction`. It now delivers them, accepting and salvaging them as the ACP SDK 1.9.0 v1 deserializer does (invalid optional values removed, invalid summary items skipped); without the capability it still drops them.
 
 ## ArborACP / Adapters 1.0.0-rc.4 — 2026-10-26

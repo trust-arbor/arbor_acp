@@ -9,6 +9,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
 
   alias Arbor.ACP.Adapters.ClaudeSDK.SessionStore
   alias Arbor.ACP.Adapters.Internal.Maps, as: MapHelpers
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
 
   @sdk_version "0.3.310"
 
@@ -52,7 +53,13 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
           "--allow-dangerously-skip-permissions"
         )
         |> append_flag(opts, :include_partial_messages, "--include-partial-messages", true)
-        |> append_flag(opts, :strict_mcp_config, "--strict-mcp-config")
+        |> append_setting_sources(opts)
+        |> append_flag(
+          opts,
+          :strict_mcp_config,
+          "--strict-mcp-config",
+          not RuntimeHome.trust_workspace_config?(opts)
+        )
         |> append_repeated(opts, :additional_directories, "--add-dir")
         |> append_optional(opts, :resume, "--resume")
         |> append_optional(opts, :resume_session_at, "--resume-session-at")
@@ -72,11 +79,15 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
 
   @doc "Environment required for Claude Code's SDK entrypoint."
   @spec env(keyword()) :: map()
-  def env(_opts) do
-    %{
-      "CLAUDE_CODE_ENTRYPOINT" => "sdk-ts",
-      "CLAUDE_AGENT_SDK_VERSION" => @sdk_version
-    }
+  def env(opts) do
+    RuntimeHome.put(
+      %{
+        "CLAUDE_CODE_ENTRYPOINT" => "sdk-ts",
+        "CLAUDE_AGENT_SDK_VERSION" => @sdk_version
+      },
+      opts,
+      :claude
+    )
   end
 
   @doc "Encodes one SDK message as an NDJSON line."
@@ -416,7 +427,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
   # pass this check in one form (say a charlist) and reach argv in another.
   @uuid_argv_keys [:resume, :session_id]
   @repeated_argv_keys [:additional_directories, :mcp_config_path]
-  @csv_argv_keys [:allowed_tools, :disallowed_tools, :tools]
+  @csv_argv_keys [:allowed_tools, :disallowed_tools, :tools, :setting_sources]
   @argv_keys @uuid_argv_keys ++
                @repeated_argv_keys ++
                @csv_argv_keys ++
@@ -519,6 +530,23 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.Protocol do
       paths -> args ++ ["--mcp-config" | Enum.map(paths, &to_string/1)]
     end
   end
+
+  # Project and local sources would load `.claude/settings*.json` from the
+  # workspace (hooks included). Default to user-only; omit the flag when the
+  # host opts back into the previous "every source" behavior.
+  defp append_setting_sources(args, opts) do
+    if RuntimeHome.trust_workspace_config?(opts) and not Keyword.has_key?(opts, :setting_sources) do
+      args
+    else
+      args ++
+        ["--setting-sources", setting_sources_value(Keyword.get(opts, :setting_sources, "user"))]
+    end
+  end
+
+  defp setting_sources_value(sources) when is_list(sources),
+    do: Enum.map_join(sources, ",", &to_string/1)
+
+  defp setting_sources_value(sources), do: to_string(sources)
 
   defp append_permission_mode(args, opts) do
     mode = Keyword.get(opts, :permission_mode, :default)

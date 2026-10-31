@@ -6,6 +6,12 @@ defmodule Arbor.ACP.Adapters.Pi do
   mode it owns a shared subprocess handle so a fresh Pi process can be
   attached to each loaded or resumed ACP session.
 
+  Workspace `.pi` settings, prompts, skills, packages and `AGENTS.md` are
+  ignored unless `:trust_workspace_config` is set. By default the child also
+  gets a private per-session `PI_CODING_AGENT_DIR`, `--no-context-files` and
+  `--no-approve`; inherited `PI_CODING_AGENT_DIR` is ignored and a workspace
+  `pi` executable is refused. Pass `:agent_dir` to keep a specific directory.
+
   Managed output uses one frame of shared delivery credit. Startup banners
   retained for session metadata are limited by `:max_prelude_lines` (64) and
   `:max_prelude_bytes` (65,536); exceeding either limit fails pending work.
@@ -37,6 +43,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   alias Arbor.ACP.AdapterEvents
   alias Arbor.RPC.JSONRPC, as: Envelope
   alias Arbor.ACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
   alias Arbor.ACP.Types
 
   @auth_method_id "pi_terminal_login"
@@ -100,14 +107,23 @@ defmodule Arbor.ACP.Adapters.Pi do
   def environment_defaults(opts), do: Arbor.ACP.Adapters.Internal.Environment.pi(opts)
 
   @impl true
+  def env(opts) do
+    %{}
+    |> RuntimeHome.put(opts, :pi)
+    |> maybe_put_session_dir(opts)
+  end
+
+  @impl true
   def init(opts) do
+    opts = RuntimeHome.put_opt(opts, :pi)
+
     {:ok,
      %__MODULE__{
        opts: opts,
        managed?: Keyword.get(opts, :managed, true),
        delete_session_files?: Keyword.get(opts, :delete_session_files, false),
        thinking_level: Keyword.get(opts, :thinking_level, Config.default_thinking_level()),
-       session_dir: Keyword.get(opts, :session_dir),
+       session_dir: session_dir(opts),
        session_map_path: Keyword.get(opts, :session_map_path, SessionStore.default_map_path()),
        cwd: Keyword.get(opts, :cwd),
        workspace_root: Keyword.get(opts, :cwd),
@@ -123,8 +139,8 @@ defmodule Arbor.ACP.Adapters.Pi do
     settings = Settings.load(Keyword.get(opts, :cwd), opts)
     cli_path = Settings.pi_command(opts, settings)
 
-    with {:ok, args} <-
-           append_opt(["--mode", "rpc", "--no-themes"], opts, :session_path, "--session") do
+    with {:ok, cli_path} <- reject_workspace_cli(cli_path, opts),
+         {:ok, args} <- append_opt(rpc_args(opts), opts, :session_path, "--session") do
       {cli_path, args}
     end
   end
@@ -167,9 +183,17 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   @impl true
+  def auth_methods(opts, %{opts: state_opts}) when is_list(state_opts) do
+    auth_methods(Keyword.merge(opts, state_opts))
+  end
+
+  def auth_methods(opts, _state), do: auth_methods(opts)
+
+  @impl true
   def auth_methods(opts) do
     settings = Settings.load(Keyword.get(opts, :cwd), opts)
     command = Settings.pi_command(opts, settings)
+    env = terminal_home_env(opts)
 
     [
       %{
@@ -178,12 +202,13 @@ defmodule Arbor.ACP.Adapters.Pi do
         "description" => "Start pi interactively to configure API keys or login",
         "type" => "terminal",
         "args" => [],
-        "env" => %{},
+        "env" => env,
         "_meta" => %{
           "terminal-auth" => %{
             "command" => command,
             "args" => [],
-            "label" => "Launch pi"
+            "label" => "Launch pi",
+            "env" => env
           }
         }
       }
@@ -584,7 +609,7 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   @impl true
   def shutdown(state) do
-    state = close_active_session(state)
+    state = state |> close_active_session() |> release_stopped_home()
 
     case state.cleanup_result do
       {:error, reason} -> {:error, reason, state}
@@ -593,12 +618,14 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   defp prepare_session_process(cwd, _session_file, %{managed?: false} = state) do
-    settings = Settings.load(cwd, state.opts)
+    opts = session_runtime_opts(state.opts, cwd)
+    settings = Settings.load(cwd, opts)
 
     {:ok,
      %{
        state
-       | cwd: cwd,
+       | opts: opts,
+         cwd: cwd,
          workspace_root: cwd,
          settings: settings,
          last_session_cwd: cwd,
@@ -608,12 +635,14 @@ defmodule Arbor.ACP.Adapters.Pi do
   end
 
   defp prepare_session_process(cwd, session_file, state) do
-    settings = Settings.load(cwd, state.opts)
+    state = close_active_session(state)
+    opts = session_runtime_opts(state.opts, cwd)
+    settings = Settings.load(cwd, opts)
 
     state =
       state
-      |> close_active_session()
       |> Map.merge(%{
+        opts: opts,
         cwd: cwd,
         workspace_root: cwd,
         settings: settings,
@@ -624,20 +653,25 @@ defmodule Arbor.ACP.Adapters.Pi do
 
     case state.cleanup_result do
       :ok ->
-        opts =
-          state.opts |> Keyword.put(:cwd, cwd) |> maybe_keyword_put(:session_path, session_file)
+        launch_opts = maybe_keyword_put(opts, :session_path, session_file)
 
-        case cli_command(opts) do
+        case cli_command(launch_opts) do
           {:error, reason} ->
             {:error, inspect(reason), state}
 
           {cmd, args} ->
-            open_session_process(cmd, args, opts, state)
+            open_session_process(cmd, args, launch_opts, state)
         end
 
       {:error, reason} ->
         {:error, inspect(reason), state}
     end
+  end
+
+  defp session_runtime_opts(opts, cwd) do
+    opts
+    |> Keyword.put(:cwd, cwd)
+    |> RuntimeHome.put_opt(:pi)
   end
 
   @closed_during_setup "The session was closed before this session setup completed"
@@ -652,6 +686,7 @@ defmodule Arbor.ACP.Adapters.Pi do
   # still get their replies.
   defp close_session(state) do
     {messages, abort, state} = end_session(state)
+    state = release_stopped_home(state)
     # The client closed the session, so nothing is published for it any more:
     # an operation still in flight finds its session gone.
     {messages, abort, %{state | session_id: nil, session_file: nil}}
@@ -743,7 +778,17 @@ defmodule Arbor.ACP.Adapters.Pi do
         subprocess_error: error,
         cleanup_result: result
     })
+    |> release_stopped_home()
   end
+
+  # Unmanaged input consumers keep their child alive across ACP close. Its
+  # home remains until the owner exits; the RuntimeHome owner monitor then
+  # removes it. Managed homes can go only after confirmed child cleanup.
+  defp release_stopped_home(%{managed?: true, port: nil, cleanup_result: :ok} = state) do
+    %{state | opts: RuntimeHome.release_opt(state.opts, :pi)}
+  end
+
+  defp release_stopped_home(state), do: state
 
   defp clear_pending_runtime_state(state) do
     %{
@@ -3030,6 +3075,74 @@ defmodule Arbor.ACP.Adapters.Pi do
 
       {:error, reason} ->
         {:error, inspect(reason), state}
+    end
+  end
+
+  defp rpc_args(opts) do
+    args = ["--mode", "rpc", "--no-themes"]
+
+    if RuntimeHome.trust_workspace_config?(opts) do
+      args
+    else
+      args ++ ["--no-context-files", "--no-approve"]
+    end
+  end
+
+  defp session_dir(opts) do
+    case Keyword.get(opts, :session_dir) do
+      dir when is_binary(dir) and dir != "" ->
+        Path.expand(dir)
+
+      _ ->
+        case RuntimeHome.env_value(opts, "PI_CODING_AGENT_SESSION_DIR") do
+          dir when is_binary(dir) and dir != "" -> Path.expand(dir)
+          _ -> nil
+        end
+    end
+  end
+
+  defp maybe_put_session_dir(env, opts) do
+    case session_dir(opts) do
+      nil -> env
+      dir -> Map.put(env, "PI_CODING_AGENT_SESSION_DIR", dir)
+    end
+  end
+
+  defp reject_workspace_cli(cli_path, opts) do
+    cwd = Keyword.get(opts, :cwd)
+    explicit? = explicit_cli_path?(opts)
+
+    if explicit? or not is_binary(cwd) or cwd == "" do
+      {:ok, cli_path}
+    else
+      case resolved_cli(cli_path) do
+        resolved when is_binary(resolved) ->
+          if WorkspacePath.within?(resolved, cwd) do
+            {:error, {:invalid_option, :cli_path, "refusing a workspace Pi executable"}}
+          else
+            {:ok, cli_path}
+          end
+
+        _missing ->
+          {:ok, cli_path}
+      end
+    end
+  end
+
+  defp explicit_cli_path?(opts) do
+    Keyword.has_key?(opts, :cli_path) or Keyword.has_key?(opts, :pi_command)
+  end
+
+  defp resolved_cli(cmd) when is_binary(cmd) do
+    if Path.type(cmd) == :absolute, do: Path.expand(cmd), else: System.find_executable(cmd)
+  end
+
+  defp resolved_cli(_cmd), do: nil
+
+  defp terminal_home_env(opts) do
+    case RuntimeHome.path(opts, :pi) do
+      nil -> %{}
+      path -> %{"PI_CODING_AGENT_DIR" => path}
     end
   end
 

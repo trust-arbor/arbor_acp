@@ -1,6 +1,8 @@
 defmodule Arbor.ACP.Adapters.Pi.SessionStore do
   @moduledoc false
 
+  alias Arbor.ACP.Adapters.Pi.Settings
+
   @version 1
 
   @spec default_map_path() :: String.t()
@@ -89,13 +91,7 @@ defmodule Arbor.ACP.Adapters.Pi.SessionStore do
     end
   end
 
-  defp pi_agent_dir(opts) do
-    case Keyword.get(opts, :agent_dir) || System.get_env("PI_CODING_AGENT_DIR") do
-      nil -> Path.join(System.user_home!(), ".pi/agent")
-      "" -> Path.join(System.user_home!(), ".pi/agent")
-      dir -> Path.expand(dir)
-    end
-  end
+  defp pi_agent_dir(opts), do: Settings.agent_dir(opts)
 
   defp pi_agent_settings_session_dir(agent_dir) do
     path = Path.join(agent_dir, "settings.json")

@@ -69,6 +69,8 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
     |> Enum.map(fn commands -> Enum.map(commands, & &1["name"]) end)
   end
 
+  defp trust_project(steps), do: [{:init, trust_workspace_config: true} | steps]
+
   describe "built-in commands" do
     test "compact_with_and_without_instructions" do
       steps =
@@ -339,24 +341,26 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
   describe "file commands" do
     test "file_commands_expand_positional_and_all_arguments" do
       steps =
-        [
-          {:write_file, "<sandbox>/project/.pi/prompts/review.md",
-           "Review $1 against $2; all: $@"},
-          {:write_file, "<sandbox>/agent/prompts/fix.md",
-           "---\ndescription: Fix a bug\n---\nFix $1 now"}
-        ] ++
-          Flows.open_session(1) ++
+        trust_project(
           [
-            Flows.prompt(2, "/review src/a.ex src/b.ex extra"),
-            Flows.agent_settled(),
-            Flows.prompt(3, "/review only"),
-            Flows.agent_settled(),
-            Flows.prompt(4, "/fix"),
-            Flows.agent_settled(),
-            Flows.prompt(5, "/unknown foo bar"),
-            Flows.agent_settled(),
-            Flows.prompt(6, "/unknown")
-          ]
+            {:write_file, "<sandbox>/project/.pi/prompts/review.md",
+             "Review $1 against $2; all: $@"},
+            {:write_file, "<sandbox>/agent/prompts/fix.md",
+             "---\ndescription: Fix a bug\n---\nFix $1 now"}
+          ] ++
+            Flows.open_session(1) ++
+            [
+              Flows.prompt(2, "/review src/a.ex src/b.ex extra"),
+              Flows.agent_settled(),
+              Flows.prompt(3, "/review only"),
+              Flows.agent_settled(),
+              Flows.prompt(4, "/fix"),
+              Flows.agent_settled(),
+              Flows.prompt(5, "/unknown foo bar"),
+              Flows.agent_settled(),
+              Flows.prompt(6, "/unknown")
+            ]
+        )
 
       transcript =
         PiGolden.assert_golden(@area, "file_commands_expand_positional_and_all_arguments", steps)
@@ -372,16 +376,18 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
 
     test "file_commands_are_advertised_with_source_labels" do
       steps =
-        [
-          {:write_file, "<sandbox>/project/.pi/prompts/review.md",
-           "Review the change carefully and thoroughly, checking every edge case you can find"},
-          {:write_file, "<sandbox>/project/.pi/prompts/nested/deep/plan.md",
-           "---\ndescription: Plan work\nextra: ignored\n---\n\nPlan $1"},
-          {:write_file, "<sandbox>/agent/prompts/review.md", "User-level review"},
-          {:write_file, "<sandbox>/agent/prompts/compact.md", "Shadows a builtin"},
-          {:write_file, "<sandbox>/agent/prompts/empty.md", ""},
-          {:write_file, "<sandbox>/agent/prompts/notes.txt", "not a command"}
-        ] ++ Flows.open_session(1)
+        trust_project(
+          [
+            {:write_file, "<sandbox>/project/.pi/prompts/review.md",
+             "Review the change carefully and thoroughly, checking every edge case you can find"},
+            {:write_file, "<sandbox>/project/.pi/prompts/nested/deep/plan.md",
+             "---\ndescription: Plan work\nextra: ignored\n---\n\nPlan $1"},
+            {:write_file, "<sandbox>/agent/prompts/review.md", "User-level review"},
+            {:write_file, "<sandbox>/agent/prompts/compact.md", "Shadows a builtin"},
+            {:write_file, "<sandbox>/agent/prompts/empty.md", ""},
+            {:write_file, "<sandbox>/agent/prompts/notes.txt", "not a command"}
+          ] ++ Flows.open_session(1)
+        )
 
       transcript =
         PiGolden.assert_golden(@area, "file_commands_are_advertised_with_source_labels", steps)
@@ -445,12 +451,14 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
       ]
 
       steps =
-        [{:write_file, "<sandbox>/project/.pi/prompts/review.md", "Review $@"}] ++
-          Flows.open_session(1, commands: pi_commands) ++
-          [
-            Flows.prompt(2, "/review this"),
-            Flows.agent_settled()
-          ]
+        trust_project(
+          [{:write_file, "<sandbox>/project/.pi/prompts/review.md", "Review $@"}] ++
+            Flows.open_session(1, commands: pi_commands) ++
+            [
+              Flows.prompt(2, "/review this"),
+              Flows.agent_settled()
+            ]
+        )
 
       transcript =
         PiGolden.assert_golden(@area, "pi_commands_merge_with_file_and_builtin_commands", steps)
@@ -497,35 +505,37 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
       ]
 
       steps =
-        [
-          {:write_file, "<sandbox>/agent/settings.json",
-           %{"quietStartup" => true, "enableSkillCommands" => false}}
-        ] ++
-          Flows.open_session(1, commands: pi_commands) ++
+        trust_project(
           [
             {:write_file, "<sandbox>/agent/settings.json",
-             %{"quietStartup" => true, "skills" => %{"enableSkillCommands" => false}}}
+             %{"quietStartup" => true, "enableSkillCommands" => false}}
           ] ++
-          Flows.open_session(2, commands: pi_commands) ++
-          [
-            {:write_file, "<sandbox>/project/.pi/settings.json",
-             %{"skills" => %{"enableSkillCommands" => true}}}
-          ] ++
-          Flows.open_session(3, commands: pi_commands) ++
-          [
-            {:write_file, "<sandbox>/agent/settings.json",
-             %{"quietStartup" => true, "enableSkillCommands" => "false"}},
-            {:write_file, "<sandbox>/project/.pi/settings.json", "{not json"}
-          ] ++
-          [
-            Flows.session_new(4),
-            {:respond, "new_session", %{}},
-            {:respond, "get_state", Flows.state_data()},
-            {:respond, "get_available_models", %{"models" => Flows.models()}},
-            {:respond, "get_available_thinking_levels",
-             %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
-            {:respond, "get_commands", %{"data" => %{"commands" => pi_commands}}}
-          ]
+            Flows.open_session(1, commands: pi_commands) ++
+            [
+              {:write_file, "<sandbox>/agent/settings.json",
+               %{"quietStartup" => true, "skills" => %{"enableSkillCommands" => false}}}
+            ] ++
+            Flows.open_session(2, commands: pi_commands) ++
+            [
+              {:write_file, "<sandbox>/project/.pi/settings.json",
+               %{"skills" => %{"enableSkillCommands" => true}}}
+            ] ++
+            Flows.open_session(3, commands: pi_commands) ++
+            [
+              {:write_file, "<sandbox>/agent/settings.json",
+               %{"quietStartup" => true, "enableSkillCommands" => "false"}},
+              {:write_file, "<sandbox>/project/.pi/settings.json", "{not json"}
+            ] ++
+            [
+              Flows.session_new(4),
+              {:respond, "new_session", %{}},
+              {:respond, "get_state", Flows.state_data()},
+              {:respond, "get_available_models", %{"models" => Flows.models()}},
+              {:respond, "get_available_thinking_levels",
+               %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
+              {:respond, "get_commands", %{"data" => %{"commands" => pi_commands}}}
+            ]
+        )
 
       transcript =
         PiGolden.assert_golden(
@@ -544,7 +554,7 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
 
     test "available_commands_are_sent_after_load_and_resume" do
       steps =
-        [
+        trust_project([
           Flows.session_map([{"mapped", "<sandbox>/project", Flows.session_file("mapped")}]),
           {:write_file, "<sandbox>/project/.pi/prompts/local.md", "Local prompt"},
           Flows.session_load(1, "mapped"),
@@ -563,7 +573,7 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
           {:respond, "get_available_thinking_levels",
            %{"levels" => ["off", "minimal", "low", "medium", "high", "xhigh"]}},
           {:respond, "get_commands", %{}}
-        ]
+        ])
 
       transcript =
         PiGolden.assert_golden(@area, "available_commands_are_sent_after_load_and_resume", steps)
@@ -575,18 +585,20 @@ defmodule Arbor.ACP.Adapters.Pi.SlashCommandsGoldenTest do
   describe "routing edge cases" do
     test "command_names_are_case_sensitive_and_unknown_names_are_forwarded" do
       steps =
-        [{:write_file, "<sandbox>/project/.pi/prompts/Review.md", "Capitalized $@"}] ++
-          Flows.open_session(1) ++
-          [
-            Flows.prompt(2, "/COMPACT now"),
-            Flows.agent_settled(),
-            Flows.prompt(3, "/Review it"),
-            Flows.agent_settled(),
-            Flows.prompt(4, "/review it"),
-            Flows.agent_settled(),
-            Flows.prompt(5, "/name:sub value"),
-            Flows.agent_settled()
-          ]
+        trust_project(
+          [{:write_file, "<sandbox>/project/.pi/prompts/Review.md", "Capitalized $@"}] ++
+            Flows.open_session(1) ++
+            [
+              Flows.prompt(2, "/COMPACT now"),
+              Flows.agent_settled(),
+              Flows.prompt(3, "/Review it"),
+              Flows.agent_settled(),
+              Flows.prompt(4, "/review it"),
+              Flows.agent_settled(),
+              Flows.prompt(5, "/name:sub value"),
+              Flows.agent_settled()
+            ]
+        )
 
       transcript =
         PiGolden.assert_golden(

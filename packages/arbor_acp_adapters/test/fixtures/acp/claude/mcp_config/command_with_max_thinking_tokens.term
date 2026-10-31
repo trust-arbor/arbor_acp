@@ -20,7 +20,8 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--thinking", "disabled", "--permission-prompt-tool", "stdio", "--permission-mode",
-         "default", "--include-partial-messages"],
+         "default", "--include-partial-messages", "--setting-sources", "user",
+         "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok
@@ -32,7 +33,8 @@
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
          "--max-thinking-tokens", "8000", "--permission-prompt-tool", "stdio",
-         "--permission-mode", "default", "--include-partial-messages"],
+         "--permission-mode", "default", "--include-partial-messages", "--setting-sources",
+         "user", "--strict-mcp-config"],
         executable: "<sandbox>/bin/claude"
       },
       tag: :ok

@@ -34,7 +34,20 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       path is resolved against `:cwd`. A path that is not an existing file is
       an `{:invalid_option, :mcp_config_path, message}` error.
     * `:strict_mcp_config` - when true, Claude Code uses only the servers given
-      through the options above and ignores the user's own MCP configuration.
+      through the options above and ignores user and project MCP configuration
+      (including a workspace `.mcp.json`). Defaults to true unless the host
+      sets `:trust_workspace_config`.
+    * `:setting_sources` - Claude Code `--setting-sources` value (default
+      `"user"`). Project and local sources are omitted so a workspace
+      `.claude/settings*.json` cannot install hooks. Pass an explicit list or
+      `:trust_workspace_config` to restore the previous sources.
+    * `:trust_workspace_config` - opt back into loading workspace Claude
+      settings, `.mcp.json`, and the host Claude config directory.
+    * `:claude_config_dir` - Claude config directory. When omitted, the
+      adapter mints a private 0700 directory per ACP session, stores it on
+      adapter and session-store state, and sets `CLAUDE_CONFIG_DIR` for the
+      child and for terminal login. Existing `~/.claude` logins and settings
+      are invisible unless this option or `:trust_workspace_config` is set.
 
   The `mcpServers` of `session/new`, `session/load`, `session/resume` and
   `session/fork` are not attached: the Claude Code process is already running.
@@ -61,6 +74,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   alias Arbor.RPC.JSONRPC, as: Envelope
   alias Arbor.RPC.Subprocess
   alias Arbor.ACP.Adapters.Internal.PromptQueue
+  alias Arbor.ACP.Adapters.Internal.RuntimeHome
 
   @session_fields [
     :session_id,
@@ -184,6 +198,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   @impl true
   def init(opts) do
+    opts = RuntimeHome.put_opt(opts, :claude)
+
     {:ok,
      %__MODULE__{
        opts: opts,
@@ -303,7 +319,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       params
       |> session_store_opts(state)
       |> Map.put(:cwd, cwd)
-      |> SessionStore.list_acp_sessions()
+      |> SessionStore.list_acp_sessions_from_homes(session_store_homes(state))
       |> case do
         {:ok, sessions} -> {:ok, sessions, state}
         {:error, reason} -> {:error, reason, state}
@@ -340,7 +356,28 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
               permission_mode: Map.get(parent_fields, :permission_mode)
           }
 
-          case start_session_process(forked_session_id, cwd, params, :fork, state) do
+          state = ensure_session_home(state, forked_session_id)
+
+          parent_opts =
+            params
+            |> Map.put("sessionId", session_id)
+            |> session_store_opts(state)
+            |> Map.put(:cwd, cwd)
+
+          result =
+            with :ok <-
+                   relocate_fork(
+                     forked_session_id,
+                     cwd,
+                     parent_opts,
+                     session_home_opts(state, forked_session_id)
+                   ) do
+              start_session_process(forked_session_id, cwd, params, :fork, state)
+            else
+              {:error, reason} -> {:error, reason, state}
+            end
+
+          case result do
             {:ok, state} ->
               {:ok, Mapper.session_result(state, forked_session_id), state}
 
@@ -424,7 +461,14 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     |> Enum.reduce(state, fn {session_id, entry}, acc ->
       forget_session_process(acc, session_id, entry.handle)
     end)
-    |> then(&{:ok, &1})
+    |> then(fn state ->
+      Enum.each(state.session_homes, fn {id, _home} ->
+        RuntimeHome.release(runtime_home_release_opts(state, id), :claude)
+      end)
+
+      RuntimeHome.release(state.opts, :claude)
+      {:ok, %{state | session_homes: %{}}}
+    end)
   end
 
   # The bridge writes what translate_outbound/2 returns. When it cannot, it
@@ -559,7 +603,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
     session_id =
       if state.managed? do
-        params["sessionId"] || generated_session_id()
+        params["sessionId"] || SessionStore.new_session_id()
       else
         state.session_id || params["sessionId"] || generated_session_id()
       end
@@ -570,7 +614,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
       case start_session_process(session_id, cwd, params, :new, state) do
         {:ok, state} ->
-          state = %{state | session_id: session_id, claude_session_id: nil, cwd: cwd}
+          state = %{
+            state
+            | session_id: session_id,
+              claude_session_id: if(state.managed?, do: state.claude_session_id, else: nil),
+              cwd: cwd
+          }
 
           reply_with_bypass_policy(params, state, fn state ->
             Mapper.session_result(state, session_id)
@@ -1169,9 +1218,16 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       cursor: params["cursor"] || params[:cursor],
       limit: params["limit"] || params[:limit],
       offset: params["offset"] || params[:offset],
-      claude_config_dir: Keyword.get(state.opts, :claude_config_dir),
+      claude_config_dir:
+        Keyword.get(
+          session_home_opts(state, params["sessionId"] || state.session_id),
+          :claude_config_dir,
+          Keyword.get(state.opts, :claude_config_dir)
+        ),
       env: Keyword.get(state.opts, :env, []),
-      include_worktrees: false
+      include_worktrees: false,
+      session_id: params["sessionId"] || state.session_id || Keyword.get(state.opts, :session_id),
+      trust_workspace_config: Keyword.get(state.opts, :trust_workspace_config, false)
     }
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
@@ -1372,7 +1428,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     do: {:ok, state}
 
   defp start_session_process(session_id, cwd, _params, kind, state) do
-    state = persist_current_session(state)
+    state = state |> persist_current_session() |> ensure_session_home(session_id)
     opts = session_process_opts(state, cwd, session_id, kind)
 
     case cli_command(opts) do
@@ -1384,18 +1440,81 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     end
   end
 
+  defp ensure_session_home(state, session_id) do
+    if Map.has_key?(state.session_homes, session_id) do
+      state
+    else
+      opts =
+        state.opts |> Keyword.put(:_runtime_home_session, session_id) |> Keyword.delete(:resume)
+
+      home = opts |> RuntimeHome.put_opt(:claude) |> Keyword.take([:claude_config_dir])
+      %{state | session_homes: Map.put(state.session_homes, session_id, home)}
+    end
+  end
+
+  defp session_store_homes(state) do
+    [
+      Keyword.get(state.opts, :claude_config_dir)
+      | Enum.map(state.session_homes, fn {_id, opts} -> Keyword.get(opts, :claude_config_dir) end)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp relocate_fork(session_id, cwd, parent_opts, home_opts) do
+    source_home = SessionStore.config_dir(parent_opts)
+    target_home = Keyword.get(home_opts, :claude_config_dir, source_home)
+
+    if source_home == target_home do
+      :ok
+    else
+      opts = parent_opts |> Map.put(:offset, 0) |> Map.delete(:cursor) |> Map.delete(:limit)
+
+      with {:ok, sessions} <- SessionStore.list_sessions(opts),
+           %{"path" => source} <- Enum.find(sessions, &(&1["sessionId"] == session_id)),
+           target_dir = Path.join([target_home, "projects", SessionStore.project_key(cwd)]),
+           true <- WorkspacePath.within?(target_dir, target_home),
+           :ok <- File.mkdir_p(target_dir),
+           {:ok, contents} <- File.read(source),
+           :ok <-
+             File.write(Path.join(target_dir, session_id <> ".jsonl"), contents, [
+               :write,
+               :exclusive
+             ]),
+           :ok <- SessionStore.delete_session(session_id, parent_opts) do
+        :ok
+      else
+        {:error, reason} -> {:error, inspect(reason)}
+        _missing_or_unsafe -> {:error, "Forked Claude session could not be moved to its home"}
+      end
+    end
+  end
+
   defp session_process_opts(state, cwd, session_id, kind) do
     opts =
       state.opts
       |> Keyword.put(:cwd, cwd)
+      |> Keyword.put(:_runtime_home_session, session_id)
       |> Keyword.delete(:resume)
       |> Keyword.merge(session_home_opts(state, session_id))
       |> constrain_child_permissions(state)
 
-    if kind in [:load, :resume, :fork] and SessionStore.valid_session_id?(session_id) do
-      Keyword.put(opts, :resume, session_id)
-    else
-      opts
+    opts = Keyword.delete(opts, :session_id)
+
+    cond do
+      kind in [:load, :resume, :fork] and SessionStore.valid_session_id?(session_id) ->
+        Keyword.put(opts, :resume, session_id)
+
+      kind == :new ->
+        native_id =
+          if SessionStore.valid_session_id?(session_id),
+            do: session_id,
+            else: SessionStore.new_session_id()
+
+        Keyword.put(opts, :session_id, native_id)
+
+      true ->
+        opts
     end
   end
 
@@ -1431,7 +1550,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           monitor: monitor,
           fields:
             Map.take(
-              %{state | session_id: session_id, cwd: Keyword.get(opts, :cwd)},
+              %{
+                state
+                | session_id: session_id,
+                  claude_session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
+                  cwd: Keyword.get(opts, :cwd)
+              },
               @session_fields
             )
         }
@@ -1440,6 +1564,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           state
           | port: handle,
             session_id: session_id,
+            claude_session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
             cwd: Keyword.get(opts, :cwd),
             pending_controls: Map.put(state.pending_controls, request_id, :initialize),
             session_processes: Map.put(state.session_processes, session_id, entry)
@@ -1717,6 +1842,14 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     {queued_messages, state} = cancel_queued_prompts(state, session_id)
     {active_messages, state} = cancel_active_prompt(state, session_id)
 
+    state = close_session_process(state, session_id)
+
+    if owns_runtime_home?(state, session_id) do
+      _ = RuntimeHome.release(runtime_home_release_opts(state, session_id), :claude)
+    end
+
+    state = %{state | session_homes: Map.delete(state.session_homes, session_id)}
+
     state =
       if state.session_id == session_id do
         %{
@@ -1738,6 +1871,20 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       end
 
     {active_messages ++ queued_messages, state}
+  end
+
+  defp owns_runtime_home?(state, session_id) do
+    Map.has_key?(state.session_homes, session_id) or
+      state.session_id == session_id or Keyword.get(state.opts, :session_id) == session_id
+  end
+
+  defp runtime_home_release_opts(state, session_id) do
+    state.opts
+    |> Keyword.put(
+      :session_id,
+      session_id || state.session_id || Keyword.get(state.opts, :session_id)
+    )
+    |> Keyword.merge(session_home_opts(state, session_id))
   end
 
   defp cancel_active_prompt(%{pending_prompt_id: nil} = state, _session_id), do: {[], state}
@@ -1827,7 +1974,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           cli_path,
           [],
           "Claude Login",
-          include_meta?
+          include_meta?,
+          opts
         )
       ]
     else
@@ -1839,7 +1987,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           cli_path,
           ["auth", "login", "--claudeai"],
           "Claude Login",
-          include_meta?
+          include_meta?,
+          opts
         ),
         terminal_auth_method(
           "console-login",
@@ -1848,19 +1997,23 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           cli_path,
           ["auth", "login", "--console"],
           "Anthropic Console Login",
-          include_meta?
+          include_meta?,
+          opts
         )
       ]
     end
   end
 
-  defp terminal_auth_method(id, name, description, command, args, label, include_meta?) do
+  defp terminal_auth_method(id, name, description, command, args, label, include_meta?, opts) do
+    env = terminal_home_env(opts)
+
     method = %{
       "id" => id,
       "name" => name,
       "description" => description,
       "type" => "terminal",
-      "args" => args
+      "args" => args,
+      "env" => env
     }
 
     if include_meta? do
@@ -1868,11 +2021,19 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
         "terminal-auth" => %{
           "command" => command,
           "args" => args,
-          "label" => label
+          "label" => label,
+          "env" => env
         }
       })
     else
       method
+    end
+  end
+
+  defp terminal_home_env(opts) do
+    case RuntimeHome.path(opts, :claude) do
+      nil -> %{}
+      path -> %{"CLAUDE_CONFIG_DIR" => path}
     end
   end
 
