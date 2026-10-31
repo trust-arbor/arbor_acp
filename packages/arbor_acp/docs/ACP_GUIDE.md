@@ -221,6 +221,36 @@ workspace/MCP authorization. Claude Code configures MCP servers at process launc
 instead of from session parameters; consult the adapter guide before forwarding
 configuration from a user or remote client.
 
+## MCP-over-ACP (UNSTABLE)
+
+The ACP SDK 1.9 v1 schema defines an unstable `type: "acp"` transport that
+carries MCP on the ACP connection. It is not part of the stable ACP spec and
+may change. `stdio`, `http`, and `sse` descriptors stay opaque session
+configuration. ArborACP does not install or start those servers.
+
+`Types.agent_capabilities(acp_mcp: true)` advertises `mcpCapabilities.acp`.
+The client includes `Types.acp_mcp_server/3` on `session/new`, `session/load`,
+`session/resume`, and `session/fork` only when that value is exactly `true`
+and a provider is registered for the server id. Without the advertisement or
+the provider, that entry is omitted, the session still opens, and the
+successful result lists it under `omittedMcpServers`.
+
+`Arbor.ACP.Agent.mcp_request/5` sends `mcp/message` for a server declared on
+that session. It follows the capabilities the agent actually sent, including
+a `handle_initialize/3` override. Register the provider with
+`Client.register_mcp_provider/3` or the `mcp_providers` start option.
+`Client.mcp_notify/5` sends a notification for a request that is still in
+flight when called with that request's `:token`. A `:handler` provider
+callback runs concurrently and must return its handler state unchanged. A
+changed state is logged, emitted as
+`[:arbor_acp, :mcp, :handler, :state_discarded]`, and discarded. A queued
+callback does not start after its session closes or its request is cancelled.
+The client handler has no stateful execution mode. The design note is
+[MCP-over-ACP](MCP_OVER_ACP.md).
+
+Serving an Arbor MCP server through a provider, so its tools are available on
+this channel, is a follow-up.
+
 ## Write a native Elixir agent
 
 Implement `Arbor.ACP.Agent.Handler` and run it from a compiled application's stdio

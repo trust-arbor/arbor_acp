@@ -153,6 +153,32 @@ defmodule Arbor.ACP.Client.Handler do
   @doc "Called when the handler is being terminated."
   @callback terminate(reason :: any(), state()) :: :ok
 
+  @doc """
+  UNSTABLE. Serves an in-flight `mcp/message` request when the provider
+  registered for that server id is `:handler`.
+
+  `request` is the validated params object. `context` includes `:client`,
+  `:session_id`, `:server_id`, `:request_id`, and `:token`. Pass `:token` to
+  `Arbor.ACP.Client.mcp_notify/5`. Return the handler state as the last
+  element: `{:ok, json, state}`, `{:mcp_error, error_map, state}`, or
+  `{:error, reason, state}`.
+
+  Callbacks run concurrently with each other and with the client's other
+  handler callbacks. The client handler has no stateful mode. Return `state`
+  unchanged. A changed state is a contract violation: it is logged at error
+  level, emitted as `[:arbor_acp, :mcp, :handler, :state_discarded]`, and
+  discarded. The MCP request is still answered. A callback that has not
+  entered does not start after its session closes or its request is
+  cancelled. A close answers the request then, even while a load or resume
+  still holds the server id, and a callback that has already entered is
+  stopped. A late result is not delivered. The design note is
+  `docs/MCP_OVER_ACP.md`.
+  """
+  @callback handle_mcp_request(session_id :: String.t(), request :: map(), map(), state()) ::
+              {:ok, term(), state()}
+              | {:mcp_error, map(), state()}
+              | {:error, term(), state()}
+
   @optional_callbacks [
     handle_session_update: 3,
     handle_session_update: 4,
@@ -166,6 +192,7 @@ defmodule Arbor.ACP.Client.Handler do
     handle_elicitation_complete: 2,
     handle_extension_request: 3,
     handle_extension_notification: 3,
+    handle_mcp_request: 4,
     terminate: 2
   ]
 end

@@ -592,6 +592,62 @@ defmodule Arbor.ACP.ProtocolTest do
     end
   end
 
+  describe "mcp/message" do
+    test "encodes a request and omits nil params and meta" do
+      msg = Protocol.encode_mcp_message_request("tools", "req-1", "tools/list", id: 7)
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "mcp/message"
+      assert msg["id"] == 7
+
+      assert msg["params"] == %{
+               "serverId" => "tools",
+               "requestId" => "req-1",
+               "method" => "tools/list"
+             }
+
+      refute Map.has_key?(msg["params"], "params")
+      refute Map.has_key?(msg["params"], "_meta")
+    end
+
+    test "encodes params and meta when they are present" do
+      msg =
+        Protocol.encode_mcp_message_request("tools", "req-1", "tools/call",
+          id: "outer-1",
+          params: %{"name" => "echo"},
+          meta: %{"trace" => "1"}
+        )
+
+      assert msg["params"]["params"] == %{"name" => "echo"}
+      assert msg["params"]["_meta"] == %{"trace" => "1"}
+    end
+
+    test "encodes a notification without an id" do
+      msg =
+        Protocol.encode_mcp_message_notification("tools", "req-1", "notifications/progress",
+          params: %{"progress" => 1}
+        )
+
+      assert {:notification, "mcp/message", params} = Protocol.parse_message(msg)
+      assert params["method"] == "notifications/progress"
+      assert params["params"] == %{"progress" => 1}
+      refute Map.has_key?(msg, "id")
+    end
+
+    test "encodes inner success and inner error as outer results" do
+      success = Protocol.encode_mcp_result(7, nil)
+      failure = Protocol.encode_mcp_error(7, %{"code" => -32_601, "message" => "missing"})
+
+      assert {:result, %{"result" => nil}, 7} = Protocol.parse_message(success)
+
+      assert {:result, %{"error" => %{"code" => -32_601, "message" => "missing"}}, 7} =
+               Protocol.parse_message(failure)
+
+      refute Map.has_key?(success, "error")
+      refute Map.has_key?(failure, "error")
+    end
+  end
+
   describe "round-trip encoding" do
     test "encode → JSON → decode → parse" do
       msg = Protocol.encode_session_new("/tmp")
