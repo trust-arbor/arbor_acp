@@ -901,6 +901,17 @@ defmodule Arbor.ACP.Client do
     {:reply, admitted?, state}
   end
 
+  def handle_call({:handler_worker_admit, ref, pid}, _from, state) do
+    case Map.get(state.pending_agent_requests, ref) do
+      request when is_map(request) and state.status == :ready ->
+        pending = Map.put(state.pending_agent_requests, ref, Map.put(request, :worker, pid))
+        {:reply, true, %{state | pending_agent_requests: pending}}
+
+      _cancelled ->
+        {:reply, false, state}
+    end
+  end
+
   # Not ready
   def handle_call(_request, _from, %{status: status} = state) when status != :ready do
     {:reply, {:error, {:not_ready, status}}, state}
@@ -2193,7 +2204,7 @@ defmodule Arbor.ACP.Client do
     options = params["options"] || []
 
     if state.handler_pid do
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
 
       HandlerRunner.permission_request(
         state.handler_pid,
@@ -2224,7 +2235,7 @@ defmodule Arbor.ACP.Client do
     callback = if mode == "form", do: :handle_form_elicitation, else: :handle_url_elicitation
 
     if state.handler_pid && function_exported?(state.handler_mod, callback, 2) do
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
       HandlerRunner.elicitation_request(state.handler_pid, ref, mode, params)
       track_agent_request(state, ref, :elicitation, id, params["sessionId"], %{mode: mode})
     else
@@ -2240,7 +2251,7 @@ defmodule Arbor.ACP.Client do
     opts = Map.drop(params, ["sessionId", "path"])
 
     if state.handler_pid && function_exported?(state.handler_mod, :handle_file_read, 4) do
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
       HandlerRunner.file_read(state.handler_pid, ref, session_id, path, opts)
       track_agent_request(state, ref, :file_read, id, session_id)
     else
@@ -2256,7 +2267,7 @@ defmodule Arbor.ACP.Client do
     content = params["content"]
 
     if state.handler_pid && function_exported?(state.handler_mod, :handle_file_write, 4) do
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
       HandlerRunner.file_write(state.handler_pid, ref, session_id, path, content)
       track_agent_request(state, ref, :file_write, id, session_id)
     else
@@ -2270,7 +2281,7 @@ defmodule Arbor.ACP.Client do
   defp handle_agent_request("terminal/" <> _ = method, params, id, state) do
     if state.handler_pid && function_exported?(state.handler_mod, :handle_terminal_request, 4) do
       params = terminal_params_with_workspace_default(method, params, state)
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
       HandlerRunner.terminal_request(state.handler_pid, ref, method, params, id)
       track_agent_request(state, ref, :terminal, id, params["sessionId"], %{method: method})
     else
@@ -2282,7 +2293,7 @@ defmodule Arbor.ACP.Client do
 
   defp handle_agent_request("_" <> _ = method, params, id, state) do
     if state.handler_pid && function_exported?(state.handler_mod, :handle_extension_request, 3) do
-      ref = make_ref()
+      ref = HandlerRunner.new_request_ref()
       HandlerRunner.extension_request(state.handler_pid, ref, method, params)
       track_agent_request(state, ref, :extension, id, nil)
     else
@@ -2454,7 +2465,16 @@ defmodule Arbor.ACP.Client do
       Process.send_after(self(), {:agent_handler_timeout, ref}, state.handler_request_timeout)
 
     request =
-      Map.merge(%{kind: kind, id: id, session_id: session_id, timer_ref: timer_ref}, extra)
+      Map.merge(
+        %{
+          kind: kind,
+          id: id,
+          session_id: session_id,
+          timer_ref: timer_ref,
+          handler_gate: HandlerRunner.request_gate(ref)
+        },
+        extra
+      )
 
     %{
       state
@@ -2478,11 +2498,13 @@ defmodule Arbor.ACP.Client do
   defp cancel_pending_interactions(session_id, state) do
     {to_cancel, keep} =
       Enum.split_with(state.pending_agent_requests, fn {_ref, request} ->
-        request.kind in [:permission, :elicitation] and request.session_id == session_id
+        (request.kind in [:permission, :elicitation] or
+           not is_nil(Map.get(request, :handler_gate))) and request.session_id == session_id
       end)
 
     Enum.each(to_cancel, fn {_ref, request} ->
       cancel_timer(request.timer_ref)
+      stop_mcp_worker(request)
 
       response =
         case request.kind do
@@ -2491,6 +2513,9 @@ defmodule Arbor.ACP.Client do
 
           :elicitation ->
             Protocol.encode_elicitation_response(request.id, %{"action" => "cancel"})
+
+          _other ->
+            Protocol.encode_request_cancelled_error(request.id)
         end
 
       send_to_transport(response, state)
@@ -3022,8 +3047,11 @@ defmodule Arbor.ACP.Client do
 
   defp notify_session(_session_id), do: {:error, :invalid_params}
 
-  defp stop_mcp_worker(%{worker: pid}) when is_pid(pid), do: Process.exit(pid, :kill)
-  defp stop_mcp_worker(_request), do: :ok
+  defp stop_mcp_worker(request) do
+    if gate = Map.get(request, :handler_gate), do: :atomics.put(gate, 1, 0)
+    if is_pid(Map.get(request, :worker)), do: Process.exit(request.worker, :kill)
+    :ok
+  end
 
   defp json_object_option(nil), do: :ok
 
