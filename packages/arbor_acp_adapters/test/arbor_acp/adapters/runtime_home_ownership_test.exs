@@ -38,6 +38,71 @@ defmodule Arbor.ACP.Adapters.RuntimeHomeOwnershipTest do
     end
   end
 
+  for {kind, option, variable, adapter} <- [
+        {:claude, :claude_config_dir, "CLAUDE_CONFIG_DIR", Arbor.ACP.Adapters.ClaudeSDK},
+        {:codex, :codex_home, "CODEX_HOME", Arbor.ACP.Adapters.Codex},
+        {:pi, :agent_dir, "PI_CODING_AGENT_DIR", Arbor.ACP.Adapters.Pi}
+      ] do
+    @kind kind
+    @option option
+    @variable variable
+    @adapter adapter
+    test "#{kind} home environment override agrees with storage across workspace changes", %{
+      root: root
+    } do
+      option_home = Path.join(root, "option-home")
+      env_home = Path.join(root, "env-home")
+      File.mkdir_p!(option_home)
+      File.mkdir_p!(env_home)
+      File.mkdir_p!(Path.join(root, "workspace"))
+
+      opts = [
+        {@option, option_home},
+        {:env, [{@variable, "env-home"}]},
+        {:cwd, root},
+        {:session_map_path, Path.join(root, "map.json")}
+      ]
+
+      {:ok, state} = @adapter.init(opts)
+      assert state.opts[@option] == env_home
+      assert RuntimeHome.path(opts, @kind) == env_home
+      launch = Keyword.put(state.opts, :cwd, Path.join(root, "workspace"))
+
+      assert {:ok, ^env_home, 0} =
+               Arbor.ACP.AdapterSupport.Subprocess.capture(
+                 "/bin/sh",
+                 ["-c", "printf '%s' \"$#{@variable}\""],
+                 launch,
+                 @adapter
+               )
+
+      assert :ok = RuntimeHome.release(state.opts, @kind)
+      assert File.dir?(option_home) and File.dir?(env_home)
+    end
+  end
+
+  test "releasing an env-selected home preserves a different generated option home" do
+    first = RuntimeHome.put_opt([session_id: "option-scope"], :claude)
+    second = RuntimeHome.put_opt([session_id: "env-scope"], :claude)
+    selected = Keyword.put(first, :env, [{"CLAUDE_CONFIG_DIR", second[:claude_config_dir]}])
+    assert :ok = RuntimeHome.release(selected, :claude)
+    assert File.dir?(first[:claude_config_dir])
+    refute File.exists?(second[:claude_config_dir])
+    assert :ok = RuntimeHome.release(first, :claude)
+  end
+
+  test "an explicit unset env wins over a home option in trusted mode", %{root: root} do
+    opts = [
+      trust_workspace_config: true,
+      claude_config_dir: root,
+      env: [{"CLAUDE_CONFIG_DIR", false}]
+    ]
+
+    assert RuntimeHome.path(opts, :claude) == nil
+    refute Keyword.has_key?(RuntimeHome.put_opt(opts, :claude), :claude_config_dir)
+    assert File.dir?(root)
+  end
+
   test "releasing a generated home clears its cached path and leaves another session live" do
     first = RuntimeHome.put_opt([session_id: "first"], :claude)
     second = RuntimeHome.put_opt([session_id: "second"], :claude)

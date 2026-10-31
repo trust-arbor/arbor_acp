@@ -76,7 +76,10 @@ the adapter at a real home. Cleanup deletes the generated home, including
 transcripts and credentials written there. Pass `trust_workspace_config:
 true` to load project settings and use the normal vendor home again, or
 set `:claude_config_dir`, `:codex_home` or `:agent_dir` to keep a specific
-directory. Caller-provided directories and their history are preserved on
+directory. An explicit vendor-home `:env` value takes precedence over its home
+option, matching subprocess environment precedence; relative env paths are
+anchored to the connection's configured cwd for storage and managed children.
+Caller-provided directories and their history are preserved on
 close; explicit session/delete still deletes the requested history. Claude's
 terminal login and children use the same private credential store. Successful
 reauthentication restarts idle managed Claude children to reload credentials,
