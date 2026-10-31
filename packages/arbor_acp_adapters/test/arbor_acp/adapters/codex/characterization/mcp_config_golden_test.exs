@@ -1528,6 +1528,7 @@ defmodule Arbor.ACP.Adapters.Codex.McpConfigGoldenTest do
 
       assert_receive {:workspace_authorize, @cwd, %{kind: :cwd}}
       assert_receive {:workspace_authorize, "/tmp/vendor", %{kind: {:additional_directory, @cwd}}}
+      assert_receive {:workspace_authorize, "/tmp/vendor", %{kind: {:additional_directory, @cwd}}}
       refute_received {:workspace_authorize, "/tmp/vendor", _}
 
       assert thread_config(transcript) == %{

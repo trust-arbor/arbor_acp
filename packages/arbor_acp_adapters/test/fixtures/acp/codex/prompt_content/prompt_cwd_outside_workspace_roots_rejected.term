@@ -258,7 +258,7 @@
   %Arbor.ACP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "session/prompt params.cwd is forwarded to turn/start without any workspace authorization"
+      text: "session/prompt params.cwd is resolved against the session workspace and rejected when it is outside that root"
     },
     result: %{}
   },
@@ -275,31 +275,6 @@
         }
       }
     },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{
-          "id" => 4,
-          "method" => "turn/start",
-          "params" => %{
-            "approvalPolicy" => "on-request",
-            "approvalsReviewer" => "auto_review",
-            "cwd" => "/opt/elsewhere",
-            "effort" => "medium",
-            "input" => [%{"text" => "hi", "text_elements" => [], "type" => "text"}],
-            "model" => "gpt-5",
-            "sandboxPolicy" => %{
-              "excludeSlashTmp" => false,
-              "excludeTmpdirEnvVar" => false,
-              "networkAccess" => false,
-              "type" => "workspaceWrite",
-              "writableRoots" => []
-            },
-            "summary" => "auto",
-            "threadId" => "thread-abc"
-          }
-        }
-      ]
-    }
+    result: %{error: "Workspace path is not authorized", tag: :error}
   }
 ]

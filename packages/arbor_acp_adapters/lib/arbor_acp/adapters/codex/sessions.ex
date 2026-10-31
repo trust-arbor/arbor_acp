@@ -49,7 +49,6 @@ defmodule Arbor.ACP.Adapters.Codex.Sessions do
         model: result["model"] || state.model,
         service_tier: result["serviceTier"],
         fast_mode_enabled: result["serviceTier"] == "fast",
-        additional_directories: result["additionalDirectories"] || [],
         reasoning_effort:
           result["reasoningEffort"] || state.reasoning_effort || Config.default_reasoning_effort()
       })

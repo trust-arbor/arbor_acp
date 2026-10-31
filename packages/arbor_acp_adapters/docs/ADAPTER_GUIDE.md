@@ -337,4 +337,9 @@ supply a persistent home when history must survive the connection.
 Codex thread bindings require the same canonical working directory for load
 and resume. Equivalent path spellings are accepted; moving a thread from
 `/repos/a` to `/repos/b` is rejected even when both are beneath an allowed
-root `/repos`.
+root `/repos`. A `session/prompt` `cwd` is resolved against that bound
+workspace or the `additionalDirectories` approved at session creation
+(stored as their resolved real paths, re-checked with `authorize_workspace`
+on every prompt) and forwarded as the resolved real path; it is rejected
+when it is outside those roots or cannot be resolved. `thread/started`
+cannot widen or replace the approved directories.

@@ -819,38 +819,105 @@ defmodule Arbor.ACP.Adapters.Codex do
   end
 
   defp translate_user_prompt(input_items, acp_id, session_id, session, params, state) do
-    {id, state} = next_request_id(state)
-    additional_directories = session[:additional_directories] || []
+    case prompt_turn_cwd(params, session, session_id, state) do
+      {:ok, cwd} ->
+        {id, state} = next_request_id(state)
+        additional_directories = approved_additional_directories(session, state)
 
-    wire_params =
-      %{
-        "threadId" => session_id,
-        "input" => input_items,
-        "summary" => params["summary"] || "auto"
-      }
-      |> maybe_put("model", params["model"] || session[:model] || state.model)
-      |> maybe_put("effort", session[:reasoning_effort] || state.reasoning_effort)
-      |> maybe_put("serviceTier", service_tier_for_session(session, state))
-      |> maybe_put("cwd", params["cwd"] || session[:cwd] || Keyword.get(state.opts, :cwd))
-      |> Config.merge_turn_mode_wire_params(
-        session[:mode_id] || state.mode_id || Config.default_mode(),
-        additional_directories
-      )
+        wire_params =
+          %{
+            "threadId" => session_id,
+            "input" => input_items,
+            "summary" => params["summary"] || "auto"
+          }
+          |> maybe_put("model", params["model"] || session[:model] || state.model)
+          |> maybe_put("effort", session[:reasoning_effort] || state.reasoning_effort)
+          |> maybe_put("serviceTier", service_tier_for_session(session, state))
+          |> maybe_put("cwd", cwd)
+          |> Config.merge_turn_mode_wire_params(
+            session[:mode_id] || state.mode_id || Config.default_mode(),
+            additional_directories
+          )
 
-    request =
-      Protocol.encode_request(
-        id,
-        Protocol.method(:turn_start),
-        NativeProtocol.overrides(wire_params, params)
-      )
+        request =
+          Protocol.encode_request(
+            id,
+            Protocol.method(:turn_start),
+            NativeProtocol.overrides(wire_params, params)
+          )
 
-    state =
-      state
-      |> Sessions.put(session_id, reset_prompt_accumulators(session, acp_id))
-      |> track_request(id, :turn_start, acp_id, %{session_id: session_id})
+        state =
+          state
+          |> Sessions.put(session_id, reset_prompt_accumulators(session, acp_id))
+          |> track_request(id, :turn_start, acp_id, %{session_id: session_id})
 
-    {:ok, request, state}
+        {:ok, request, state}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
   end
+
+  defp prompt_turn_cwd(params, session, session_id, state) do
+    case params["cwd"] do
+      nil ->
+        {:ok, session[:cwd] || Keyword.get(state.opts, :cwd)}
+
+      cwd ->
+        constrain_prompt_cwd(cwd, session_id, session, state)
+    end
+  end
+
+  defp constrain_prompt_cwd(cwd, session_id, session, state) do
+    cond do
+      not is_binary(cwd) or cwd == "" or Path.type(cwd) != :absolute ->
+        {:error, "Workspace paths must be absolute"}
+
+      true ->
+        case contained_in_session_workspaces(cwd, session_id, session, state) do
+          {:ok, resolved} -> {:ok, resolved}
+          :error -> {:error, "Workspace path is not authorized"}
+        end
+    end
+  end
+
+  defp contained_in_session_workspaces(cwd, session_id, session, state) do
+    roots =
+      [
+        thread_binding(session_id, state) || session[:cwd]
+        | approved_additional_directories(session, state)
+      ]
+      |> Enum.filter(&(is_binary(&1) and &1 != ""))
+
+    Enum.find_value(roots, :error, fn root ->
+      case WorkspacePath.contained(cwd, root) do
+        {:ok, resolved} -> {:ok, resolved}
+        :error -> nil
+      end
+    end)
+  end
+
+  # Creation-time real paths only. A later symlink swap is dropped if the
+  # stored path no longer resolves to itself or is no longer authorized.
+  defp approved_additional_directories(session, state) do
+    session
+    |> Map.get(:additional_directories, [])
+    |> Enum.filter(&still_authorized_additional_directory?(&1, session[:cwd], state))
+  end
+
+  defp still_authorized_additional_directory?(directory, session_cwd, state)
+       when is_binary(directory) and directory != "" do
+    case WorkspacePath.resolve(directory) do
+      {:ok, resolved} ->
+        resolved == directory and
+          authorize_workspace(directory, {:additional_directory, session_cwd}, state) == :ok
+
+      {:error, _} ->
+        false
+    end
+  end
+
+  defp still_authorized_additional_directory?(_directory, _session_cwd, _state), do: false
 
   defp translate_slash_command({:compact, _rest}, acp_id, session_id, session, _params, state) do
     track_prompt_command(
@@ -1401,6 +1468,14 @@ defmodule Arbor.ACP.Adapters.Codex do
     thread = params["thread"] || %{}
     session_id = Sessions.thread_id(thread, params)
     session = session_from_result(session_id, params, state)
+
+    approved =
+      case Map.fetch(state.sessions, session_id) do
+        {:ok, existing} -> existing[:additional_directories] || []
+        :error -> []
+      end
+
+    session = Map.put(session, :additional_directories, approved)
     {:skip, Sessions.put(state, session_id, session)}
   end
 
@@ -3327,6 +3402,7 @@ defmodule Arbor.ACP.Adapters.Codex do
     with :ok <- authorize_workspace(cwd, :cwd, state),
          {:ok, additional_directories} <- additional_directories(params, cwd),
          :ok <- authorize_additional_directories(additional_directories, cwd, state),
+         {:ok, stored_directories} <- resolve_additional_directories(additional_directories),
          {:ok, mcp_config} <- mcp_config(params["mcpServers"], cwd, state) do
       config =
         MCP.native_config(codex_config(state.opts), mcp_config, %{
@@ -3337,8 +3413,17 @@ defmodule Arbor.ACP.Adapters.Codex do
             Keyword.get(state.opts, :trust_authorized_workspaces, false)
         })
 
-      {:ok, config, additional_directories}
+      {:ok, config, stored_directories}
     end
+  end
+
+  defp resolve_additional_directories(directories) do
+    Enum.reduce_while(directories, {:ok, []}, fn directory, {:ok, acc} ->
+      case WorkspacePath.resolve(directory) do
+        {:ok, resolved} -> {:cont, {:ok, acc ++ [resolved]}}
+        {:error, :incomplete} -> {:halt, {:error, "Workspace path is not authorized"}}
+      end
+    end)
   end
 
   defp codex_config(opts) do
