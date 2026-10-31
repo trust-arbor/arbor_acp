@@ -310,3 +310,8 @@ official SDK interoperability, credential-free real CLI startup, and live model
 calls; those provide different evidence. See the [changelog](../CHANGELOG.md) and
 the [ACP core guide](https://github.com/trust-arbor/arbor_acp/blob/main/packages/arbor_acp/docs/ACP_GUIDE.md)
 for the rest of the controller/agent API.
+
+Managed Claude session ids are native UUIDs by default. Caller-provided opaque
+ids are compatibility aliases within a connection: up to 1,024 recently closed
+aliases are retained within 1 MiB. Persist native UUIDs for identifiers that must
+remain usable across connections or after compatibility aliases expire.

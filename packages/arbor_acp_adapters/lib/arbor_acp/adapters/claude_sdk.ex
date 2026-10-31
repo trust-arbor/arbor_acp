@@ -188,6 +188,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     managed?: true,
     port: nil,
     session_processes: %{},
+    session_aliases: [],
     # Per-session launch overrides (e.g. a minted CLAUDE_CONFIG_DIR). Merged
     # into the child command so each process can have its own home.
     session_homes: %{}
@@ -340,7 +341,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       |> session_store_opts(state)
       |> Map.put(:cwd, cwd)
       |> put_fork_message_id(params)
-      |> then(&SessionStore.fork_session(session_id, &1))
+      |> then(&SessionStore.fork_session(native_session_id(state, session_id), &1))
       |> case do
         {:ok, forked_session_id} ->
           previous = persist_current_session(state)
@@ -716,7 +717,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
          :ok <- session_restart_allowed(session_id, state),
          {:ok, _events} <-
            SessionStore.read_session_messages(
-             session_id,
+             native_session_id(state, session_id),
              params |> session_store_opts(state) |> Map.put(:cwd, cwd)
            ) do
       state = prepare_session_state(session_id, cwd, params, state)
@@ -745,7 +746,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
     with {:ok, cwd} <- session_cwd(params, state),
          :ok <- authorize_workspace(cwd, :session_resume, state),
-         :ok <- session_restart_allowed(session_id, state) do
+         :ok <- session_restart_allowed(session_id, state),
+         :ok <- resume_history_available(session_id, cwd, params, state) do
       state = prepare_session_state(session_id, cwd, params, state)
 
       case start_session_process(session_id, cwd, params, :resume, state) do
@@ -753,7 +755,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           state = %{
             state
             | session_id: session_id,
-              claude_session_id: session_id,
+              claude_session_id:
+                if(state.managed?, do: state.claude_session_id, else: session_id),
               cwd: cwd
           }
 
@@ -803,7 +806,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       params
       |> session_store_opts(state)
       |> Map.put(:cwd, cwd)
-      |> then(&SessionStore.delete_session(session_id, &1))
+      |> then(&SessionStore.delete_session(native_session_id(state, session_id), &1))
     else
       {:error, reason} -> {:error, reason}
     end
@@ -1054,12 +1057,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     state = %{
       state
       | session_id: session_id,
-        claude_session_id: session_id,
+        claude_session_id: native_session_id(state, session_id),
         cwd: cwd
     }
 
     case SessionStore.read_session_messages(
-           session_id,
+           native_session_id(state, session_id),
            params |> session_store_opts(state) |> Map.put(:cwd, cwd)
          ) do
       {:ok, events} ->
@@ -1379,11 +1382,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   defp parent_session_fields(session_id, state) when is_binary(session_id) do
     case Map.get(state.session_processes, session_id) do
       %{fields: fields} when is_map(fields) -> fields
-      _missing -> Map.take(state, @session_fields)
+      _missing -> Map.take(reset_session_fields(state), @session_fields)
     end
   end
 
-  defp parent_session_fields(_session_id, state), do: Map.take(state, @session_fields)
+  defp parent_session_fields(_session_id, state),
+    do: Map.take(reset_session_fields(state), @session_fields)
 
   defp switch_to_client_request_session(id, state) do
     case find_session_for_client_request(id, state) do
@@ -1544,6 +1548,58 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     end
   end
 
+  defp native_session_id(state, session_id) do
+    case get_in(state.session_processes, [session_id, :fields, :claude_session_id]) do
+      id when is_binary(id) ->
+        id
+
+      _missing ->
+        case List.keyfind(state.session_aliases, session_id, 0) do
+          {^session_id, native} ->
+            native
+
+          nil ->
+            if state.session_id == session_id and is_binary(state.claude_session_id),
+              do: state.claude_session_id,
+              else: session_id
+        end
+    end
+  end
+
+  defp remember_closed_alias(state, session_id) do
+    native = native_session_id(state, session_id)
+
+    if native != session_id and SessionStore.valid_session_id?(native) do
+      aliases = [{session_id, native} | List.keydelete(state.session_aliases, session_id, 0)]
+
+      {kept, _bytes} =
+        Enum.reduce_while(Enum.take(aliases, 1_024), {[], 0}, fn entry, {kept, bytes} ->
+          next = bytes + :erlang.external_size(entry)
+          if next <= 1_048_576, do: {:cont, {[entry | kept], next}}, else: {:halt, {kept, bytes}}
+        end)
+
+      %{state | session_aliases: Enum.reverse(kept)}
+    else
+      state
+    end
+  end
+
+  defp resume_history_available(_id, _cwd, _params, %{managed?: false}), do: :ok
+
+  defp resume_history_available(id, cwd, params, state) do
+    if Map.has_key?(state.session_processes, id) do
+      :ok
+    else
+      case SessionStore.read_session_messages(
+             native_session_id(state, id),
+             params |> session_store_opts(state) |> Map.put(:cwd, cwd)
+           ) do
+        {:ok, _history} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
   defp session_process_opts(state, cwd, session_id, kind) do
     opts =
       state.opts
@@ -1556,9 +1612,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
       |> session_preferences(state)
       |> constrain_child_permissions(state)
 
+    native_id = native_session_id(state, session_id)
+
     cond do
-      kind in [:load, :resume, :fork] and SessionStore.valid_session_id?(session_id) ->
-        Keyword.put(opts, :resume, session_id)
+      kind in [:load, :resume, :fork] and SessionStore.valid_session_id?(native_id) ->
+        Keyword.put(opts, :resume, native_id)
 
       kind == :new ->
         native_id =
@@ -1604,9 +1662,10 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           field -> field
         end
 
-      case Map.get(state, field) do
-        nil -> opts
-        value -> Keyword.put(opts, option, value)
+      case {option, Map.get(state, field)} do
+        {:agent, "default"} -> Keyword.delete(opts, :agent)
+        {_option, nil} -> opts
+        {_option, value} -> Keyword.put(opts, option, value)
       end
     end)
   end
@@ -1619,9 +1678,16 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
         do: state,
         else: get_in(state.session_processes, [session_id, :fields]) || %{}
 
-    if Map.get(fields, :pending_prompt_id),
-      do: {:error, "Claude session has an active prompt"},
-      else: :ok
+    cond do
+      Map.get(fields, :pending_prompt_id) ->
+        {:error, "Claude session has an active prompt"}
+
+      not SessionStore.valid_session_id?(native_session_id(state, session_id)) ->
+        {:error, "Unknown native Claude session identity"}
+
+      true ->
+        :ok
+    end
   end
 
   defp constrain_child_permissions(opts, %{bypass_allowed?: false} = state) do
@@ -1674,7 +1740,21 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           |> ClaudeProtocol.initialize_request(request_id)
           |> ClaudeProtocol.line()
 
-        case PortRunner.command(handle, init) do
+        flags_id = control_id("apply_flag_settings")
+
+        flags =
+          ClaudeProtocol.control_request(flags_id, %{
+            "subtype" => "apply_flag_settings",
+            "settings" => %{"fastMode" => Keyword.get(opts, :fast_mode, false)}
+          })
+          |> ClaudeProtocol.line()
+
+        state = %{
+          state
+          | pending_controls: Map.put(state.pending_controls, flags_id, :apply_flag_settings)
+        }
+
+        case PortRunner.command(handle, [init, flags]) do
           :ok ->
             {:ok, persist_current_session(state)}
 
@@ -1722,6 +1802,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     end
 
     _ = PortRunner.close(handle)
+    state = remember_closed_alias(state, session_id)
 
     port = if state.port == handle, do: nil, else: state.port
 
@@ -1874,7 +1955,18 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   defp blank_to_nil(""), do: nil
   defp blank_to_nil(value), do: value
 
-  defp clear_deleted_session(%{session_id: session_id} = state, session_id) do
+  defp clear_deleted_session(state, session_id) do
+    native = native_session_id(state, session_id)
+
+    aliases =
+      Enum.reject(state.session_aliases, fn {id, target} ->
+        id == session_id or target == native
+      end)
+
+    clear_deleted_session_fields(%{state | session_aliases: aliases}, session_id)
+  end
+
+  defp clear_deleted_session_fields(%{session_id: session_id} = state, session_id) do
     %{
       state
       | session_id: nil,
@@ -1894,7 +1986,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     }
   end
 
-  defp clear_deleted_session(state, _session_id), do: state
+  defp clear_deleted_session_fields(state, _session_id), do: state
 
   defp start_prompt(id, session_id, prompt, state) do
     case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
