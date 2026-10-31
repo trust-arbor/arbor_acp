@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Report every dropped session update through telemetry. Listeners can opt into coalesced drop notices with `notify_update_drops: true`; handlers can implement `handle_session_updates_dropped/3`. Notices respect queue bounds and recover without another update.
+
 - Request handlers may return `{:async, work, state}` to commit state before running cancellable work outside the handler mailbox. Timeouts, cancellation and connection shutdown stop that work and preserve one response per request.
 
 - Fix: Codex completions settle only the active turn, and a late start reply cannot reactivate a prompt that has finished.

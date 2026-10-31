@@ -39,6 +39,10 @@ defmodule Arbor.ACP.Client do
     (default: 30_000 ms)
   - `:max_update_queue` — mailbox cutoff for handler/listener session updates;
     excess updates are dropped (default: 32)
+  - `:notify_update_drops` — opt in to coalesced event-listener messages
+    `{:acp_session_updates_dropped, session_id, count}` once mailbox room is
+    available (default: false). Notices obey the same queue bounds; a notice
+    too large for the byte limit is telemetry-only.
   - `:max_update_queue_bytes` — aggregate encoded size cutoff for queued
     handler/listener session updates (default: 8 MiB)
   - `:name` — GenServer name registration
@@ -52,6 +56,7 @@ defmodule Arbor.ACP.Client do
   require Logger
 
   alias Arbor.ACP.Internal.Extensions
+  alias Arbor.ACP.Internal.UpdateQueue
   alias Arbor.ACP.Capabilities
   alias Arbor.ACP.LifecycleParams
   alias Arbor.ACP.Maps
@@ -100,6 +105,9 @@ defmodule Arbor.ACP.Client do
     handler_request_timeout: @default_handler_request_timeout,
     max_update_queue: @default_max_update_queue,
     max_update_queue_bytes: @default_max_update_queue_bytes,
+    notify_update_drops: false,
+    update_drops: %{},
+    update_drop_timer: nil,
     extension_subscribers: %{},
     pending_requests: %{},
     pending_caller_monitors: %{},
@@ -963,6 +971,17 @@ defmodule Arbor.ACP.Client do
     {:noreply, state}
   end
 
+  def handle_info({:flush_update_drop_notices, token}, state) do
+    case state.update_drop_timer do
+      {^token, _timer} ->
+        state = %{state | update_drop_timer: nil}
+        {:noreply, flush_update_drop_notices(state)}
+
+      _stale ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:acp_handler_result, ref, result}, state) do
     state = handle_handler_result(ref, result, state)
     {:noreply, state}
@@ -1233,6 +1252,7 @@ defmodule Arbor.ACP.Client do
           handler_mod: handler_mod,
           handler_pid: handler_pid,
           event_listener: Keyword.get(opts, :event_listener),
+          notify_update_drops: Keyword.get(opts, :notify_update_drops, false) == true,
           protocol_version: Keyword.get(opts, :protocol_version, 1),
           max_frame_bytes:
             Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
@@ -1436,6 +1456,7 @@ defmodule Arbor.ACP.Client do
     :handler,
     :handler_opts,
     :event_listener,
+    :notify_update_drops,
     :client_info,
     :capabilities,
     :protocol_version,
@@ -1896,36 +1917,127 @@ defmodule Arbor.ACP.Client do
     session_id = params["sessionId"]
     update = params["update"]
     update_bytes = :erlang.external_size(update)
+    state = state |> accumulate_prompt_text(session_id, update) |> flush_update_drop_notices()
 
-    # Retain text only for an explicitly collecting prompt.
-    state = accumulate_prompt_text(state, session_id, update)
+    state =
+      if is_pid(state.event_listener) do
+        case UpdateQueue.check(
+               state.event_listener,
+               state.max_update_queue,
+               state.max_update_queue_bytes,
+               update_bytes,
+               :listener
+             ) do
+          :ok ->
+            send(state.event_listener, {:acp_session_update, session_id, update})
+            state
 
-    # Notify event listener from the client process so a slow handler cannot
-    # stall the update stream.
-    if is_pid(state.event_listener) and
-         update_mailbox_below_limits?(
-           state.event_listener,
+          {:error, reason} ->
+            note_update_drop(state, session_id, :event_listener, update_bytes, reason)
+        end
+      else
+        state
+      end
+
+    handler_message = handler_message(state, :handle_session_update, 4, message)
+    bytes = :erlang.external_size(handler_message || update)
+
+    case HandlerRunner.session_update_status(
+           state.handler_pid,
+           session_id,
+           update,
            state.max_update_queue,
            state.max_update_queue_bytes,
-           update_bytes,
-           :listener
+           handler_message
          ) do
-      send(state.event_listener, {:acp_session_update, session_id, update})
+      :ok -> state
+      {:dropped, reason} -> note_update_drop(state, session_id, :handler, bytes, reason)
     end
-
-    if state.handler_pid do
-      HandlerRunner.session_update(
-        state.handler_pid,
-        session_id,
-        update,
-        state.max_update_queue,
-        state.max_update_queue_bytes,
-        handler_message(state, :handle_session_update, 4, message)
-      )
-    end
-
-    state
   end
+
+  defp note_update_drop(state, session_id, target, bytes, reason) do
+    :telemetry.execute([:arbor_acp, :session, :update_dropped], %{count: 1, bytes: bytes}, %{
+      session_id: session_id,
+      target: target,
+      limit: reason,
+      max_queue: state.max_update_queue,
+      max_bytes: state.max_update_queue_bytes
+    })
+
+    {pid, kind, enabled?} = drop_destination(state, target)
+    key = {target, session_id}
+    count = Map.get(state.update_drops, key, 0) + 1
+    notice_bytes = drop_notice_size(kind, session_id, count)
+
+    if enabled? and is_pid(pid) and reason != :unavailable and
+         notice_bytes <= state.max_update_queue_bytes do
+      %{state | update_drops: Map.put(state.update_drops, key, count)} |> schedule_drop_notices()
+    else
+      state
+    end
+  end
+
+  defp drop_destination(state, :event_listener),
+    do: {state.event_listener, :listener, state.notify_update_drops}
+
+  defp drop_destination(state, :handler),
+    do:
+      {state.handler_pid, :handler,
+       function_exported?(state.handler_mod, :handle_session_updates_dropped, 3)}
+
+  defp drop_notice_size(:listener, session_id, count),
+    do: :erlang.external_size({:acp_session_updates_dropped, session_id, count})
+
+  defp drop_notice_size(:handler, session_id, count),
+    do: :erlang.external_size({:"$gen_cast", {:session_updates_dropped, session_id, count}})
+
+  defp flush_update_drop_notices(%{status: status} = state) when status != :ready,
+    do: %{state | update_drops: %{}}
+
+  defp flush_update_drop_notices(state) do
+    pending =
+      Enum.reduce(state.update_drops, %{}, fn {{target, session_id} = key, count}, pending ->
+        {pid, kind, enabled?} = drop_destination(state, target)
+        bytes = drop_notice_size(kind, session_id, count)
+
+        if enabled? and Map.has_key?(state.sessions, session_id) and
+             bytes <= state.max_update_queue_bytes do
+          case UpdateQueue.check(
+                 pid,
+                 state.max_update_queue,
+                 state.max_update_queue_bytes,
+                 bytes,
+                 kind
+               ) do
+            :ok ->
+              if target == :event_listener,
+                do: send(pid, {:acp_session_updates_dropped, session_id, count}),
+                else: HandlerRunner.session_updates_dropped(pid, session_id, count)
+
+              pending
+
+            {:error, :unavailable} ->
+              pending
+
+            {:error, _full} ->
+              Map.put(pending, key, count)
+          end
+        else
+          pending
+        end
+      end)
+
+    %{state | update_drops: pending} |> schedule_drop_notices()
+  end
+
+  defp schedule_drop_notices(%{update_drop_timer: nil, update_drops: pending} = state)
+       when map_size(pending) > 0 do
+    token = make_ref()
+    timer = Process.send_after(self(), {:flush_update_drop_notices, token}, 100)
+    %{state | update_drop_timer: {token, timer}}
+  end
+
+  defp schedule_drop_notices(state), do: state
 
   defp handle_extension_notification(method, params, state) do
     event = {:acp_extension_notification, method, params}
@@ -2551,32 +2663,8 @@ defmodule Arbor.ACP.Client do
   defp error_module(%{__struct__: module}) when is_atom(module), do: module
   defp error_module(_reason), do: :error
 
-  defp update_mailbox_below_limits?(pid, count_limit, byte_limit, incoming_bytes, kind) do
-    with {:message_queue_len, length} when length < count_limit <-
-           Process.info(pid, :message_queue_len),
-         {:messages, messages} when length(messages) < count_limit <-
-           Process.info(pid, :messages) do
-      queued_bytes = queued_update_bytes(messages, kind, byte_limit)
-      incoming_bytes <= byte_limit - queued_bytes
-    else
-      _full_or_closed -> false
-    end
-  end
-
-  defp queued_update_bytes(messages, kind, limit) do
-    Enum.reduce_while(messages, 0, fn message, total ->
-      total = total + queued_update_size(message, kind)
-      if total >= limit, do: {:halt, total}, else: {:cont, total}
-    end)
-  end
-
-  defp queued_update_size({:acp_session_update, _session_id, update}, :listener),
-    do: :erlang.external_size(update)
-
-  defp queued_update_size({:acp_extension_notification, _, _} = event, :listener),
-    do: :erlang.external_size(event)
-
-  defp queued_update_size(_message, _kind), do: 0
+  defp update_mailbox_below_limits?(pid, count_limit, byte_limit, incoming_bytes, kind),
+    do: UpdateQueue.check(pid, count_limit, byte_limit, incoming_bytes, kind) == :ok
 
   defp cancel_pending_timer({_from, _tag, _monitor_ref, timer_ref}), do: cancel_timer(timer_ref)
   defp cancel_pending_timer(_pending), do: :ok
@@ -2622,6 +2710,8 @@ defmodule Arbor.ACP.Client do
 
   defp do_disconnect(state) do
     refuse_handler_mcp(state)
+    if state.update_drop_timer, do: cancel_timer(elem(state.update_drop_timer, 1))
+    state = %{state | update_drops: %{}, update_drop_timer: nil}
 
     if state.transport_actor_monitor,
       do: Process.demonitor(state.transport_actor_monitor, [:flush])

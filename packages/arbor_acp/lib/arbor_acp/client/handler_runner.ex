@@ -4,6 +4,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   use GenServer
 
   alias Arbor.RPC.LogSummary
+  alias Arbor.ACP.Internal.UpdateQueue
 
   require Logger
 
@@ -46,41 +47,34 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   # exports the context-aware callback (the Client checks that). It embeds the
   # update, so its size is the retained size when present.
   def session_update(pid, session_id, update, max_queue, max_queue_bytes, message) do
-    incoming_bytes = update_size(update, message)
-
-    if update_mailbox_below_limits?(pid, max_queue, max_queue_bytes, incoming_bytes) do
-      GenServer.cast(pid, {:session_update, session_id, update, message})
-      :ok
-    else
-      :dropped
+    case session_update_status(pid, session_id, update, max_queue, max_queue_bytes, message) do
+      :ok -> :ok
+      {:dropped, _reason} -> :dropped
     end
   end
 
-  defp update_mailbox_below_limits?(pid, count_limit, byte_limit, incoming_bytes) do
-    with {:message_queue_len, length} when length < count_limit <-
-           Process.info(pid, :message_queue_len),
-         {:messages, messages} when length(messages) < count_limit <-
-           Process.info(pid, :messages) do
-      incoming_bytes <= byte_limit - queued_update_bytes(messages, byte_limit)
-    else
-      _full_or_closed -> false
+  def session_update_status(pid, session_id, update, max_queue, max_queue_bytes, message) do
+    case UpdateQueue.check(
+           pid,
+           max_queue,
+           max_queue_bytes,
+           update_size(update, message),
+           :handler
+         ) do
+      :ok ->
+        GenServer.cast(pid, {:session_update, session_id, update, message})
+        :ok
+
+      {:error, reason} ->
+        {:dropped, reason}
     end
   end
 
-  defp queued_update_bytes(messages, limit) do
-    Enum.reduce_while(messages, 0, fn message, total ->
-      total = total + queued_update_size(message)
-      if total >= limit, do: {:halt, total}, else: {:cont, total}
-    end)
-  end
+  def session_updates_dropped(pid, session_id, count),
+    do: GenServer.cast(pid, {:session_updates_dropped, session_id, count})
 
-  defp queued_update_size({:"$gen_cast", {:session_update, _session_id, update, message}}),
-    do: update_size(update, message)
-
-  defp queued_update_size({:"$gen_cast", {:extension_notification, _method, _params}} = message),
-    do: :erlang.external_size(message)
-
-  defp queued_update_size(_message), do: 0
+  defp update_mailbox_below_limits?(pid, count_limit, byte_limit, incoming_bytes),
+    do: UpdateQueue.check(pid, count_limit, byte_limit, incoming_bytes, :handler) == :ok
 
   defp update_size(update, nil), do: :erlang.external_size(update)
   defp update_size(_update, message), do: :erlang.external_size(message)
@@ -252,6 +246,19 @@ defmodule Arbor.ACP.Client.HandlerRunner do
       {:error, reason} ->
         Logger.warning("ACP handler session update failed", error_class: error_class(reason))
         {:noreply, state}
+    end
+  end
+
+  defp cast_message({:session_updates_dropped, session_id, count}, state) do
+    case safe_call(fn ->
+           state.handler_mod.handle_session_updates_dropped(
+             session_id,
+             count,
+             state.handler_state
+           )
+         end) do
+      {:ok, {:ok, handler_state}} -> {:noreply, %{state | handler_state: handler_state}}
+      _failed -> {:noreply, state}
     end
   end
 
