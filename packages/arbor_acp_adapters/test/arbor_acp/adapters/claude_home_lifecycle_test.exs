@@ -192,6 +192,105 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     assert {:ok, _} = ClaudeSDK.shutdown(state)
   end
 
+  test "unconfirmed cleanup preserves the home and answers pending work once", %{
+    root: root,
+    cli: cli
+  } do
+    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli)
+    {id, state} = new_session(state, root, 1)
+    home = state.session_homes[id][:claude_config_dir]
+    handle = state.session_processes[id].handle
+    invalid = %{handle | generation: make_ref()}
+    processes = Map.update!(state.session_processes, id, &%{&1 | handle: invalid})
+
+    state = %{
+      state
+      | port: invalid,
+        session_processes: processes,
+        pending_prompt_id: "prompt",
+        active_prompt_session_id: id
+    }
+
+    assert {:messages, messages, failed} =
+             ClaudeSDK.translate_outbound(
+               request(2, "session/close", %{"sessionId" => id}),
+               state
+             )
+
+    assert [
+             %{"id" => "prompt", "result" => %{"stopReason" => "cancelled"}},
+             %{"id" => 2, "error" => %{}}
+           ] = messages
+
+    assert failed.cleanup_result != :ok
+    assert File.dir?(home)
+    assert :ok = Arbor.ACP.AdapterSupport.Subprocess.command(handle, "{}\n")
+
+    assert {:error, _reason, ^failed} =
+             ClaudeSDK.translate_outbound(request(3, "session/new", %{"cwd" => root}), failed)
+
+    recovered = %{
+      failed
+      | port: handle,
+        session_processes: Map.update!(failed.session_processes, id, &%{&1 | handle: handle})
+    }
+
+    assert {:ok, closed} = ClaudeSDK.shutdown(recovered)
+    assert closed.cleanup_result == :ok
+    refute File.exists?(home)
+  end
+
+  test "delete preserves the transcript when child cleanup is unconfirmed", %{
+    root: root,
+    cli: cli
+  } do
+    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli)
+    {id, state} = new_session(state, root, 1)
+    home = state.session_homes[id][:claude_config_dir]
+    write_transcript(home, root, id, "keep")
+    handle = state.session_processes[id].handle
+    invalid = %{handle | generation: make_ref()}
+
+    state = %{
+      state
+      | port: invalid,
+        session_processes: Map.update!(state.session_processes, id, &%{&1 | handle: invalid})
+    }
+
+    assert {:error, _, failed} =
+             ClaudeSDK.translate_outbound(
+               request(2, "session/delete", %{"sessionId" => id, "cwd" => root}),
+               state
+             )
+
+    assert {:ok, [%{"sessionId" => ^id}]} =
+             SessionStore.read_session_messages(id, claude_config_dir: home, cwd: root)
+
+    recovered = %{
+      failed
+      | port: handle,
+        session_processes: Map.update!(failed.session_processes, id, &%{&1 | handle: handle})
+    }
+
+    assert {:ok, _} = ClaudeSDK.shutdown(recovered)
+  end
+
+  test "a new session cannot replace an already open caller id", %{root: root, cli: cli} do
+    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli)
+    {id, state} = new_session(state, root, 1)
+    handle = state.port
+
+    assert {:error, reason, state} =
+             ClaudeSDK.translate_outbound(
+               request(2, "session/new", %{"sessionId" => id, "cwd" => root}),
+               state
+             )
+
+    assert reason =~ "already open"
+    assert state.port == handle
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
   defp new_session(state, cwd, id) do
     {:reply, %{"sessionId" => sid}, state} =
       ClaudeSDK.translate_outbound(request(id, "session/new", %{"cwd" => cwd}), state)
