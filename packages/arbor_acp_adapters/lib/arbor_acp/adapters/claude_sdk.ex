@@ -2092,13 +2092,16 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   defp cleanup_reply(id, messages, %{cleanup_result: {:error, reason}} = state),
     do: cleanup_error_reply(id, messages, reason, state)
 
-  defp cleanup_error_reply(_id, [], reason, state), do: {:error, inspect(reason), state}
+  defp cleanup_error_reply(_id, [], reason, state), do: {:error, cleanup_error_text(reason), state}
 
   defp cleanup_error_reply(id, messages, reason, state),
     do:
       {:messages,
        messages ++ [Envelope.error(id, -32_603, "Claude cleanup failed: #{inspect(reason)}")],
        state}
+
+  defp cleanup_error_text(reason) when is_binary(reason), do: reason
+  defp cleanup_error_text(reason), do: inspect(reason)
 
   defp cleanup_session(state, session_id, release_home? \\ true) do
     {queued_messages, state} = cancel_queued_prompts(state, session_id)
