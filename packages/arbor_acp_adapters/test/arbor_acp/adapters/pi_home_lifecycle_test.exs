@@ -132,5 +132,32 @@ defmodule Arbor.ACP.Adapters.PiHomeLifecycleTest do
     assert %Pi{} = Pi.shutdown(state)
   end
 
+  for target <- [:child, :login] do
+    @target target
+    test "#{target} home cleanup errors are reported and shutdown retries after repair", %{
+      root: root
+    } do
+      alias Arbor.ACP.Adapters.Internal.RuntimeHome
+      {:ok, state} = Pi.init(cwd: root, session_map_path: Path.join(root, "map.json"))
+      child_opts = RuntimeHome.put_opt([_runtime_home_session: "retry-child"], :pi)
+      state = %{state | opts: child_opts}
+      target_opts = if @target == :child, do: child_opts, else: state.auth_home_opts
+      home = target_opts[:agent_dir]
+      File.write!(Path.join(home, "retain-until-cleaned"), "private")
+      File.chmod!(home, 0o500)
+
+      on_exit(fn ->
+        File.chmod(home, 0o700)
+        File.rm_rf(home)
+      end)
+
+      assert {:error, {:private_home_cleanup_failed, _}, failed} = Pi.shutdown(state)
+      assert File.exists?(home)
+      File.chmod!(home, 0o700)
+      assert %Pi{cleanup_result: :ok} = Pi.shutdown(failed)
+      refute File.exists?(home)
+    end
+  end
+
   defp request(id, method, params), do: %{"id" => id, "method" => method, "params" => params}
 end
