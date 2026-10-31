@@ -514,15 +514,15 @@ defmodule Arbor.ACP.Client.HandlerRunner do
           admitted =
             if request_gate(ref) do
               try do
-                GenServer.call(owner, {:handler_worker_admit, ref, self()}, :infinity) == true
+                GenServer.call(owner, {:handler_worker_admit, ref, self()}, :infinity)
               catch
                 :exit, _ -> false
               end
             else
-              true
+              {:ok, :infinity}
             end
 
-          if admitted and request_open?(ref) and mcp_open?(gate) do
+          if request_open?(ref) and mcp_open?(gate) and admission_current?(admitted) do
             outcome = normalize_work_result(kind, safe_call(work))
             send(runner, {:handler_worker_done, ref, outcome})
           end
@@ -641,10 +641,20 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   end
 
   defp provider_admitted?(owner, ref, session_id) do
-    GenServer.call(owner, {:mcp_provider_admitted, ref, session_id}, :infinity) == true
+    admission = GenServer.call(owner, {:mcp_provider_admitted, ref, session_id}, :infinity)
+    admission_current?(admission)
   catch
     :exit, _reason -> false
   end
+
+  # Admission can be delayed in transit or after the worker is rescheduled.
+  # Check the owning deadline locally immediately before entering user work.
+  defp admission_current?({:ok, :infinity}), do: true
+
+  defp admission_current?({:ok, deadline}) when is_integer(deadline),
+    do: deadline > System.monotonic_time(:millisecond)
+
+  defp admission_current?(_denied), do: false
 
   # Handler state is never replaced from an MCP callback. `:unchanged` is the
   # only accepted outcome so a returned state cannot be stored by mistake.

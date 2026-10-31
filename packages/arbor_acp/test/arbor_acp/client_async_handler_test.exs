@@ -206,6 +206,20 @@ defmodule Arbor.ACP.ClientAsyncHandlerTest do
     refute_receive {:work, :file_read, _}
   end
 
+  test "worker rechecks an admission deadline after the reply is delayed" do
+    {:ok, runner} = HandlerRunner.start_link(Handler, [parent: self()], self())
+    ref = HandlerRunner.new_request_ref()
+    HandlerRunner.file_read(runner, ref, "s", "/tmp/file", %{})
+    assert_receive {:callback, :file_read, 0}
+    assert_receive {:"$gen_call", {worker, _} = from, {:handler_worker_admit, ^ref, worker}}
+    monitor = Process.monitor(worker)
+    # The owner admitted the worker, but its reply became stale before use.
+    GenServer.reply(from, {:ok, System.monotonic_time(:millisecond) - 1})
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}
+    refute_receive {:work, :file_read, _}
+    assert :sys.get_state(runner).handler_state.count == 1
+  end
+
   defp start_client do
     {:ok, peer} = Memory.new_pair()
     {:ok, transport} = Memory.connect(peer: peer, role: :agent)
