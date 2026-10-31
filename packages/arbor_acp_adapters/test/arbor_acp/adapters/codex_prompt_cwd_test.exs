@@ -10,9 +10,12 @@ defmodule Arbor.ACP.Adapters.CodexPromptCwdTest do
   alias Arbor.ACP.Adapters.Codex
 
   setup do
-    root =
-      System.tmp_dir!()
-      |> Path.join("codex_prompt_cwd_#{System.unique_integer([:positive])}")
+    nonce = :crypto.strong_rand_bytes(12) |> Base.url_encode64(padding: false)
+    root = Path.join(System.tmp_dir!(), "codex_prompt_cwd_#{nonce}")
+    File.mkdir!(root)
+    File.chmod!(root, 0o700)
+    # The authorization callback receives real paths, including on macOS.
+    root = WorkspacePath.canonical(root)
 
     workspace = Path.join(root, "ws")
     extra = Path.join(root, "extra")

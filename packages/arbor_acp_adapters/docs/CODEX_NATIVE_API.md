@@ -200,7 +200,9 @@ CODEX_PATH=/absolute/path/to/codex mix test --only interop_codex_native
 ```
 
 Authenticated qualification is separate and excluded by default. It requires
-the same CLI pin, an existing working Codex login and explicit opt-in:
+the same CLI pin, an existing working Codex login and explicit opt-in. The harness
+selects the caller-owned `CODEX_HOME` (or `~/.codex` when unset) explicitly; it
+never deletes that home. Credential-free tests keep their disposable home:
 
 ```sh
 CODEX_PATH=/absolute/path/to/codex \

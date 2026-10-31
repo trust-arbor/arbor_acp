@@ -143,7 +143,19 @@ defmodule Arbor.ACP.Test.CodexNative do
     File.mkdir_p!(root)
     File.mkdir_p!(Path.join(root, "codex-state"))
     proof = "native-proof-#{System.unique_integer([:positive])}"
-    env = if authenticated?, do: [], else: [{"CODEX_HOME", Path.join(root, "codex-state")}]
+    # Authenticated qualification explicitly selects the caller-owned login home.
+    # Private generated homes intentionally cannot see that login by default.
+    home =
+      if authenticated? do
+        case System.get_env("CODEX_HOME") do
+          value when value in [nil, ""] -> Path.join(System.user_home!(), ".codex")
+          value -> Path.expand(value)
+        end
+      else
+        Path.join(root, "codex-state")
+      end
+
+    env = [{"CODEX_HOME", home}]
     launch = if authenticated?, do: isolated_launcher(root, executable), else: executable
 
     {:ok, client} =

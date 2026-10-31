@@ -206,10 +206,10 @@ defmodule Arbor.ACP.CompatTest do
       parent = self()
       secret = "compat-redirect-secret-#{System.unique_integer([:positive])}"
 
-      # Second origin on 127.0.0.2 so a followed 3xx is a different host, not
-      # just another port on 127.0.0.1. OTP 28 :httpc still follows by default
-      # but strips Authorization on that hop, so asserting "no Bearer token"
-      # passes even when the request is replayed. The hop itself must not occur.
+      # Use a different hostname and port for the second origin, but bind
+      # the assigned IPv4 loopback address (macOS need not have 127.0.0.2).
+      # Assert that the hop itself never occurs, even if a client would strip
+      # Authorization before following it.
       {_target_pid, target_port} =
         start_http_stub(
           fn request ->
@@ -221,10 +221,10 @@ defmodule Arbor.ACP.CompatTest do
               Jason.encode!(%{"sha" => @sha_a})
             )
           end,
-          {127, 0, 0, 2}
+          {127, 0, 0, 1}
         )
 
-      location = "http://127.0.0.2:#{target_port}/leaked.json"
+      location = "http://localhost:#{target_port}/leaked.json"
 
       {_origin_pid, origin_port} =
         start_http_stub(fn request ->
@@ -283,10 +283,10 @@ defmodule Arbor.ACP.CompatTest do
               "- [Agent One](https://example.test/one)\n- [Agent Two](https://example.test/two)\n"
             )
           end,
-          {127, 0, 0, 2}
+          {127, 0, 0, 1}
         )
 
-      location = "http://127.0.0.2:#{target_port}/agents.md"
+      location = "http://localhost:#{target_port}/agents.md"
 
       {_origin_pid, origin_port} =
         start_http_stub(fn request ->

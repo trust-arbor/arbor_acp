@@ -85,7 +85,7 @@ defmodule Arbor.ACP.Integration.CodexNativeQualificationTest do
         Harness.turn!(
           client,
           id,
-          "Call qualification_echo with value native-input exactly once. Reply with the exact value returned by that tool. Do not use other tools."
+          "Call qualification_echo with value native-input exactly once. Its response contains a fresh proof value different from the input. Copy the response text exactly as your final answer; do not echo the input argument. Do not use other tools."
         )
 
       completed = Harness.await_turn(consumer, id, started["turn"]["id"])

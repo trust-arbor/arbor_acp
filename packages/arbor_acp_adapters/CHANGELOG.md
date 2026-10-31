@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.0.0-rc.5 — 2026-10-31
+
+- Require the coordinated ArborRPC 1.0.0-rc.4 candidate. Require ArborACP 1.0.0-rc.5 for the current core API.
+
 - Codex `session/prompt` requires a caller-supplied `cwd` to resolve inside the session's bound workspace or an `additionalDirectory` stored as its creation-time real path. Each stored directory is re-checked with `authorize_workspace` on every prompt and dropped if it no longer resolves to that path or is no longer authorized. `thread/start` `writableRoots` uses that filtered list. `thread/started` cannot widen or replace those approved directories. The resolved real path is forwarded to `turn/start`. A path outside those roots or that cannot be resolved is rejected without sending `turn/start`. An omitted `cwd` is unchanged.
 
 - Claude uses one private home per connection, shared by its separate session processes. Closing a generated-home session removes its history; disconnect removes the home. Caller-owned homes retain history on close. Reauthentication restarts idle managed children to refresh native credentials, retaining conversation ids and preferences.
