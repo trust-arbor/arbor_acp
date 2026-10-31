@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix: Codex completions settle only the active turn, and a late start reply cannot reactivate a prompt that has finished.
+
 - Fix: the ACP client rejected `notice` and context compaction session updates as invalid even when the application had opted in with `clientCapabilities.session.notices` or `.compaction`. It now delivers them, accepting and salvaging them as the ACP SDK 1.9.0 v1 deserializer does (invalid optional values removed, invalid summary items skipped); without the capability it still drops them.
 
 ## ArborACP / Adapters 1.0.0-rc.4 — 2026-10-26
