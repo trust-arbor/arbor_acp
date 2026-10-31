@@ -8,6 +8,16 @@ defmodule Arbor.ACP.Client.Handler do
 
   See `Arbor.ACP.Client.DefaultHandler` for a reference implementation.
 
+  Request callbacks (permission, file, terminal, elicitation and extension)
+  may return `{:async, work, state}` for a zero-arity function. The new handler
+  state is committed immediately, before the next callback. `work` runs in a
+  linked, monitored worker and returns `{:ok, value}` or `{:error, reason}`;
+  file-write work returns `:ok` or `{:error, reason}`. Work never returns
+  handler state. Cancellation, timeout, disconnect and runner shutdown stop
+  the worker; late results cannot answer a request twice. Keep the callback
+  itself short: synchronous callbacks retain their existing ordering.
+
+
   Session updates and permission requests each have a legacy callback and a
   context-aware variant that also receives the decoded JSON-RPC message
   (`c:handle_session_update/3` or `c:handle_session_update/4`, and
@@ -20,6 +30,7 @@ defmodule Arbor.ACP.Client.Handler do
   """
 
   @type state :: any()
+  @type async_request :: {:async, (-> :ok | {:ok, term()} | {:error, term()}), state()}
 
   @doc "Called when the handler is initialized."
   @callback init(opts :: keyword()) :: {:ok, state()}
@@ -70,7 +81,9 @@ defmodule Arbor.ACP.Client.Handler do
               tool_call :: map(),
               options :: [map()],
               state()
-            ) :: {:ok, outcome :: map(), state()}
+            ) ::
+              {:ok, outcome :: map(), state()}
+              | async_request()
 
   @doc """
   Handles a permission request with the decoded JSON-RPC message received by
@@ -90,7 +103,9 @@ defmodule Arbor.ACP.Client.Handler do
               options :: [map()],
               message :: map(),
               state()
-            ) :: {:ok, outcome :: map(), state()}
+            ) ::
+              {:ok, outcome :: map(), state()}
+              | async_request()
 
   @doc """
   Called when the agent requests to read a file.
@@ -99,7 +114,9 @@ defmodule Arbor.ACP.Client.Handler do
   `{:error, reason, state}` to deny access.
   """
   @callback handle_file_read(session_id :: String.t(), path :: String.t(), opts :: map(), state()) ::
-              {:ok, content :: String.t(), state()} | {:error, reason :: String.t(), state()}
+              {:ok, content :: String.t(), state()}
+              | {:error, reason :: String.t(), state()}
+              | async_request()
 
   @doc """
   Called when the agent requests to write a file.
@@ -112,7 +129,7 @@ defmodule Arbor.ACP.Client.Handler do
               path :: String.t(),
               content :: String.t(),
               state()
-            ) :: {:ok, state()} | {:error, reason :: String.t(), state()}
+            ) :: {:ok, state()} | {:error, reason :: String.t(), state()} | async_request()
 
   @doc """
   Called when the agent requests a terminal operation.
@@ -126,15 +143,22 @@ defmodule Arbor.ACP.Client.Handler do
               params :: map(),
               id :: integer() | String.t() | nil,
               state()
-            ) :: {:ok, result :: map(), state()} | {:error, reason :: String.t(), state()}
+            ) ::
+              {:ok, result :: map(), state()}
+              | {:error, reason :: String.t(), state()}
+              | async_request()
 
   @doc "Called when the agent requests a form-mode elicitation."
   @callback handle_form_elicitation(params :: map(), state()) ::
-              {:ok, response :: map(), state()} | {:error, reason :: term(), state()}
+              {:ok, response :: map(), state()}
+              | {:error, reason :: term(), state()}
+              | async_request()
 
   @doc "Called when the agent requests a URL-mode elicitation."
   @callback handle_url_elicitation(params :: map(), state()) ::
-              {:ok, response :: map(), state()} | {:error, reason :: term(), state()}
+              {:ok, response :: map(), state()}
+              | {:error, reason :: term(), state()}
+              | async_request()
 
   @doc "Called when an accepted URL elicitation completes out of band."
   @callback handle_elicitation_complete(elicitation_id :: String.t(), state()) :: {:ok, state()}
@@ -145,7 +169,7 @@ defmodule Arbor.ACP.Client.Handler do
   and unknown fields are preserved. The runtime owns IDs, timeouts and replies.
   """
   @callback handle_extension_request(String.t(), map(), state()) ::
-              {:ok, term(), state()} | {:error, map(), state()}
+              {:ok, term(), state()} | {:error, map(), state()} | async_request()
 
   @doc "Handles an underscore-prefixed notification on the bounded handler queue."
   @callback handle_extension_notification(String.t(), map(), state()) :: {:ok, state()}

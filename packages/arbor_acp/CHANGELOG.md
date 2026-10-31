@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Request handlers may return `{:async, work, state}` to commit state before running cancellable work outside the handler mailbox. Timeouts, cancellation and connection shutdown stop that work and preserve one response per request.
+
 - **Security:** `Arbor.ACP.AdapterSupport.WorkspacePath` fails closed when symlink resolution cannot finish (the depth cap or a loop). A 41-link chain that previously returned a half-resolved path under the root is now rejected by `within?/2` and `contained/2`.
 - **Security:** `WorkspacePath.rm_within/2` reuses the path `contained/2` already validated and then, in one process, `cd -P`s from the resolved root through each ancestor with an lstat and inode check at every step before unlinking the basename there. A file or ancestor swapped for a symlink after the check is not followed.
 - **Security / policy change:** `Arbor.ACP.Compat` refuses every HTTP redirect (`autoredirect: false` on GitHub adapter-head fetches and on every other compat request). `:httpc` is not allowed to replay a `GITHUB_TOKEN` Authorization header onto another origin. This includes same-host hops: a legitimate GitHub 301 or 307 now returns `{:http_error, status, reason}` instead of following `Location`. Whether that stay-closed policy is kept is an explicit product decision.

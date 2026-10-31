@@ -12,7 +12,8 @@ defmodule Arbor.ACP.Client.HandlerRunner do
     :handler_state,
     :owner,
     :mcp_gate,
-    mcp_workers: %{}
+    mcp_workers: %{},
+    async_workers: %{}
   ]
 
   def start_link(handler_mod, handler_opts, owner, scope \\ nil) do
@@ -83,6 +84,24 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
   defp update_size(update, nil), do: :erlang.external_size(update)
   defp update_size(_update, message), do: :erlang.external_size(message)
+
+  # The admission bit is visible while a request is still queued behind a
+  # synchronous callback. Cancellation must not wait for that mailbox.
+  def new_request_ref do
+    gate = :atomics.new(1, signed: false)
+    :atomics.put(gate, 1, 1)
+    {:acp_handler_request, make_ref(), gate}
+  end
+
+  def request_gate({:acp_handler_request, _ref, gate}), do: gate
+  def request_gate(_ref), do: nil
+
+  defp request_open?(ref) do
+    case request_gate(ref) do
+      nil -> true
+      gate -> :atomics.get(gate, 1) == 1
+    end
+  end
 
   def extension_request(pid, ref, method, params),
     do: GenServer.cast(pid, {:extension_request, ref, method, params})
@@ -208,7 +227,13 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   end
 
   @impl true
-  def handle_cast(message, state), do: cast_message(message, state)
+  def handle_cast(message, state) do
+    if tuple_size(message) > 1 and not request_open?(elem(message, 1)) do
+      {:noreply, state}
+    else
+      cast_message(message, state)
+    end
+  end
 
   defp cast_message({:session_update, session_id, update, message}, state) do
     case safe_call(fn ->
@@ -235,6 +260,9 @@ defmodule Arbor.ACP.Client.HandlerRunner do
       case safe_call(fn ->
              state.handler_mod.handle_extension_request(method, params, state.handler_state)
            end) do
+        {:ok, {:async, work, handler_state}} when is_function(work, 0) ->
+          {{:async, work}, %{state | handler_state: handler_state}}
+
         {:ok, {:ok, result, handler_state}} ->
           {{:ok, result}, %{state | handler_state: handler_state}}
 
@@ -245,8 +273,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
           {{:error, %{"code" => -32_603, "message" => "Extension handler failed"}}, state}
       end
 
-    send(state.owner, {:acp_handler_result, ref, {:extension, result}})
-    {:noreply, state}
+    reply_or_start_worker(state, ref, :extension, result)
   end
 
   defp cast_message({:extension_notification, method, params}, state) do
@@ -271,6 +298,9 @@ defmodule Arbor.ACP.Client.HandlerRunner do
                message
              )
            end) do
+        {:ok, {:async, work, handler_state}} when is_function(work, 0) ->
+          {{:async, work}, %{state | handler_state: handler_state}}
+
         {:ok, {:ok, outcome, handler_state}} ->
           {{:ok, outcome}, %{state | handler_state: handler_state}}
 
@@ -284,8 +314,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
           {{:error, reason}, state}
       end
 
-    send(state.owner, {:acp_handler_result, ref, {:permission, result}})
-    {:noreply, state}
+    reply_or_start_worker(state, ref, :permission, result)
   end
 
   defp cast_message({:file_read, ref, session_id, path, opts}, state) do
@@ -293,6 +322,9 @@ defmodule Arbor.ACP.Client.HandlerRunner do
       case safe_call(fn ->
              state.handler_mod.handle_file_read(session_id, path, opts, state.handler_state)
            end) do
+        {:ok, {:async, work, handler_state}} when is_function(work, 0) ->
+          {{:async, work}, %{state | handler_state: handler_state}}
+
         {:ok, {:ok, content, handler_state}} ->
           {{:ok, content}, %{state | handler_state: handler_state}}
 
@@ -306,8 +338,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
           {{:error, reason}, state}
       end
 
-    send(state.owner, {:acp_handler_result, ref, {:file_read, result}})
-    {:noreply, state}
+    reply_or_start_worker(state, ref, :file_read, result)
   end
 
   defp cast_message({:file_write, ref, session_id, path, content}, state) do
@@ -315,6 +346,9 @@ defmodule Arbor.ACP.Client.HandlerRunner do
       case safe_call(fn ->
              state.handler_mod.handle_file_write(session_id, path, content, state.handler_state)
            end) do
+        {:ok, {:async, work, handler_state}} when is_function(work, 0) ->
+          {{:async, work}, %{state | handler_state: handler_state}}
+
         {:ok, {:ok, handler_state}} ->
           {:ok, %{state | handler_state: handler_state}}
 
@@ -328,8 +362,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
           {{:error, reason}, state}
       end
 
-    send(state.owner, {:acp_handler_result, ref, {:file_write, result}})
-    {:noreply, state}
+    reply_or_start_worker(state, ref, :file_write, result)
   end
 
   defp cast_message({:terminal_request, ref, method, params, id}, state) do
@@ -337,6 +370,9 @@ defmodule Arbor.ACP.Client.HandlerRunner do
       case safe_call(fn ->
              state.handler_mod.handle_terminal_request(method, params, id, state.handler_state)
            end) do
+        {:ok, {:async, work, handler_state}} when is_function(work, 0) ->
+          {{:async, work}, %{state | handler_state: handler_state}}
+
         {:ok, {:ok, response, handler_state}} ->
           {{:ok, response}, %{state | handler_state: handler_state}}
 
@@ -350,8 +386,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
           {{:error, reason}, state}
       end
 
-    send(state.owner, {:acp_handler_result, ref, {:terminal, result}})
-    {:noreply, state}
+    reply_or_start_worker(state, ref, :terminal, result)
   end
 
   defp cast_message({:elicitation_request, ref, mode, params}, state) do
@@ -359,6 +394,9 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
     {result, state} =
       case safe_call(fn -> apply(state.handler_mod, callback, [params, state.handler_state]) end) do
+        {:ok, {:async, work, handler_state}} when is_function(work, 0) ->
+          {{:async, work}, %{state | handler_state: handler_state}}
+
         {:ok, {:ok, response, handler_state}} ->
           {{:ok, response}, %{state | handler_state: handler_state}}
 
@@ -372,8 +410,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
           {{:error, reason}, state}
       end
 
-    send(state.owner, {:acp_handler_result, ref, {:elicitation, result}})
-    {:noreply, state}
+    reply_or_start_worker(state, ref, :elicitation, result)
   end
 
   defp cast_message({:elicitation_complete, elicitation_id}, state) do
@@ -412,10 +449,38 @@ defmodule Arbor.ACP.Client.HandlerRunner do
     end
   end
 
+  def handle_info({:handler_worker_done, ref, outcome}, state) do
+    case Map.pop(state.async_workers, ref) do
+      {nil, _workers} ->
+        {:noreply, state}
+
+      {%{monitor: monitor, kind: kind}, workers} ->
+        Process.demonitor(monitor, [:flush])
+
+        if outcome != :skipped and request_open?(ref) and mcp_open?(state.mcp_gate),
+          do: send(state.owner, {:acp_handler_result, ref, {kind, outcome}})
+
+        {:noreply, %{state | async_workers: workers}}
+    end
+  end
+
   def handle_info({:DOWN, monitor, :process, _pid, reason}, state) do
     case pop_mcp_worker(state, monitor) do
       {nil, state} ->
-        {:noreply, state}
+        case Enum.find(state.async_workers, fn {_ref, worker} -> worker.monitor == monitor end) do
+          nil ->
+            {:noreply, state}
+
+          {ref, worker} ->
+            if request_open?(ref),
+              do:
+                send(
+                  state.owner,
+                  {:acp_handler_result, ref, {worker.kind, {:error, {:exit, reason}}}}
+                )
+
+            {:noreply, %{state | async_workers: Map.delete(state.async_workers, ref)}}
+        end
 
       {{ref, _worker}, state} ->
         send(state.owner, {:acp_handler_result, ref, {:mcp, {:error, {:exit, reason}}}})
@@ -427,7 +492,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
   @impl true
   def terminate(reason, state) do
-    Enum.each(state.mcp_workers, fn {_ref, %{pid: pid}} ->
+    Enum.each(Map.merge(state.mcp_workers, state.async_workers), fn {_ref, %{pid: pid}} ->
       Process.exit(pid, :kill)
     end)
 
@@ -437,6 +502,55 @@ defmodule Arbor.ACP.Client.HandlerRunner do
 
     :ok
   end
+
+  defp reply_or_start_worker(state, ref, kind, {:async, work}) do
+    runner = self()
+    owner = state.owner
+    gate = state.mcp_gate
+
+    {pid, monitor} =
+      :erlang.spawn_opt(
+        fn ->
+          admitted =
+            if request_gate(ref) do
+              try do
+                GenServer.call(owner, {:handler_worker_admit, ref, self()}, :infinity)
+              catch
+                :exit, _ -> false
+              end
+            else
+              {:ok, :infinity}
+            end
+
+          if request_open?(ref) and mcp_open?(gate) and admission_current?(admitted) do
+            outcome = normalize_work_result(kind, safe_call(work))
+            send(runner, {:handler_worker_done, ref, outcome})
+          else
+            # The Client's timeout/cancellation path owns settlement. Retire
+            # normally without converting this skip into a worker failure.
+            send(runner, {:handler_worker_done, ref, :skipped})
+          end
+        end,
+        [:link, :monitor]
+      )
+
+    worker = %{pid: pid, monitor: monitor, kind: kind}
+    {:noreply, %{state | async_workers: Map.put(state.async_workers, ref, worker)}}
+  end
+
+  defp reply_or_start_worker(state, ref, kind, result) do
+    send(state.owner, {:acp_handler_result, ref, {kind, result}})
+    {:noreply, state}
+  end
+
+  defp normalize_work_result(:file_write, {:ok, :ok}), do: :ok
+
+  defp normalize_work_result(kind, {:ok, {:ok, value}}) when kind != :file_write,
+    do: {:ok, value}
+
+  defp normalize_work_result(_kind, {:ok, {:error, reason}}), do: {:error, reason}
+  defp normalize_work_result(_kind, {:error, reason}), do: {:error, reason}
+  defp normalize_work_result(_kind, {:ok, other}), do: {:error, {:invalid_return, other}}
 
   # The Client passes `message` only when the handler exports the context
   # variant, so its presence selects the arity.
@@ -531,10 +645,20 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   end
 
   defp provider_admitted?(owner, ref, session_id) do
-    GenServer.call(owner, {:mcp_provider_admitted, ref, session_id}, :infinity) == true
+    admission = GenServer.call(owner, {:mcp_provider_admitted, ref, session_id}, :infinity)
+    admission_current?(admission)
   catch
     :exit, _reason -> false
   end
+
+  # Admission can be delayed in transit or after the worker is rescheduled.
+  # Check the owning deadline locally immediately before entering user work.
+  defp admission_current?({:ok, :infinity}), do: true
+
+  defp admission_current?({:ok, deadline}) when is_integer(deadline),
+    do: deadline > System.monotonic_time(:millisecond)
+
+  defp admission_current?(_denied), do: false
 
   # Handler state is never replaced from an MCP callback. `:unchanged` is the
   # only accepted outcome so a returned state cannot be stored by mistake.
