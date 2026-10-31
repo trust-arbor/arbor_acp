@@ -206,18 +206,25 @@ defmodule Arbor.ACP.CompatTest do
       parent = self()
       secret = "compat-redirect-secret-#{System.unique_integer([:positive])}"
 
+      # Second origin on 127.0.0.2 so a followed 3xx is a different host, not
+      # just another port on 127.0.0.1. OTP 28 :httpc still follows by default
+      # but strips Authorization on that hop, so asserting "no Bearer token"
+      # passes even when the request is replayed. The hop itself must not occur.
       {_target_pid, target_port} =
-        start_http_stub(fn request ->
-          send(parent, {:target_request, request.headers})
+        start_http_stub(
+          fn request ->
+            send(parent, {:target_request, request.headers})
 
-          http_response(
-            200,
-            [{"content-type", "application/json"}],
-            Jason.encode!(%{"sha" => @sha_a})
-          )
-        end)
+            http_response(
+              200,
+              [{"content-type", "application/json"}],
+              Jason.encode!(%{"sha" => @sha_a})
+            )
+          end,
+          {127, 0, 0, 2}
+        )
 
-      location = "http://127.0.0.1:#{target_port}/leaked.json"
+      location = "http://127.0.0.2:#{target_port}/leaked.json"
 
       {_origin_pid, origin_port} =
         start_http_stub(fn request ->
@@ -245,7 +252,7 @@ defmodule Arbor.ACP.CompatTest do
         end
       end
 
-      _report =
+      report =
         ACPCompat.check_remote(@manifest,
           http_client: http_client,
           github_token: secret,
@@ -255,14 +262,11 @@ defmodule Arbor.ACP.CompatTest do
       assert_receive {:origin_request, origin_headers}
       assert authorization_value(origin_headers) == "Bearer #{secret}"
 
-      target_auth =
-        receive do
-          {:target_request, target_headers} -> authorization_value(target_headers)
-        after
-          200 -> nil
-        end
+      refute_received {:target_request, _headers}
 
-      refute target_auth == "Bearer #{secret}"
+      assert Enum.any?(report.errors, fn error ->
+               error["source"] == "adapter_upstream:reference-adapter"
+             end)
     end
   end
 
@@ -326,14 +330,14 @@ defmodule Arbor.ACP.CompatTest do
     end)
   end
 
-  defp start_http_stub(handler) do
+  defp start_http_stub(handler, ip \\ {127, 0, 0, 1}) do
     {:ok, listen} =
       :gen_tcp.listen(0, [
         :binary,
         active: false,
         packet: :raw,
         reuseaddr: true,
-        ip: {127, 0, 0, 1},
+        ip: ip,
         backlog: 16
       ])
 

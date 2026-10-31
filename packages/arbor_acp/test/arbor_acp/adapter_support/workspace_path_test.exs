@@ -1,6 +1,8 @@
 defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Arbor.ACP.AdapterSupport.WorkspacePath
 
   setup do
@@ -241,5 +243,85 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
   test "rm_within fails closed for a NUL in a parent component", %{root: root} do
     assert :ok = WorkspacePath.rm_within(Path.join(root, "bad" <> <<0>> <> "/name"), root)
     assert File.read!(Path.join(root, "src/main.ex")) == "ok"
+  end
+
+  test "rm_within warns and emits telemetry when a delete is refused as outside the root",
+       %{root: root, outside: outside} do
+    secret = Path.join(outside, "secret.txt")
+    File.write!(secret, "secret-token-value")
+    parent = self()
+    handler_id = "rm-within-outside-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:arbor_acp, :workspace_path, :rm_within, :failed],
+      fn event, measurements, metadata, _config ->
+        send(parent, {:rm_failed, event, measurements, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      capture_log(fn ->
+        assert :ok = WorkspacePath.rm_within(secret, root)
+      end)
+
+    assert File.read!(secret) == "secret-token-value"
+    assert log =~ "workspace delete refused"
+    assert log =~ "outside"
+    refute log =~ "secret-token-value"
+    refute log =~ secret
+
+    assert_receive {:rm_failed, [:arbor_acp, :workspace_path, :rm_within, :failed], %{count: 1},
+                    metadata}
+
+    assert metadata.reason == :outside
+    assert metadata.path == "[outside]"
+    refute to_string(metadata.path) =~ "secret"
+  end
+
+  test "rm_within warns when an in-root unlink fails", %{root: root} do
+    parent = Path.join(root, "locked")
+    File.mkdir_p!(parent)
+    inside = Path.join(parent, "file.txt")
+    File.write!(inside, "keep")
+    File.chmod!(parent, 0o555)
+
+    on_exit(fn ->
+      File.chmod!(parent, 0o755)
+    end)
+
+    parent_pid = self()
+    handler_id = "rm-within-unlink-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:arbor_acp, :workspace_path, :rm_within, :failed],
+      fn event, measurements, metadata, _config ->
+        send(parent_pid, {:rm_failed, event, measurements, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      capture_log(fn ->
+        assert :ok = WorkspacePath.rm_within(inside, root)
+      end)
+
+    assert File.read!(inside) == "keep"
+    assert log =~ "workspace delete refused"
+    assert log =~ "unlink_failed"
+    assert log =~ "locked/file.txt"
+    refute log =~ root
+
+    assert_receive {:rm_failed, [:arbor_acp, :workspace_path, :rm_within, :failed], %{count: 1},
+                    metadata}
+
+    assert metadata.reason == :unlink_failed
+    assert metadata.path == "locked/file.txt"
   end
 end
