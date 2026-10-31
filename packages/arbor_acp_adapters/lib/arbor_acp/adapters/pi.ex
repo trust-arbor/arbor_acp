@@ -662,6 +662,14 @@ defmodule Arbor.ACP.Adapters.Pi do
 
   defp prepare_session_process(cwd, session_file, state) do
     state = close_active_session(state)
+
+    case state.cleanup_result do
+      :ok -> allocate_session_process(cwd, session_file, state)
+      {:error, reason} -> {:error, inspect(reason), state}
+    end
+  end
+
+  defp allocate_session_process(cwd, session_file, state) do
     session_key = "pi-child-#{System.unique_integer([:positive, :monotonic])}"
 
     opts =

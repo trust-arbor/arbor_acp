@@ -153,6 +153,12 @@ defmodule Arbor.ACP.Adapters.PiHomeLifecycleTest do
 
       assert {:error, {:private_home_cleanup_failed, _}, failed} = Pi.shutdown(state)
       assert File.exists?(home)
+      owned = Process.get({RuntimeHome, :owned_homes}) |> map_size()
+      next = Pi.translate_outbound(request(7, "session/new", %{"cwd" => root}), failed)
+      next = elem(next, tuple_size(next) - 1)
+      assert next.opts[:agent_dir] == failed.opts[:agent_dir]
+      assert next.auth_home_opts == failed.auth_home_opts
+      assert map_size(Process.get({RuntimeHome, :owned_homes})) == owned
       File.chmod!(home, 0o700)
       assert %Pi{cleanup_result: :ok} = Pi.shutdown(failed)
       refute File.exists?(home)
