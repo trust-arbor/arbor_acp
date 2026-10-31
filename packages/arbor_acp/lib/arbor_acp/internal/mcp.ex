@@ -568,7 +568,15 @@ defmodule Arbor.ACP.Internal.Mcp do
 
   defp drop_session(table, session_id) do
     {table, dropped} = drop_servers(table, servers_for(table, session_id))
-    {%{table | sessions: Map.delete(table.sessions, session_id)}, dropped}
+    # No lifecycle token still observes this session here: callers retain a
+    # closed session until all reservations have settled. Forget the epoch
+    # together with its bindings so closed ids do not become a history log.
+    {%{
+       table
+       | sessions: Map.delete(table.sessions, session_id),
+         epochs: Map.delete(table.epochs, session_id),
+         bound_epochs: Map.delete(table.bound_epochs, session_id)
+     }, dropped}
   end
 
   defp clear_pending(table, token) do

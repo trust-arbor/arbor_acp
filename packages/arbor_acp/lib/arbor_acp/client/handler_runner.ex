@@ -531,7 +531,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
   end
 
   defp provider_admitted?(owner, ref, session_id) do
-    GenServer.call(owner, {:mcp_provider_admitted, ref, session_id}) == true
+    GenServer.call(owner, {:mcp_provider_admitted, ref, session_id}, :infinity) == true
   catch
     :exit, _reason -> false
   end
