@@ -514,7 +514,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
           admitted =
             if request_gate(ref) do
               try do
-                GenServer.call(owner, {:handler_worker_admit, ref, self()}) == true
+                GenServer.call(owner, {:handler_worker_admit, ref, self()}, :infinity) == true
               catch
                 :exit, _ -> false
               end

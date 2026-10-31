@@ -158,6 +158,24 @@ defmodule Arbor.ACP.ClientAsyncHandlerTest do
     assert_receive {:kill_handled, 1}
   end
 
+  test "cancelling the prompt preserves a queued terminal kill" do
+    {client, transport} = start_client()
+    runner = :sys.get_state(client).handler_pid
+    :sys.suspend(runner)
+    send_raw(transport, request("kill", "terminal/kill", %{"terminalId" => "t"}))
+    # Use the same sender so the frame is admitted before the cancel cast.
+    send(
+      client,
+      {:transport_message, request("kill-ordered", "terminal/kill", %{"terminalId" => "t"})}
+    )
+
+    Client.cancel(client, "s")
+    :sys.get_state(client)
+    :sys.resume(runner)
+    assert_receive {:kill_handled, 0}
+    assert_receive {:kill_handled, 0}
+  end
+
   defp start_client do
     {:ok, peer} = Memory.new_pair()
     {:ok, transport} = Memory.connect(peer: peer, role: :agent)
