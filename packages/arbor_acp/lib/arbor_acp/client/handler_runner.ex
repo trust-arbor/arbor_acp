@@ -457,7 +457,7 @@ defmodule Arbor.ACP.Client.HandlerRunner do
       {%{monitor: monitor, kind: kind}, workers} ->
         Process.demonitor(monitor, [:flush])
 
-        if request_open?(ref) and mcp_open?(state.mcp_gate),
+        if outcome != :skipped and request_open?(ref) and mcp_open?(state.mcp_gate),
           do: send(state.owner, {:acp_handler_result, ref, {kind, outcome}})
 
         {:noreply, %{state | async_workers: workers}}
@@ -525,6 +525,10 @@ defmodule Arbor.ACP.Client.HandlerRunner do
           if request_open?(ref) and mcp_open?(gate) and admission_current?(admitted) do
             outcome = normalize_work_result(kind, safe_call(work))
             send(runner, {:handler_worker_done, ref, outcome})
+          else
+            # The Client's timeout/cancellation path owns settlement. Retire
+            # normally without converting this skip into a worker failure.
+            send(runner, {:handler_worker_done, ref, :skipped})
           end
         end,
         [:link, :monitor]

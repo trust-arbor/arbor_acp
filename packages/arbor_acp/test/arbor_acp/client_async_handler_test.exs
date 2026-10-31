@@ -218,6 +218,7 @@ defmodule Arbor.ACP.ClientAsyncHandlerTest do
     assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}
     refute_receive {:work, :file_read, _}
     assert :sys.get_state(runner).handler_state.count == 1
+    refute_receive {:acp_handler_result, ^ref, _}
   end
 
   defp start_client do
