@@ -2498,8 +2498,7 @@ defmodule Arbor.ACP.Client do
   defp cancel_pending_interactions(session_id, state) do
     {to_cancel, keep} =
       Enum.split_with(state.pending_agent_requests, fn {_ref, request} ->
-        (request.kind in [:permission, :elicitation] or
-           not is_nil(Map.get(request, :handler_gate))) and request.session_id == session_id
+        request.kind in [:permission, :elicitation] and request.session_id == session_id
       end)
 
     Enum.each(to_cancel, fn {_ref, request} ->
