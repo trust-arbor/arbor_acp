@@ -201,4 +201,45 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
 
     assert File.read!(secret) == "caller data"
   end
+
+  test "rm_within keeps the original root identity across directory replacement", %{
+    root: root,
+    outside: outside
+  } do
+    sessions = Path.join(root, "sessions")
+    File.mkdir_p!(sessions)
+    File.write!(Path.join(sessions, "session.txt"), "original")
+    File.write!(Path.join(outside, "session.txt"), "replacement")
+
+    assert :ok =
+             WorkspacePath.rm_within(Path.join(sessions, "session.txt"), sessions,
+               after_ancestors: fn ->
+                 File.rename!(sessions, sessions <> ".saved")
+                 File.rename!(outside, sessions)
+               end
+             )
+
+    assert File.read!(Path.join(sessions, "session.txt")) == "replacement"
+    assert File.read!(Path.join(sessions <> ".saved", "session.txt")) == "original"
+  end
+
+  test "rm_within unlinks a final symlink without deleting its contained target", %{root: root} do
+    target = Path.join(root, "target.txt")
+    link = Path.join(root, "link.txt")
+    File.write!(target, "keep")
+    File.ln_s!(target, link)
+    assert :ok = WorkspacePath.rm_within(link, root)
+    assert File.read!(target) == "keep"
+    assert {:error, :enoent} = File.lstat(link)
+  end
+
+  test "rm_within fails closed for a NUL in the final filename", %{root: root} do
+    assert :ok = WorkspacePath.rm_within(Path.join(root, "bad" <> <<0>> <> "name"), root)
+    assert File.read!(Path.join(root, "src/main.ex")) == "ok"
+  end
+
+  test "rm_within fails closed for a NUL in a parent component", %{root: root} do
+    assert :ok = WorkspacePath.rm_within(Path.join(root, "bad" <> <<0>> <> "/name"), root)
+    assert File.read!(Path.join(root, "src/main.ex")) == "ok"
+  end
 end
