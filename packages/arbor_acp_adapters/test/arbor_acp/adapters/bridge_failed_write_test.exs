@@ -13,7 +13,9 @@ defmodule Arbor.ACP.Adapters.BridgeFailedWriteTest do
   # The fake native process prints only what the test sends it, so every
   # native reply is the test's; the next request's answer is the barrier,
   # since the bridge handles native lines in order.
-  use ExUnit.Case, async: true
+  # Native startup is part of a bounded fixture setup, so run this module
+  # after async modules instead of competing with their subprocess launches.
+  use ExUnit.Case, async: false
 
   alias Arbor.ACP.AdapterBridge
   alias Arbor.ACP.Adapters.{ClaudeSDK, Codex, ZCode}
