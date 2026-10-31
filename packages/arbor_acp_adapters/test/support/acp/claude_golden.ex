@@ -432,7 +432,10 @@ defmodule Arbor.ACP.Test.ClaudeGolden do
   # -- sandbox --------------------------------------------------------------
 
   defp create_sandbox! do
-    sandbox = Path.join(System.tmp_dir!(), "claude_golden_#{System.unique_integer([:positive])}")
+    suffix = 12 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
+    sandbox = Path.join(System.tmp_dir!(), "claude_golden_" <> suffix)
+    File.mkdir!(sandbox)
+    File.chmod!(sandbox, 0o700)
 
     for dir <- ["bin", "claude", "project"] do
       File.mkdir_p!(Path.join(sandbox, dir))
