@@ -176,4 +176,29 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
 
     assert File.exists?(secret)
   end
+
+  test "rm_within does not follow an ancestor above its root swapped after validation", %{
+    root: root,
+    outside: outside
+  } do
+    container = Path.join(root, "container")
+    sessions = Path.join(container, "sessions")
+    File.mkdir_p!(sessions)
+    outside_sessions = Path.join(outside, "sessions")
+    File.mkdir_p!(outside_sessions)
+    inside = Path.join(sessions, "secret.txt")
+    secret = Path.join(outside_sessions, "secret.txt")
+    File.write!(inside, "session")
+    File.write!(secret, "caller data")
+
+    assert :ok =
+             WorkspacePath.rm_within(inside, sessions,
+               after_ancestors: fn ->
+                 File.rename!(container, container <> ".saved")
+                 File.ln_s!(outside, container)
+               end
+             )
+
+    assert File.read!(secret) == "caller data"
+  end
 end
