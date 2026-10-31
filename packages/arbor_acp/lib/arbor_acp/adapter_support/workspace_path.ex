@@ -116,7 +116,7 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePath do
   end
 
   defp safe_basename?(name),
-    do: name not in ["", ".", ".."] and not String.contains?(name, "/")
+    do: name not in ["", ".", ".."] and not String.contains?(name, ["/", <<0>>])
 
   defp unix_anchored_unlink(root, root_info, dirs, name, os) do
     {stat_flag, stat_fmt} =

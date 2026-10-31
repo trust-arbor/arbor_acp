@@ -1,6 +1,8 @@
 defmodule Arbor.ACP.Adapters.ClaudeSDK.ToolInfo do
   @moduledoc false
 
+  alias Arbor.ACP.AdapterSupport.WorkspacePath
+
   # Pure Claude tool-use to ACP tool-call metadata conversion.
 
   @tool_kinds %{
@@ -186,10 +188,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK.ToolInfo do
   defp display_path(nil, _cwd), do: "File"
 
   defp display_path(path, cwd) when is_binary(path) and is_binary(cwd) do
-    resolved_cwd = Path.expand(cwd)
+    resolved_cwd = WorkspacePath.canonical(cwd)
+    resolved_path = WorkspacePath.canonical(path)
 
-    if String.starts_with?(path, resolved_cwd <> "/") do
-      Path.relative_to(path, resolved_cwd)
+    if String.starts_with?(resolved_path, resolved_cwd <> "/") do
+      Path.relative_to(resolved_path, resolved_cwd)
     else
       Path.basename(path)
     end

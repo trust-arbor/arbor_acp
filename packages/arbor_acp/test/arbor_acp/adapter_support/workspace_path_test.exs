@@ -232,4 +232,14 @@ defmodule Arbor.ACP.AdapterSupport.WorkspacePathTest do
     assert File.read!(target) == "keep"
     assert {:error, :enoent} = File.lstat(link)
   end
+
+  test "rm_within fails closed for a NUL in the final filename", %{root: root} do
+    assert :ok = WorkspacePath.rm_within(Path.join(root, "bad" <> <<0>> <> "name"), root)
+    assert File.read!(Path.join(root, "src/main.ex")) == "ok"
+  end
+
+  test "rm_within fails closed for a NUL in a parent component", %{root: root} do
+    assert :ok = WorkspacePath.rm_within(Path.join(root, "bad" <> <<0>> <> "/name"), root)
+    assert File.read!(Path.join(root, "src/main.ex")) == "ok"
+  end
 end
