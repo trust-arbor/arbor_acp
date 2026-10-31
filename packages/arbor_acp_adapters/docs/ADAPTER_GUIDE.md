@@ -78,6 +78,8 @@ directory. Caller-provided directories are never removed. Claude and Pi keep
 a separate private connection login home for the advertised terminal login;
 new generated child homes receive only its credential file, so subsequent
 sessions can use that login without sharing settings or transcripts.
+An explicit empty or unset vendor-home variable in `:env` is rejected while
+workspace isolation is enabled; it cannot silently restore the normal home.
 A project's `piCommand` stays ignored even with the opt-in.
 
 ```elixir

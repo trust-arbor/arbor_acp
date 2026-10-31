@@ -247,7 +247,12 @@ defmodule Arbor.ACP.Adapters.Pi do
   @impl true
   def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
 
-  def translate_outbound(%{"method" => "authenticate"}, state), do: {:reply, %{}, state}
+  def translate_outbound(%{"method" => "authenticate"}, state) do
+    case RuntimeHome.refresh_auth(state.auth_home_opts, state.opts, :pi) do
+      :ok -> {:reply, %{}, state}
+      {:error, reason} -> {:error, inspect(reason), state}
+    end
+  end
 
   def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
     cwd = params["cwd"] || state.workspace_root || Keyword.get(state.opts, :cwd) || File.cwd!()
@@ -670,9 +675,12 @@ defmodule Arbor.ACP.Adapters.Pi do
 
         with :ok <- RuntimeHome.seed_auth(state.auth_home_opts, launch_opts, :pi),
              {cmd, args} when is_binary(cmd) <- cli_command(launch_opts) do
-          open_session_process(cmd, args, launch_opts, state)
+          case open_session_process(cmd, args, launch_opts, state) do
+            {:error, reason, failed} -> {:error, reason, release_stopped_home(failed)}
+            result -> result
+          end
         else
-          {:error, reason} -> {:error, inspect(reason), state}
+          {:error, reason} -> {:error, inspect(reason), release_stopped_home(state)}
         end
 
       {:error, reason} ->

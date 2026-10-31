@@ -468,6 +468,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     do: {:messages, messages, persist_current_session(state)}
 
   @impl true
+  def shutdown(%{managed?: false} = state), do: {:ok, state}
+
   def shutdown(state) do
     state.session_processes
     |> Enum.reduce(state, fn {session_id, entry}, acc ->
@@ -658,7 +660,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
        when method_id in ["claude-login", "claude-ai-login", "console-login"] do
     result =
       Enum.reduce_while(state.session_homes, :ok, fn {_id, opts}, :ok ->
-        case RuntimeHome.seed_auth(state.opts, Keyword.merge(state.opts, opts), :claude) do
+        case RuntimeHome.refresh_auth(state.opts, Keyword.merge(state.opts, opts), :claude) do
           :ok -> {:cont, :ok}
           {:error, _} = error -> {:halt, error}
         end
@@ -1467,18 +1469,35 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     do: {:ok, state}
 
   defp start_session_process(session_id, cwd, _params, kind, state) do
+    had_home? = Map.has_key?(state.session_homes, session_id)
     state = state |> persist_current_session() |> ensure_session_home(session_id)
     opts = session_process_opts(state, cwd, session_id, kind)
 
-    case cli_command(opts) do
-      {:error, reason} ->
-        {:error, format_command_error(reason), state}
+    result =
+      case cli_command(opts) do
+        {:error, reason} ->
+          {:error, format_command_error(reason), state}
 
-      {cmd, args} ->
-        case RuntimeHome.seed_auth(state.opts, opts, :claude) do
-          :ok -> open_session_process(session_id, cmd, args, opts, state)
-          {:error, reason} -> {:error, inspect(reason), state}
+        {cmd, args} ->
+          case RuntimeHome.seed_auth(state.opts, opts, :claude) do
+            :ok -> open_session_process(session_id, cmd, args, opts, state)
+            {:error, reason} -> {:error, inspect(reason), state}
+          end
+      end
+
+    case result do
+      {:error, reason, failed} when not had_home? ->
+        if Map.has_key?(failed.session_processes, session_id) do
+          {:error, reason, failed}
+        else
+          RuntimeHome.release(runtime_home_release_opts(failed, session_id), :claude)
+
+          {:error, reason,
+           %{failed | session_homes: Map.delete(failed.session_homes, session_id)}}
         end
+
+      result ->
+        result
     end
   end
 
@@ -2069,6 +2088,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
     {active_messages ++ queued_messages, state}
   end
+
+  defp owns_runtime_home?(%{managed?: false}, _session_id), do: false
 
   defp owns_runtime_home?(state, session_id) do
     Map.has_key?(state.session_homes, session_id) or

@@ -156,6 +156,42 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     assert {:ok, _} = ClaudeSDK.shutdown(failed)
   end
 
+  test "unmanaged close and shutdown retain the continuing process home", %{root: root, cli: cli} do
+    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli, managed: false)
+    home = state.opts[:claude_config_dir]
+    {id, state} = new_session(state, root, 1)
+
+    result =
+      ClaudeSDK.translate_outbound(request(2, "session/close", %{"sessionId" => id}), state)
+
+    state = elem(result, tuple_size(result) - 1)
+    assert File.dir?(home)
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+    assert File.dir?(home)
+  end
+
+  test "repeated failed launches do not retain new child homes", %{root: root} do
+    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: Path.join(root, "missing-cli"))
+
+    owned = fn ->
+      Process.get({Arbor.ACP.Adapters.Internal.RuntimeHome, :owned_homes}, %{}) |> map_size()
+    end
+
+    initial = owned.()
+
+    state =
+      Enum.reduce(1..3, state, fn id, state ->
+        assert {:error, _reason, state} =
+                 ClaudeSDK.translate_outbound(request(id, "session/new", %{"cwd" => root}), state)
+
+        assert state.session_homes == %{}
+        assert owned.() == initial
+        state
+      end)
+
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
   defp new_session(state, cwd, id) do
     {:reply, %{"sessionId" => sid}, state} =
       ClaudeSDK.translate_outbound(request(id, "session/new", %{"cwd" => cwd}), state)
