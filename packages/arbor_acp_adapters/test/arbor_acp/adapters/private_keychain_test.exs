@@ -1,5 +1,5 @@
 defmodule Arbor.ACP.Adapters.PrivateKeychainTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias Arbor.ACP.Adapters.Internal.{PrivateKeychain, RuntimeHome}
 
   test "only the two hashed services for the exact generated path are deleted" do
@@ -144,45 +144,92 @@ defmodule Arbor.ACP.Adapters.PrivateKeychainTest do
     refute File.exists?(home)
   end
 
-  test "relative profile overrides identify the same directory for terminal and child cwd changes" do
+  for home_scope <- [:generated, :caller_owned] do
+    @home_scope home_scope
+    test "#{home_scope} profile overrides identify the same directory across child cwd changes" do
+      alias Arbor.ACP.Adapters.ClaudeSDK
+      alias Arbor.ACP.AdapterSupport.Subprocess
+
+      root =
+        Path.join(System.tmp_dir!(), "acp_profile_path_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(Path.join(root, "workspace"))
+      on_exit(fn -> File.rm_rf!(root) end)
+      caller_home = Path.join(root, "caller-home")
+      File.mkdir_p!(caller_home)
+      opts = [cwd: root, env: [{"ANTHROPIC_CONFIG_DIR", "profiles"}]]
+
+      opts =
+        if @home_scope == :caller_owned,
+          do: Keyword.put(opts, :claude_config_dir, caller_home),
+          else: opts
+
+      {:ok, state} = ClaudeSDK.init(opts)
+      state = %{state | client_capabilities: %{"auth" => %{"terminal" => true}}}
+
+      [method | _] =
+        PrivateKeychain.with_runner(fn _ -> {:ok, "", 44} end, fn ->
+          ClaudeSDK.auth_methods(opts, state)
+        end)
+
+      profile = Path.join(root, "profiles")
+      assert method["env"]["ANTHROPIC_CONFIG_DIR"] == profile
+      # Managed children may switch workspaces; the connection's auth override stays fixed.
+      child_opts = Keyword.put(state.opts, :cwd, Path.join(root, "workspace"))
+
+      assert {:ok, ^profile, 0} =
+               Subprocess.capture(
+                 "/bin/sh",
+                 ["-c", ~s(printf '%s' "$ANTHROPIC_CONFIG_DIR")],
+                 child_opts,
+                 ClaudeSDK
+               )
+
+      # Unmanaged bridge launch retains the original environment's relative value,
+      # which the CLI resolves against the bridge's configured child cwd.
+      assert {:ok, relative, 0} =
+               Subprocess.capture(
+                 "/bin/sh",
+                 ["-c", ~s(printf '%s' "$ANTHROPIC_CONFIG_DIR")],
+                 opts,
+                 ClaudeSDK
+               )
+
+      assert Path.expand(relative, root) == profile
+      assert {:ok, _} = ClaudeSDK.shutdown(state)
+    end
+  end
+
+  test "inherited ambient profiles cannot replace a generated terminal login profile" do
     alias Arbor.ACP.Adapters.ClaudeSDK
-    alias Arbor.ACP.AdapterSupport.Subprocess
-    root = Path.join(System.tmp_dir!(), "acp_profile_path_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(Path.join(root, "workspace"))
-    on_exit(fn -> File.rm_rf!(root) end)
-    opts = [cwd: root, env: [{"ANTHROPIC_CONFIG_DIR", "profiles"}]]
-    {:ok, state} = ClaudeSDK.init(opts)
+    previous = System.get_env("ANTHROPIC_CONFIG_DIR")
+    System.put_env("ANTHROPIC_CONFIG_DIR", "/ambient/profile-must-not-be-used")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("ANTHROPIC_CONFIG_DIR", previous),
+        else: System.delete_env("ANTHROPIC_CONFIG_DIR")
+    end)
+
+    {:ok, state} = ClaudeSDK.init(environment_policy: :inherit)
     state = %{state | client_capabilities: %{"auth" => %{"terminal" => true}}}
 
     [method | _] =
       PrivateKeychain.with_runner(fn _ -> {:ok, "", 44} end, fn ->
-        ClaudeSDK.auth_methods(opts, state)
+        ClaudeSDK.auth_methods([], state)
       end)
 
-    profile = Path.join(root, "profiles")
-    assert method["env"]["ANTHROPIC_CONFIG_DIR"] == profile
-    # Managed children may switch workspaces; the connection's auth override stays fixed.
-    child_opts = Keyword.put(state.opts, :cwd, Path.join(root, "workspace"))
+    assert method["env"]["ANTHROPIC_CONFIG_DIR"] ==
+             Path.join(state.opts[:claude_config_dir], "anthropic")
 
-    assert {:ok, ^profile, 0} =
-             Subprocess.capture(
-               "/bin/sh",
-               ["-c", ~s(printf '%s' "$ANTHROPIC_CONFIG_DIR")],
-               child_opts,
-               ClaudeSDK
-             )
+    assert ClaudeSDK.env(state.opts)["ANTHROPIC_CONFIG_DIR"] ==
+             method["env"]["ANTHROPIC_CONFIG_DIR"]
 
-    # Unmanaged bridge launch retains the original environment's relative value,
-    # which the CLI resolves against the bridge's configured child cwd.
-    assert {:ok, relative, 0} =
-             Subprocess.capture(
-               "/bin/sh",
-               ["-c", ~s(printf '%s' "$ANTHROPIC_CONFIG_DIR")],
-               opts,
-               ClaudeSDK
-             )
+    assert RuntimeHome.env_value(
+             [environment_policy: :inherit, env: [{"ANTHROPIC_CONFIG_DIR", false}]],
+             "ANTHROPIC_CONFIG_DIR"
+           ) == nil
 
-    assert Path.expand(relative, root) == profile
     assert {:ok, _} = ClaudeSDK.shutdown(state)
   end
 

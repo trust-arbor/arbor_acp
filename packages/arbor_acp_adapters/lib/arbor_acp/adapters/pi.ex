@@ -61,6 +61,8 @@ defmodule Arbor.ACP.Adapters.Pi do
     :framing,
     :subprocess_error,
     cleanup_result: :ok,
+    home_cleanup_error: nil,
+    auth_home_cleanup_error: nil,
     opts: [],
     auth_home_opts: [],
     managed?: true,
@@ -619,8 +621,21 @@ defmodule Arbor.ACP.Adapters.Pi do
   def shutdown(state) do
     state = state |> close_active_session() |> release_stopped_home()
 
-    if state.managed? and state.cleanup_result == :ok,
-      do: RuntimeHome.release(state.auth_home_opts, :pi)
+    state =
+      if state.managed? and
+           (state.cleanup_result == :ok or
+              (state.auth_home_cleanup_error != nil and
+                 state.cleanup_result == {:error, state.auth_home_cleanup_error})) do
+        case RuntimeHome.release(state.auth_home_opts, :pi) do
+          :ok ->
+            %{state | cleanup_result: :ok, auth_home_cleanup_error: nil}
+
+          {:error, reason} ->
+            %{state | cleanup_result: {:error, reason}, auth_home_cleanup_error: reason}
+        end
+      else
+        state
+      end
 
     case state.cleanup_result do
       {:error, reason} -> {:error, reason, state}
@@ -804,10 +819,19 @@ defmodule Arbor.ACP.Adapters.Pi do
   # Unmanaged input consumers keep their child alive across ACP close. Its
   # home remains until the owner exits; the RuntimeHome owner monitor then
   # removes it. Managed homes can go only after confirmed child cleanup.
-  defp release_stopped_home(%{managed?: true, port: nil, cleanup_result: :ok} = state) do
-    case RuntimeHome.release_opt(state.opts, :pi) do
-      {:error, reason} -> %{state | cleanup_result: {:error, reason}}
-      opts -> %{state | opts: opts}
+  defp release_stopped_home(%{managed?: true, port: nil} = state) do
+    if state.cleanup_result == :ok or
+         (state.home_cleanup_error != nil and
+            state.cleanup_result == {:error, state.home_cleanup_error}) do
+      case RuntimeHome.release_opt(state.opts, :pi) do
+        {:error, reason} ->
+          %{state | cleanup_result: {:error, reason}, home_cleanup_error: reason}
+
+        opts ->
+          %{state | opts: opts, cleanup_result: :ok, home_cleanup_error: nil}
+      end
+    else
+      state
     end
   end
 

@@ -23,7 +23,7 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     %{root: root, cli: cli, log: log}
   end
 
-  test "managed sessions launch distinct homes and closing one leaves the other live", %{
+  test "managed sessions share a connection home and close removes only its history", %{
     root: root,
     cli: cli,
     log: log
@@ -38,13 +38,13 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     assert SessionStore.valid_session_id?(b)
     home_a = state.session_homes[a][:claude_config_dir]
     home_b = state.session_homes[b][:claude_config_dir]
-    assert home_a != home_b
-
-    for home <- [home_a, home_b] do
-      assert File.read!(Path.join(home, ".credentials.json")) == "temporary login"
-      refute File.exists?(Path.join(home, "settings.json"))
-      assert Bitwise.band(File.stat!(Path.join(home, ".credentials.json")).mode, 0o777) == 0o600
-    end
+    assert home_a == home_b and home_a == bootstrap
+    assert state.session_processes[a].handle != state.session_processes[b].handle
+    assert File.read!(Path.join(home_a, ".credentials.json")) == "temporary login"
+    assert File.read!(Path.join(home_a, "settings.json")) == "{}"
+    assert Bitwise.band(File.stat!(home_a).mode, 0o777) == 0o700
+    write_transcript(home_a, root, a, "A")
+    write_transcript(home_b, root, b, "B")
 
     assert :ok = wait_until(fn -> length(lines(log)) == 2 end)
     assert MapSet.new(lines(log)) == MapSet.new([home_a, home_b])
@@ -52,14 +52,22 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     {:reply, %{}, state} =
       ClaudeSDK.translate_outbound(request(3, "session/close", %{"sessionId" => a}), state)
 
-    refute File.exists?(home_a)
+    assert File.dir?(home_a)
+
+    assert {:error, _} =
+             SessionStore.read_session_messages(a, claude_config_dir: home_a, cwd: root)
+
+    assert {:ok, [_]} =
+             SessionStore.read_session_messages(b, claude_config_dir: home_b, cwd: root)
+
+    assert File.read!(Path.join(bootstrap, ".credentials.json")) == "temporary login"
     assert File.dir?(home_b)
     assert Map.has_key?(state.session_processes, b)
     assert {:ok, _} = ClaudeSDK.shutdown(state)
     refute File.exists?(home_b)
   end
 
-  test "list, load and fork use the home associated with each session", %{root: root, cli: cli} do
+  test "list, load and fork use the shared connection store", %{root: root, cli: cli} do
     {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli)
     {a, state} = new_session(state, root, 1)
     {b, state} = new_session(state, root, 2)
@@ -91,7 +99,7 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
              ClaudeSDK.fork_session(%{"sessionId" => a, "cwd" => root}, state)
 
     home_child = state.session_homes[child][:claude_config_dir]
-    refute home_child in [home_a, home_b]
+    assert home_child == home_a and home_child == home_b
 
     assert {:ok, [%{"sessionId" => ^child}]} =
              SessionStore.read_session_messages(child, claude_config_dir: home_child, cwd: root)
@@ -110,28 +118,105 @@ defmodule Arbor.ACP.Adapters.ClaudeHomeLifecycleTest do
     File.mkdir!(home)
     File.write!(Path.join(home, "credentials"), "host owned")
     {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli, claude_config_dir: home)
-    {_a, state} = new_session(state, root, 1)
+    {a, state} = new_session(state, root, 1)
     {_b, state} = new_session(state, root, 2)
+    write_transcript(home, root, a, "persistent")
+
+    assert {:reply, %{}, state} =
+             ClaudeSDK.translate_outbound(request(3, "session/close", %{"sessionId" => a}), state)
+
+    assert {:ok, [_]} = SessionStore.read_session_messages(a, claude_config_dir: home, cwd: root)
     assert {:ok, _} = ClaudeSDK.shutdown(state)
     assert File.read!(Path.join(home, "credentials")) == "host owned"
   end
 
-  test "terminal authentication seeds a session created before login", %{root: root, cli: cli} do
-    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli)
-    {_id, state} = new_session(state, root, 1)
-    File.write!(Path.join(state.opts[:claude_config_dir], ".credentials.json"), "new login")
+  test "terminal authentication restarts idle children against shared native credentials", %{
+    root: root,
+    cli: cli
+  } do
+    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli, model: "sonnet")
+    {a, state} = new_session(state, root, 1)
+    {_b, state} = new_session(state, root, 2)
+    before = state.session_processes
+    home = state.opts[:claude_config_dir]
+    write_transcript(home, root, a, "keep conversation")
+    File.write!(Path.join(home, ".credentials.json"), "new login")
 
     assert {:reply, %{}, state} =
              ClaudeSDK.translate_outbound(
-               request(2, "authenticate", %{"methodId" => "claude-login"}),
+               request(3, "authenticate", %{"methodId" => "claude-login"}),
                state
              )
 
-    for {_id, opts} <- state.session_homes do
-      assert File.read!(Path.join(opts[:claude_config_dir], ".credentials.json")) == "new login"
+    for {id, old} <- before do
+      assert state.session_processes[id].handle != old.handle
+      assert state.session_processes[id].fields.claude_session_id == old.fields.claude_session_id
+      assert state.session_processes[id].fields.model == "sonnet"
+      assert state.session_homes[id][:claude_config_dir] == home
+    end
+
+    assert {:ok, [_]} = SessionStore.read_session_messages(a, claude_config_dir: home, cwd: root)
+    assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
+  test "authentication refuses to restart a child with active work", %{root: root, cli: cli} do
+    alias Arbor.ACP.Adapters.Internal.PromptQueue
+    {:ok, state} = ClaudeSDK.init(cwd: root, cli_path: cli)
+    {_id, state} = new_session(state, root, 1)
+    handle = state.port
+
+    for busy <- [
+          %{pending_prompt_id: "prompt"},
+          %{pending_client_requests: %{"request" => %{}}},
+          %{prompt_queue: PromptQueue.from_list([%{}])}
+        ] do
+      busy_state = Map.merge(state, busy)
+
+      assert {:error, reason, rejected} =
+               ClaudeSDK.translate_outbound(
+                 request(2, "authenticate", %{"methodId" => "claude-login"}),
+                 busy_state
+               )
+
+      assert reason =~ "work is active"
+      assert rejected.port == handle
+      assert Arbor.ACP.AdapterSupport.Subprocess.connected?(handle)
     end
 
     assert {:ok, _} = ClaudeSDK.shutdown(state)
+  end
+
+  test "separate connection owners receive different private homes" do
+    parent = self()
+
+    owners =
+      for _ <- 1..2 do
+        spawn(fn ->
+          {:ok, state} = ClaudeSDK.init([])
+          send(parent, {:home, self(), state.opts[:claude_config_dir]})
+
+          receive do
+            :close -> assert {:ok, _} = ClaudeSDK.shutdown(state)
+          end
+        end)
+      end
+
+    homes =
+      for owner <- owners do
+        assert_receive {:home, ^owner, home}
+        assert File.dir?(home)
+        home
+      end
+
+    assert length(Enum.uniq(homes)) == 2
+
+    for owner <- owners do
+      ref = Process.monitor(owner)
+      send(owner, :close)
+      assert_receive {:DOWN, ^ref, :process, ^owner, :normal}
+    end
+
+    for home <- homes, do: refute(File.exists?(home))
   end
 
   test "failed fork launch rolls back its transcript and home", %{root: root, cli: cli} do

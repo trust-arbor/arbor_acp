@@ -44,9 +44,11 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     * `:trust_workspace_config` - opt back into loading workspace Claude
       settings, `.mcp.json`, and the host Claude config directory.
     * `:claude_config_dir` - Claude config directory. When omitted, the
-      adapter mints a private 0700 directory per ACP session, stores it on
-      adapter and session-store state, and sets `CLAUDE_CONFIG_DIR` for the
-      child and for terminal login. Existing `~/.claude` logins and settings
+      adapter mints a private 0700 directory per connection and sets
+      `CLAUDE_CONFIG_DIR` for every managed session and terminal login.
+      Session processes and native conversation ids remain separate. Closing
+      a generated-home session removes its history; ending the connection
+      removes the home. Caller-owned homes and their history survive close. Existing `~/.claude` logins and settings
       are invisible unless this option or `:trust_workspace_config` is set.
 
   The `mcpServers` of `session/new`, `session/load`, `session/resume` and
@@ -191,8 +193,8 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     port: nil,
     session_processes: %{},
     session_aliases: [],
-    # Per-session launch overrides (e.g. a minted CLAUDE_CONFIG_DIR). Merged
-    # into the child command so each process can have its own home.
+    # Each managed process uses the connection's config/auth home. Entries
+    # track live session ownership without owning or deleting that directory.
     session_homes: %{}
   ]
 
@@ -374,18 +376,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
             |> session_store_opts(state)
             |> Map.put(:cwd, cwd)
 
-          result =
-            with :ok <-
-                   relocate_fork(
-                     forked_session_id,
-                     cwd,
-                     parent_opts,
-                     session_home_opts(state, forked_session_id)
-                   ) do
-              start_session_process(forked_session_id, cwd, params, :fork, state)
-            else
-              {:error, reason} -> {:error, reason, state}
-            end
+          result = start_session_process(forked_session_id, cwd, params, :fork, state)
 
           case result do
             {:ok, state} ->
@@ -497,17 +488,13 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
         forget_session_process(acc, id, entry.handle)
       end)
 
-    state = Enum.reduce(Map.keys(state.session_homes), state, &release_session_home(&2, &1))
-
-    case state.cleanup_result do
-      :ok ->
-        case RuntimeHome.release(state.opts, :claude) do
-          :ok -> {:ok, state}
-          {:error, reason} -> {:error, reason, %{state | cleanup_result: {:error, reason}}}
-        end
-
-      {:error, reason} ->
-        {:error, reason, state}
+    if map_size(state.session_processes) == 0 do
+      case RuntimeHome.release(state.opts, :claude) do
+        :ok -> {:ok, %{state | cleanup_result: :ok, home_cleanup_errors: %{}, session_homes: %{}}}
+        {:error, reason} -> {:error, reason, %{state | cleanup_result: {:error, reason}}}
+      end
+    else
+      {:error, elem(state.cleanup_result, 1), state}
     end
   end
 
@@ -685,18 +672,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
 
   defp handle_request("authenticate", %{"params" => %{"methodId" => method_id}}, state)
        when method_id in ["claude-login", "claude-ai-login", "console-login"] do
-    result =
-      Enum.reduce_while(state.session_homes, :ok, fn {_id, opts}, :ok ->
-        case RuntimeHome.refresh_auth(state.opts, Keyword.merge(state.opts, opts), :claude) do
-          :ok -> {:cont, :ok}
-          {:error, _} = error -> {:halt, error}
-        end
-      end)
-
-    case result do
-      :ok -> {:reply, %{}, state}
-      {:error, reason} -> {:error, inspect(reason), state}
-    end
+    refresh_authenticated_sessions(state)
   end
 
   defp handle_request("authenticate", %{"params" => %{"methodId" => method_id}}, state) do
@@ -1502,10 +1478,7 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
           {:error, format_command_error(reason), state}
 
         {cmd, args} ->
-          case RuntimeHome.seed_auth(state.opts, opts, :claude) do
-            :ok -> open_session_process(session_id, cmd, args, opts, state)
-            {:error, reason} -> {:error, inspect(reason), state}
-          end
+          open_session_process(session_id, cmd, args, opts, state)
       end
 
     case result do
@@ -1525,67 +1498,12 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     if Map.has_key?(state.session_homes, session_id) do
       state
     else
-      opts =
-        state.opts |> Keyword.put(:_runtime_home_session, session_id) |> Keyword.delete(:resume)
-
-      home = opts |> RuntimeHome.put_opt(:claude) |> Keyword.take([:claude_config_dir])
+      home = [claude_config_dir: SessionStore.config_dir(state.opts)]
       %{state | session_homes: Map.put(state.session_homes, session_id, home)}
     end
   end
 
-  defp session_store_homes(state) do
-    [
-      Keyword.get(state.opts, :claude_config_dir)
-      | Enum.map(state.session_homes, fn {_id, opts} -> Keyword.get(opts, :claude_config_dir) end)
-    ]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-  end
-
-  defp relocate_fork(session_id, cwd, parent_opts, home_opts) do
-    source_home = SessionStore.config_dir(parent_opts)
-    target_home = Keyword.get(home_opts, :claude_config_dir, source_home)
-
-    if source_home == target_home do
-      :ok
-    else
-      opts = parent_opts |> Map.put(:offset, 0) |> Map.delete(:cursor) |> Map.delete(:limit)
-
-      with {:ok, sessions} <- SessionStore.list_sessions(opts),
-           %{"path" => source} <- Enum.find(sessions, &(&1["sessionId"] == session_id)),
-           target_dir = Path.join([target_home, "projects", SessionStore.project_key(cwd)]),
-           true <- WorkspacePath.within?(target_dir, target_home),
-           :ok <- File.mkdir_p(target_dir),
-           {:ok, contents} <- File.read(source),
-           :ok <-
-             File.write(Path.join(target_dir, session_id <> ".jsonl"), contents, [
-               :write,
-               :exclusive
-             ]),
-           :ok <-
-             retire_fork_source(
-               session_id,
-               parent_opts,
-               Path.join(target_dir, session_id <> ".jsonl")
-             ) do
-        :ok
-      else
-        {:error, reason} -> {:error, inspect(reason)}
-        _missing_or_unsafe -> {:error, "Forked Claude session could not be moved to its home"}
-      end
-    end
-  end
-
-  defp retire_fork_source(session_id, opts, target) do
-    case SessionStore.delete_session(session_id, opts) do
-      :ok ->
-        :ok
-
-      {:error, _} = error ->
-        File.rm(target)
-        error
-    end
-  end
+  defp session_store_homes(state), do: [SessionStore.config_dir(state.opts)]
 
   defp native_session_id(state, session_id) do
     case get_in(state.session_processes, [session_id, :fields, :claude_session_id]) do
@@ -1654,6 +1572,9 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     native_id = native_session_id(state, session_id)
 
     cond do
+      kind == :reauth_new and SessionStore.valid_session_id?(native_id) ->
+        Keyword.put(opts, :session_id, native_id)
+
       kind in [:load, :resume, :fork] and SessionStore.valid_session_id?(native_id) ->
         Keyword.put(opts, :resume, native_id)
 
@@ -1707,6 +1628,50 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
         {_option, value} -> Keyword.put(opts, option, value)
       end
     end)
+  end
+
+  defp refresh_authenticated_sessions(%{managed?: false} = state), do: {:reply, %{}, state}
+
+  defp refresh_authenticated_sessions(state) do
+    state = persist_current_session(state)
+
+    busy? =
+      Enum.any?(state.session_processes, fn {_id, entry} ->
+        fields = entry.fields
+
+        fields.pending_prompt_id != nil or map_size(fields.pending_client_requests) > 0 or
+          not PromptQueue.empty?(fields.prompt_queue)
+      end)
+
+    if busy? do
+      {:error, "Claude authentication cannot change while session work is active", state}
+    else
+      selected = state.session_id
+
+      result =
+        Enum.reduce_while(state.session_processes, {:ok, state}, fn {id, entry}, {:ok, acc} ->
+          acc = Map.merge(acc, entry.fields)
+          acc = close_session_process(acc, id)
+          acc = %{acc | pending_controls: %{}}
+          opts = session_store_opts(%{"sessionId" => id, "cwd" => entry.fields.cwd}, acc)
+
+          kind =
+            case SessionStore.read_session_messages(entry.fields.claude_session_id, opts) do
+              {:ok, _} -> :resume
+              {:error, _} -> :reauth_new
+            end
+
+          case start_session_process(id, entry.fields.cwd, %{}, kind, acc) do
+            {:ok, acc} -> {:cont, {:ok, acc}}
+            {:error, reason, acc} -> {:halt, {:error, reason, acc}}
+          end
+        end)
+
+      case result do
+        {:ok, acc} -> {:reply, %{}, switch_session(acc, selected)}
+        {:error, reason, acc} -> {:error, reason, acc}
+      end
+    end
   end
 
   defp new_session_available(_id, %{managed?: false}), do: :ok
@@ -2120,7 +2085,19 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     {queued_messages, state} = cancel_queued_prompts(state, session_id)
     {active_messages, state} = cancel_active_prompt(state, session_id)
 
+    native_id = native_session_id(state, session_id)
+    store_opts = session_store_opts(%{"sessionId" => session_id}, state)
+    had_session? = Map.has_key?(state.session_homes, session_id)
     state = close_session_process(state, session_id)
+
+    state =
+      if release_home? and had_session? and state.managed? and
+           not Map.has_key?(state.session_processes, session_id) and
+           RuntimeHome.owned?(state.opts, :claude) do
+        retire_private_history(state, session_id, native_id, store_opts)
+      else
+        state
+      end
 
     state = if release_home?, do: release_session_home(state, session_id), else: state
 
@@ -2148,26 +2125,37 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
   end
 
   defp release_session_home(state, session_id) do
-    if state.managed? and Map.has_key?(state.session_homes, session_id) and
-         not Map.has_key?(state.session_processes, session_id) do
-      case RuntimeHome.release(runtime_home_release_opts(state, session_id), :claude) do
-        :ok ->
-          %{
-            state
-            | session_homes: Map.delete(state.session_homes, session_id),
-              home_cleanup_errors: Map.delete(state.home_cleanup_errors, session_id)
-          }
-          |> refresh_cleanup_result()
-
-        {:error, reason} ->
-          %{
-            state
-            | home_cleanup_errors: Map.put(state.home_cleanup_errors, session_id, reason),
-              cleanup_result: {:error, reason}
-          }
-      end
+    if state.managed? and not Map.has_key?(state.session_processes, session_id) and
+         not Map.has_key?(state.home_cleanup_errors, session_id) do
+      %{state | session_homes: Map.delete(state.session_homes, session_id)}
     else
       state
+    end
+  end
+
+  defp retire_private_history(state, session_id, native_id, opts) do
+    result = SessionStore.delete_session(native_id, opts)
+    # An idle session may never have written a transcript. Confirm both of
+    # its possible artifacts are absent before treating "not found" as clean.
+    project =
+      Path.join([SessionStore.config_dir(opts), "projects", SessionStore.project_key(opts.cwd)])
+
+    absent? =
+      Enum.all?([native_id <> ".jsonl", native_id], fn name ->
+        File.lstat(Path.join(project, name)) == {:error, :enoent}
+      end)
+
+    if result == :ok or absent? do
+      %{state | home_cleanup_errors: Map.delete(state.home_cleanup_errors, session_id)}
+      |> refresh_cleanup_result()
+    else
+      reason = :private_session_cleanup_unconfirmed
+
+      %{
+        state
+        | home_cleanup_errors: Map.put(state.home_cleanup_errors, session_id, reason),
+          cleanup_result: {:error, reason}
+      }
     end
   end
 
@@ -2180,15 +2168,6 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     home_error = Enum.find_value(state.home_cleanup_errors, fn {_id, reason} -> reason end)
     reason = child_error || home_error
     %{state | cleanup_result: if(reason, do: {:error, reason}, else: :ok)}
-  end
-
-  defp runtime_home_release_opts(state, session_id) do
-    state.opts
-    |> Keyword.put(
-      :session_id,
-      session_id || state.session_id || Keyword.get(state.opts, :session_id)
-    )
-    |> Keyword.merge(session_home_opts(state, session_id))
   end
 
   defp cancel_active_prompt(%{pending_prompt_id: nil} = state, _session_id), do: {[], state}
@@ -2340,7 +2319,10 @@ defmodule Arbor.ACP.Adapters.ClaudeSDK do
     if path = env["CLAUDE_CONFIG_DIR"],
       do: RuntimeHome.track_keychain(Keyword.put(opts, :claude_config_dir, path))
 
-    case RuntimeHome.env_value(opts, "ANTHROPIC_CONFIG_DIR") do
+    case if(Map.has_key?(env, "ANTHROPIC_CONFIG_DIR"),
+           do: nil,
+           else: RuntimeHome.env_value(opts, "ANTHROPIC_CONFIG_DIR")
+         ) do
       nil ->
         env
 

@@ -61,10 +61,12 @@ when the adapter is not minting a private vendor config dir.
 Claude, Codex and Pi isolate workspace agent configuration by default:
 Claude is launched with `--setting-sources user` and `--strict-mcp-config`,
 and each of those adapters mints a private `CLAUDE_CONFIG_DIR` /
-`CODEX_HOME` / `PI_CODING_AGENT_DIR`. Managed Claude and Pi children have
-session homes, removed after child cleanup. Codex shares one private home
-across its connection's app-server threads and removes it when the connection
-ends; closing the last thread keeps that home available. Codex's minted
+`CODEX_HOME` / `PI_CODING_AGENT_DIR`. Claude shares one private home per
+connection while retaining separate processes and native conversation ids.
+Codex shares one private home across its connection's app-server threads.
+These homes remain until the connection ends, including when its last session
+closes. Closing a Claude session removes only its generated-home history.
+Pi children have separate session homes, removed after confirmed child cleanup. Codex's minted
 home has no `AGENTS.md`, disables skills, and does not trust the project; Pi
 is launched with `--no-context-files` and `--no-approve` and ignores the
 workspace `.pi` tree, inherited `PI_CODING_AGENT_DIR`, and a
@@ -74,10 +76,13 @@ the adapter at a real home. Cleanup deletes the generated home, including
 transcripts and credentials written there. Pass `trust_workspace_config:
 true` to load project settings and use the normal vendor home again, or
 set `:claude_config_dir`, `:codex_home` or `:agent_dir` to keep a specific
-directory. Caller-provided directories are never removed. Claude and Pi keep
-a separate private connection login home for the advertised terminal login;
-new generated child homes receive only its credential file, so subsequent
-sessions can use that login without sharing settings or transcripts.
+directory. Caller-provided directories and their history are preserved on
+close; explicit session/delete still deletes the requested history. Claude's
+terminal login and children use the same private credential store. Successful
+reauthentication restarts idle managed Claude children to reload credentials,
+retaining their native ids and preferences; active work must finish first.
+Pi keeps a separate private connection login home and seeds only its credential
+file into generated child homes.
 An explicit empty or unset vendor-home variable in `:env` is rejected while
 workspace isolation is enabled; it cannot silently restore the normal home.
 Claude's generated home also supplies a private `ANTHROPIC_CONFIG_DIR` for
@@ -323,4 +328,10 @@ for the rest of the controller/agent API.
 Managed Claude session ids are native UUIDs by default. Caller-provided opaque
 ids are compatibility aliases within a connection: up to 1,024 recently closed
 aliases are retained within 1 MiB. Persist native UUIDs for identifiers that must
-remain usable across connections or after compatibility aliases expire.
+remain usable across connections or after compatibility aliases expire, and
+supply a persistent home when history must survive the connection.
+
+Codex thread bindings require the same canonical working directory for load
+and resume. Equivalent path spellings are accepted; moving a thread from
+`/repos/a` to `/repos/b` is rejected even when both are beneath an allowed
+root `/repos`.

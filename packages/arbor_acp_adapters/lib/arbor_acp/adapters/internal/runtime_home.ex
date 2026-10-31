@@ -3,10 +3,9 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   require Logger
   alias Arbor.ACP.Adapters.Internal.PrivateKeychain
 
-  # Private per-ACP-session config directories for vendor CLIs. Created 0700
-  # under System.tmp_dir/0, keyed by session id (or :connection before one
-  # exists), and removed on session close or when the process that requested
-  # them exits. A caller :env vendor var or explicit option is the source of
+  # Private config directories for vendor CLIs, created 0700 under tmp.
+  # Claude/Codex use a connection home; Pi also allocates child launch scopes.
+  # Explicit cleanup and an owner monitor retire generated directories. A caller :env vendor var or explicit option is the source of
   # truth and is not minted over.
 
   @dir_prefix "arbor_acp_runtime_home_"
@@ -29,18 +28,19 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
 
   @spec env_value(keyword(), String.t()) :: String.t() | nil
   def env_value(opts, name) when is_list(opts) and is_binary(name) do
-    case env_get(Keyword.get(opts, :env, []), name) do
-      value when is_binary(value) and value != "" ->
+    case Map.fetch(normalize_env(Keyword.get(opts, :env, [])), name) do
+      {:ok, value} when is_binary(value) and value != "" ->
         value
 
-      _ ->
+      {:ok, _unset} ->
+        nil
+
+      :error ->
         if Keyword.get(opts, :environment_policy) == :inherit do
           case System.get_env(name) do
             value when is_binary(value) and value != "" -> value
             _ -> nil
           end
-        else
-          nil
         end
     end
   end
@@ -108,32 +108,37 @@ defmodule Arbor.ACP.Adapters.Internal.RuntimeHome do
   def put_opt(opts, kind) when is_list(opts) do
     spec = spec!(kind)
     opts = drop_minted_option(opts, spec.option, kind)
+    path = path(opts, kind)
+    opts = if path, do: Keyword.put(opts, spec.option, path), else: opts
 
-    case path(opts, kind) do
-      nil ->
-        opts
+    if kind == :claude do
+      opts =
+        if path && owned_path?(path, :claude),
+          do: Keyword.put_new(opts, :_anthropic_auth_dir, Path.join(path, "anthropic")),
+          else: opts
 
-      path ->
-        opts = Keyword.put(opts, spec.option, path)
+      supplied = normalize_env(Keyword.get(opts, :env, []))
 
-        if kind == :claude and owned_path?(path, :claude) do
-          opts = Keyword.put_new(opts, :_anthropic_auth_dir, Path.join(path, "anthropic"))
-          supplied = normalize_env(Keyword.get(opts, :env, []))
+      case Map.fetch(supplied, "ANTHROPIC_CONFIG_DIR") do
+        {:ok, profile} when is_binary(profile) and profile != "" ->
+          Keyword.put(
+            opts,
+            :env,
+            Map.put(supplied, "ANTHROPIC_CONFIG_DIR", profile_path(profile, opts))
+          )
 
-          case Map.fetch(supplied, "ANTHROPIC_CONFIG_DIR") do
-            {:ok, profile} when is_binary(profile) and profile != "" ->
-              Keyword.put(
-                opts,
-                :env,
-                Map.put(supplied, "ANTHROPIC_CONFIG_DIR", profile_path(profile, opts))
-              )
-
-            _absent ->
-              opts
-          end
-        else
+        _absent ->
           opts
-        end
+      end
+    else
+      opts
+    end
+  end
+
+  def owned?(opts, kind) do
+    case configured_path(opts, spec!(kind)) do
+      path when is_binary(path) -> owned_path?(path, kind)
+      _ -> false
     end
   end
 
